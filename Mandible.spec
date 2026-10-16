@@ -91,22 +91,7 @@ for pkg in ("_sounddevice_data", "sounddevice", "pedalboard"):
     binaries += b
     hiddenimports += h
 
-# Replace sounddevice's prebuilt PortAudio DLLs with our source build (same file names it looks for).
 portaudio = _native(os.path.join("portaudio", "libportaudio64bit-asio.dll"))
-if portaudio:
-    def _not_prebuilt_portaudio(entry):
-        return "portaudio-binaries" not in entry[1].replace("\\", "/")
-    datas = [e for e in datas if _not_prebuilt_portaudio(e)]
-    binaries = [e for e in binaries if _not_prebuilt_portaudio(e)]
-    # sounddevice loads "-asio.dll" when SD_ENABLE_ASIO is set and the plain name otherwise;
-    # PyInstaller keeps source file names, so stage one copy under each name.
-    import shutil
-    staged = os.path.join(ROOT, "third_party_build", "portaudio", "staged")
-    os.makedirs(staged, exist_ok=True)
-    for name in ("libportaudio64bit-asio.dll", "libportaudio64bit.dll"):
-        dst = os.path.join(staged, name)
-        shutil.copyfile(portaudio, dst)
-        datas.append((dst, "_sounddevice_data/portaudio-binaries"))
 
 a = Analysis(
     [os.path.join(ROOT, "mandible", "__main__.py")],
@@ -123,6 +108,19 @@ a = Analysis(
 )
 # Software OpenGL fallback (Mesa) is not used by Mandible's widgets.
 a.binaries = [b for b in a.binaries if os.path.basename(b[0]).lower() != "opengl32sw.dll"]
+
+# Replace sounddevice's prebuilt PortAudio DLLs with our source build. This must happen after
+# Analysis: PyInstaller's sounddevice hook adds the prebuilt DLLs (all platforms) during analysis.
+# TOC entries are (dest_name, src_path, typecode).
+PA_DIR = os.path.normpath("_sounddevice_data/portaudio-binaries")
+if portaudio:
+    def _is_bundled_portaudio(entry):
+        return os.path.normpath(entry[0]).startswith(PA_DIR + os.sep)
+    a.binaries = [e for e in a.binaries if not _is_bundled_portaudio(e)]
+    a.datas = [e for e in a.datas if not _is_bundled_portaudio(e)]
+    # sounddevice loads "-asio.dll" when SD_ENABLE_ASIO is set and the plain name otherwise.
+    for name in ("libportaudio64bit-asio.dll", "libportaudio64bit.dll"):
+        a.binaries.append((os.path.join(PA_DIR, name), portaudio, "BINARY"))
 pyz = PYZ(a.pure)
 
 exe = EXE(

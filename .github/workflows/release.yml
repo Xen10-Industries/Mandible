@@ -127,6 +127,21 @@ jobs:
           MANDIBLE_RELEASE: "1"
         run: pyinstaller --noconfirm --clean Mandible.spec
 
+      - name: Verify bundled native libraries are the source builds
+        shell: pwsh
+        run: |
+          $pa = "dist\Mandible\_internal\_sounddevice_data\portaudio-binaries"
+          $found = Get-ChildItem $pa -File | Select-Object -ExpandProperty Name | Sort-Object
+          $expected = @("libportaudio64bit-asio.dll", "libportaudio64bit.dll")
+          if (Compare-Object $found $expected) { throw "Unexpected files in ${pa}: $($found -join ', ')" }
+          $ours = (Get-FileHash third_party_build\portaudio\libportaudio64bit-asio.dll).Hash
+          foreach ($n in $expected) {
+            if ((Get-FileHash "$pa\$n").Hash -ne $ours) { throw "$n is not the PortAudio source build" }
+          }
+          $rn = (Get-FileHash third_party_build\rnnoise\rnnoise.dll).Hash
+          if ((Get-FileHash dist\Mandible\_internal\mandible\lib\rnnoise.dll).Hash -ne $rn) { throw "rnnoise.dll is not the source build" }
+          Write-Host "Bundled PortAudio and RNNoise match the CI source builds."
+
       - name: Add license files to the app folder
         shell: pwsh
         run: |
@@ -174,9 +189,10 @@ jobs:
       - name: Checksums
         shell: pwsh
         run: |
-          Get-ChildItem dist\*.zip, dist\*.exe |
-            ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name } |
-            Set-Content dist\SHA256SUMS.txt -Encoding ascii
+          $lines = Get-ChildItem dist\*.zip, dist\*.exe |
+            ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name }
+          # LF line endings so `sha256sum -c SHA256SUMS.txt` works everywhere.
+          [IO.File]::WriteAllText("$PWD\dist\SHA256SUMS.txt", (($lines -join "`n") + "`n"))
           Get-Content dist\SHA256SUMS.txt
 
       - uses: actions/upload-artifact@v4
