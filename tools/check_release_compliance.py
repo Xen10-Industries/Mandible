@@ -41,9 +41,9 @@ def main(argv: list[str]) -> int:
     if not re.fullmatch(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?", v):
         errors.append(f"version {v!r} is not semver")
 
-    tag = argv[1] if len(argv) > 1 else ""
-    if tag.startswith("refs/tags/"):
-        tag = tag[len("refs/tags/"):]
+    # Only tag builds are checked against the version; branch refs (manual runs) are ignored.
+    ref = argv[1] if len(argv) > 1 else ""
+    tag = ref[len("refs/tags/"):] if ref.startswith("refs/tags/") else ""
     if tag and tag != f"v{v}":
         errors.append(f"tag {tag!r} does not match mandible/_version.py (expected 'v{v}')")
 
