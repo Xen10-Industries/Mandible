@@ -1,0 +1,208 @@
+# Builds every Mandible release artifact from this repository alone (no manual steps).
+#
+#  - push a tag "vX.Y.Z" matching mandible/_version.py  -> builds and creates a DRAFT GitHub Release
+#  - manual "Run workflow"                              -> builds and uploads workflow artifacts only
+#
+# Native libraries are compiled from pinned upstream sources here; nothing prebuilt is committed.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.13"
+  PORTAUDIO_VERSION: "19.7.0"
+  PORTAUDIO_SHA256: "5af29ba58bbdbb7bbcefaaecc77ec8fc413f0db6f4c4e286c40c3e1b83174fa0"
+  RNNOISE_VERSION: "0.2"
+  RNNOISE_SHA256: "90fce4b00b9ff24c08dbfe31b82ffd43bae383d85c5535676d28b0a2b11c0d37"
+  ASIOSDK_VERSION: "2.3.4"   # must match THIRD_PARTY_NOTICES.txt
+  INNO_SETUP_VERSION: "6.4.3"
+
+jobs:
+  build:
+    runs-on: windows-2022
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "Read version (single source of truth: mandible/_version.py)"
+        id: version
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path mandible/_version.py -Pattern '__version__\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
+          "version=$v" >> $env:GITHUB_OUTPUT
+          Write-Host "Mandible $v"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Compliance checks (version/tag, notices, no secrets or binaries in git)
+        run: python tools/check_release_compliance.py "${{ github.ref }}"
+
+      # ---------------------------------------------------------------- native libraries
+      - uses: msys2/setup-msys2@v2
+        id: msys2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            make
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-asiosdk
+
+      - name: Check ASIO SDK version and license
+        shell: msys2 {0}
+        run: |
+          ver=$(pacman -Q mingw-w64-ucrt-x86_64-asiosdk | awk '{print $2}')
+          echo "asiosdk package: $ver"
+          case "$ver" in "${ASIOSDK_VERSION}"-*) ;; *) echo "::error::ASIO SDK $ver != $ASIOSDK_VERSION; update THIRD_PARTY_NOTICES.txt and ASIOSDK_VERSION"; exit 1;; esac
+          grep -qi "General Public License" /ucrt64/include/asiosdk/common/LICENSE.txt \
+            || { echo "::error::ASIO SDK license file does not mention the GPL option"; exit 1; }
+          mkdir -p third_party_build/licenses
+          cp /ucrt64/include/asiosdk/common/LICENSE.txt third_party_build/licenses/ASIO-SDK-LICENSE.txt
+
+      - name: Build RNNoise from source
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          mkdir -p work && cd work
+          curl -fsSL -o rnnoise.tar.gz "https://github.com/xiph/rnnoise/releases/download/v${RNNOISE_VERSION}/rnnoise-${RNNOISE_VERSION}.tar.gz"
+          echo "${RNNOISE_SHA256}  rnnoise.tar.gz" | sha256sum -c -
+          tar xzf rnnoise.tar.gz && cd "rnnoise-${RNNOISE_VERSION}"
+          ./configure --disable-examples --disable-doc --enable-shared --disable-static \
+            LDFLAGS="-static-libgcc"
+          make -j"$(nproc)"
+          dll=$(ls .libs/*.dll | head -n1)
+          mkdir -p ../../third_party_build/rnnoise
+          cp "$dll" ../../third_party_build/rnnoise/rnnoise.dll
+          echo "Imports of rnnoise.dll:"; objdump -p ../../third_party_build/rnnoise/rnnoise.dll | grep "DLL Name"
+          if objdump -p ../../third_party_build/rnnoise/rnnoise.dll | grep -qiE "DLL Name: (libgcc|libwinpthread|libstdc)"; then
+            echo "::error::rnnoise.dll depends on MinGW runtime DLLs"; exit 1
+          fi
+
+      - name: Build PortAudio (with ASIO, GPLv3 SDK option) from source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force work | Out-Null
+          Set-Location work
+          Invoke-WebRequest "https://github.com/PortAudio/portaudio/archive/refs/tags/v$env:PORTAUDIO_VERSION.tar.gz" -OutFile portaudio.tar.gz
+          if ((Get-FileHash portaudio.tar.gz -Algorithm SHA256).Hash -ne $env:PORTAUDIO_SHA256) { throw "PortAudio tarball hash mismatch" }
+          tar xzf portaudio.tar.gz
+          # PortAudio 19.7 finds the SDK in a sibling folder named as* next to its source tree.
+          Copy-Item -Recurse "${{ steps.msys2.outputs.msys2-location }}\ucrt64\include\asiosdk" asiosdk
+          cmake -S "portaudio-$env:PORTAUDIO_VERSION" -B pa-build -A x64 `
+            -DPA_USE_ASIO=ON -DPA_BUILD_SHARED=ON -DPA_BUILD_STATIC=OFF -DPA_DLL_LINK_WITH_STATIC_RUNTIME=ON
+          cmake --build pa-build --config Release
+          $dll = Get-ChildItem pa-build -Recurse -Filter "portaudio*.dll" | Select-Object -First 1
+          if (-not $dll) { throw "PortAudio DLL not produced" }
+          New-Item -ItemType Directory -Force ..\third_party_build\portaudio | Out-Null
+          Copy-Item $dll.FullName ..\third_party_build\portaudio\libportaudio64bit-asio.dll
+
+      - name: Smoke-test native libraries
+        run: >-
+          python -c "import ctypes;
+          pa = ctypes.CDLL(r'third_party_build/portaudio/libportaudio64bit-asio.dll');
+          pa.PaAsio_ShowControlPanel; pa.Pa_GetVersionText.restype = ctypes.c_char_p;
+          print(pa.Pa_GetVersionText().decode());
+          rn = ctypes.CDLL(r'third_party_build/rnnoise/rnnoise.dll');
+          rn.rnnoise_create.restype = ctypes.c_void_p; rn.rnnoise_destroy.argtypes = [ctypes.c_void_p];
+          st = rn.rnnoise_create(None); assert st; rn.rnnoise_destroy(st); print('rnnoise OK')"
+
+      # ---------------------------------------------------------------- application
+      - name: Install Python dependencies (pinned)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-build.txt
+
+      - name: Build Mandible.exe (PyInstaller)
+        env:
+          MANDIBLE_RELEASE: "1"
+        run: pyinstaller --noconfirm --clean Mandible.spec
+
+      - name: Add license files to the app folder
+        shell: pwsh
+        run: |
+          Copy-Item LICENSE, THIRD_PARTY_NOTICES.txt dist\Mandible\
+          New-Item -ItemType Directory -Force dist\Mandible\licenses | Out-Null
+          Copy-Item third_party_build\licenses\* dist\Mandible\licenses\
+
+      # ---------------------------------------------------------------- code signing (placeholder)
+      # Enable once the SignPath Foundation application is approved. Signing happens on SignPath's
+      # side; no certificate or key ever touches this repository or the runner.
+      #
+      # - name: Upload unsigned app for signing
+      #   id: upload-unsigned-app
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: unsigned-app
+      #     path: dist/Mandible
+      #
+      # - name: Sign Mandible.exe with SignPath
+      #   uses: signpath/github-action-submit-signing-request@v1
+      #   with:
+      #     api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+      #     organization-id: "<SIGNPATH_ORGANIZATION_ID>"
+      #     project-slug: "mandible"
+      #     signing-policy-slug: "release-signing"
+      #     github-artifact-id: ${{ steps.upload-unsigned-app.outputs.artifact-id }}
+      #     wait-for-completion: true
+      #     output-artifact-directory: dist/Mandible
+
+      - name: Package portable zip
+        shell: pwsh
+        run: |
+          $v = "${{ steps.version.outputs.version }}"
+          Compress-Archive -Path dist\Mandible\* -DestinationPath "dist\Mandible-$v-win64-portable.zip"
+
+      - name: Build installer (Inno Setup)
+        shell: pwsh
+        run: |
+          choco install innosetup --version $env:INNO_SETUP_VERSION -y --no-progress
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DMyAppVersion=${{ steps.version.outputs.version }}" installer.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
+
+      # - name: Sign installer with SignPath   (same pattern as above, for dist/Mandible-*-Setup.exe)
+
+      - name: Checksums
+        shell: pwsh
+        run: |
+          Get-ChildItem dist\*.zip, dist\*.exe |
+            ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name } |
+            Set-Content dist\SHA256SUMS.txt -Encoding ascii
+          Get-Content dist\SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mandible-${{ steps.version.outputs.version }}
+          path: |
+            dist/Mandible-*-win64-portable.zip
+            dist/Mandible-*-Setup.exe
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: mandible-${{ needs.build.outputs.version }}
+          path: out
+      # Creates a DRAFT release; a human reviews and publishes it.
+      - uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          name: Mandible ${{ needs.build.outputs.version }}
+          files: out/*
+          generate_release_notes: true

@@ -1,0 +1,35 @@
+# Build output (release binaries are built only by CI)
+build/
+dist/
+third_party_build/
+*.spec.bak
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# Native libraries are built from source in CI, never committed
+mandible/lib/*.dll
+
+# Local scratch / experiments
+scratch/
+
+# Signing material and secrets must never be committed
+*.pfx
+*.p12
+*.pem
+*.key
+*.cer
+*.crt
+*.snk
+.env
+.env.*
+
+# Editors / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini

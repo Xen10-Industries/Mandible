@@ -1,0 +1,10 @@
+# Mandible runtime dependencies (pinned for reproducible CI builds).
+# Requires Python 3.13 (64-bit). Any new dependency must also be added to
+# THIRD_PARTY_NOTICES.txt and be GPL-3.0-compatible open source (see CLAUDE.md).
+sounddevice==0.5.6
+cffi==2.1.1
+pedalboard==0.9.26
+numpy==2.5.4
+PySide6-Essentials==6.12.0
+shiboken6==6.12.0
+keyboard==0.13.5

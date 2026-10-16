@@ -1,0 +1,4 @@
+# Build-only tooling used by CI (not shipped as a dependency).
+-r requirements.txt
+pyinstaller==6.22.3
+pyinstaller-hooks-contrib==2026.8
