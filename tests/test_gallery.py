@@ -42,3 +42,54 @@ def test_gallery_reports_main_window_minimum_width(tmp_path):
     for png in out.glob("*.png"):
         assert png.stat().st_size > 0
     assert any(out.glob("main__*.png"))
+
+
+def _load_gallery():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("ui_gallery", ROOT / "tools" / "ui_gallery.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_gallery_main_window_never_shows_tray_or_toast(sample_core, monkeypatch):
+    """MainWindow.__init__ calls tray.show() and closeEvent hides to the tray with a toast;
+    the gallery must trigger neither on the user's desktop."""
+    from PySide6.QtWidgets import QSystemTrayIcon
+
+    shown, messages = [], []
+    monkeypatch.setattr(QSystemTrayIcon, "show", lambda self: shown.append(self))
+    monkeypatch.setattr(QSystemTrayIcon, "showMessage", lambda self, *a, **k: messages.append(a))
+    gallery = _load_gallery()
+
+    sample_core.cfg.close_to_tray = False
+    win = gallery.build_main_window(sample_core)
+    assert not win.tray.isVisible()
+    assert win.isVisible()
+    gallery.dispose_main_window(win)
+
+    assert shown == []
+    assert messages == []
+    assert sample_core.cfg.chains  # the shared core survives (no quit())
+
+
+def test_gallery_run_records_screen_errors_and_continues(qapp, tmp_path, monkeypatch):
+    import mandible.about
+
+    def boom(*_a, **_k):
+        raise RuntimeError("synthetic failure")
+
+    monkeypatch.setattr(mandible.about, "AboutDialog", boom)
+    gallery = _load_gallery()
+    out = tmp_path / "gallery"
+    out.mkdir()
+    report = gallery.run_gallery(out, ["skeuomorphic"], ["scarlet"], [(1280, 720)])
+
+    errors = {k: v for k, v in report.items() if "error" in v}
+    assert list(errors) == ["about|skeuomorphic|scarlet|error"]
+    assert "synthetic failure" in errors["about|skeuomorphic|scarlet|error"]["error"]
+    assert "main|skeuomorphic|scarlet|1280x720" in report  # other screens still captured
+    on_disk = json.loads((out / "report.json").read_text(encoding="utf-8"))
+    assert on_disk.keys() == report.keys()
+    assert "ERROR" in (out / "index.html").read_text(encoding="utf-8")

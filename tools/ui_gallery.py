@@ -103,9 +103,55 @@ def _states(dialog):
                 break
 
 
+def build_main_window(core):
+    """A MainWindow that never touches the desktop: shown with WA_DontShowOnScreen and with no
+    system tray icon (``MainWindow.__init__`` calls ``tray.show()``, which ignores
+    WA_DontShowOnScreen and would put a real icon on the taskbar)."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication, QSystemTrayIcon
+
+    from mandible import gui
+
+    real_show = QSystemTrayIcon.show
+    QSystemTrayIcon.show = lambda self: None  # type: ignore[method-assign]
+    try:
+        win = gui.MainWindow(core)
+    finally:
+        QSystemTrayIcon.show = real_show  # type: ignore[method-assign]
+    win.tray.hide()
+    win.setAttribute(Qt.WA_DontShowOnScreen)
+    win.show()
+    QApplication.instance().processEvents()
+    return win
+
+
+def dispose_main_window(win) -> None:
+    """Tear a gallery MainWindow down without ``close()`` (its closeEvent would hide to the
+    tray and raise a toast) and without ``quit()`` (which shuts the shared core down)."""
+    from PySide6.QtCore import QCoreApplication, QEvent
+
+    for name in ("meter_timer", "status_timer"):
+        timer = getattr(win, name, None)
+        if timer is not None:
+            timer.stop()
+    win.tray.hide()
+    win.hide()
+    win.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    QCoreApplication.processEvents()
+
+
+def _error_entry(exc: BaseException) -> dict:
+    return {"error": f"{type(exc).__name__}: {exc}"}
+
+
 def run_gallery(out: pathlib.Path, skins: list[str], themes: list[str],
                 sizes: list[tuple[int, int]]) -> dict:
-    """Render the gallery into ``out`` and return the report. Needs a QApplication."""
+    """Render the gallery into ``out`` and return the report. Needs a QApplication.
+
+    A screen that raises is recorded as ``{"error": ...}`` and the run continues; the report
+    and index are written even then.
+    """
     from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QApplication
 
@@ -115,57 +161,57 @@ def run_gallery(out: pathlib.Path, skins: list[str], themes: list[str],
     from mandible.ui.sample_setup import build_sample_core
 
     app = QApplication.instance() or QApplication([])
-    core = build_sample_core()
-    slot = core.cfg.chains[0].plugins[0]
     report: dict[str, dict] = {}
     images: dict[str, list[str]] = {}
+    core = build_sample_core()
+    try:
+        # Closing the main window must never hide to the tray and raise a toast.
+        core.cfg.close_to_tray = False
+        slot = core.cfg.chains[0].plugins[0]
 
-    def snap(widget, name: str) -> str:
-        app.processEvents()
-        fname = name.replace("|", "__") + ".png"
-        widget.grab().save(str(out / fname))
-        return fname
+        def snap(widget, name: str) -> str:
+            app.processEvents()
+            fname = name.replace("|", "__") + ".png"
+            widget.grab().save(str(out / fname))
+            return fname
 
-    def show_offscreen(widget) -> None:
-        widget.setAttribute(Qt.WA_DontShowOnScreen)
-        widget.show()
-        app.processEvents()
+        def show_offscreen(widget) -> None:
+            widget.setAttribute(Qt.WA_DontShowOnScreen)
+            widget.show()
+            app.processEvents()
 
-    builders = {
-        "settings": lambda: gui.SettingsDialog(core, False, None),
-        "prefx": lambda: gui.PreFXDialog(core, None),
-        "soundboard": lambda: gui.SoundboardDialog(core, None),
-        "hotkey": lambda: gui.HotkeyDialog(core, None, "Set hotkey"),
-        "add_plugin": lambda: gui.AddPluginDialog([], None),
-        "param_map": lambda: gui.PluginParamMapDialog(slot, core, None),
-        "setup_assistant": lambda: SetupAssistantDialog(core, None),
-        "about": lambda: AboutDialog(None),
-    }
+        builders = {
+            "settings": lambda: gui.SettingsDialog(core, False, None),
+            "prefx": lambda: gui.PreFXDialog(core, None),
+            "soundboard": lambda: gui.SoundboardDialog(core, None),
+            "hotkey": lambda: gui.HotkeyDialog(core, None, "Set hotkey"),
+            "add_plugin": lambda: gui.AddPluginDialog([], None),
+            "param_map": lambda: gui.PluginParamMapDialog(slot, core, None),
+            "setup_assistant": lambda: SetupAssistantDialog(core, None),
+            "about": lambda: AboutDialog(None),
+        }
 
-    for skin in skins:
-        for theme in themes:
-            _apply(app, skin, theme)
-            contrast = _contrast(theme)
+        def capture_main(skin: str, theme: str, contrast: list[dict]) -> None:
+            win = build_main_window(core)
+            try:
+                if core.cfg.chains and getattr(win, "chain_list", None) is not None:
+                    win.chain_list.setCurrentRow(0)
+                    app.processEvents()
+                hint = win.minimumSizeHint().expandedTo(win.minimumSize())
+                for w, h in sizes:
+                    win.resize(w, h)
+                    app.processEvents()
+                    key = f"main|{skin}|{theme}|{w}x{h}"
+                    entry = {"min_size": [hint.width(), hint.height()]}
+                    entry.update(_inspect(win, contrast))
+                    report[key] = entry
+                    images[key] = [snap(win, key)]
+            finally:
+                dispose_main_window(win)
 
-            win = gui.MainWindow(core)
-            show_offscreen(win)
-            if core.cfg.chains and getattr(win, "chain_list", None) is not None:
-                win.chain_list.setCurrentRow(0)
-                app.processEvents()
-            hint = win.minimumSizeHint().expandedTo(win.minimumSize())
-            for w, h in sizes:
-                win.resize(w, h)
-                app.processEvents()
-                key = f"main|{skin}|{theme}|{w}x{h}"
-                entry = {"min_size": [hint.width(), hint.height()]}
-                entry.update(_inspect(win, contrast))
-                report[key] = entry
-                images[key] = [snap(win, key)]
-            win.close()
-            win.deleteLater()
-
-            for screen in DIALOGS:
-                dlg = builders[screen]()
+        def capture_dialog(screen: str, skin: str, theme: str, contrast: list[dict]) -> None:
+            dlg = builders[screen]()
+            try:
                 show_offscreen(dlg)
                 key = f"{screen}|{skin}|{theme}|{dlg.width()}x{dlg.height()}"
                 hint = dlg.minimumSizeHint().expandedTo(dlg.minimumSize())
@@ -178,20 +224,46 @@ def run_gallery(out: pathlib.Path, skins: list[str], themes: list[str],
                     _merge(entry, _inspect(dlg, contrast))
                     images[key].append(snap(dlg, key + suffix))
                 report[key] = entry
+            finally:
                 dlg.close()
                 dlg.deleteLater()
-            app.processEvents()
 
-    core.shutdown()
-    (out / "report.json").write_text(json.dumps(report, indent=1), encoding="utf-8")
-    (out / "index.html").write_text(render_index(report, images), encoding="utf-8")
+        for skin in skins:
+            for theme in themes:
+                try:
+                    _apply(app, skin, theme)
+                    contrast = _contrast(theme)
+                except Exception as exc:  # noqa: BLE001 - report and keep going
+                    report[f"main|{skin}|{theme}|all"] = _error_entry(exc)
+                    continue
+                try:
+                    capture_main(skin, theme, contrast)
+                except Exception as exc:  # noqa: BLE001
+                    report[f"main|{skin}|{theme}|error"] = _error_entry(exc)
+                for screen in DIALOGS:
+                    try:
+                        capture_dialog(screen, skin, theme, contrast)
+                    except Exception as exc:  # noqa: BLE001
+                        report[f"{screen}|{skin}|{theme}|error"] = _error_entry(exc)
+                app.processEvents()
+    finally:
+        try:
+            core.shutdown()
+        finally:
+            (out / "report.json").write_text(json.dumps(report, indent=1), encoding="utf-8")
+            (out / "index.html").write_text(render_index(report, images), encoding="utf-8")
     return report
 
 
 def render_index(report: dict, images: dict) -> str:
     rows = []
     for key, entry in report.items():
-        counts = "".join(f"<td>{len(entry[n])}</td>" for n in _LISTS)
+        if "error" in entry:
+            span = len(_LISTS) + 1
+            rows.append(f'<tr><td>{html.escape(key)}</td>'
+                        f'<td colspan="{span}">ERROR: {html.escape(entry["error"])}</td></tr>')
+            continue
+        counts ="".join(f"<td>{len(entry[n])}</td>" for n in _LISTS)
         rows.append(f"<tr><td>{html.escape(key)}</td>"
                     f"<td>{entry['min_size'][0]}x{entry['min_size'][1]}</td>{counts}</tr>")
     cards = []
@@ -232,15 +304,21 @@ def main(argv: list[str] | None = None) -> int:
     out = pathlib.Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     started = time.perf_counter()
-    report = run_gallery(out, args.skins.split(","), args.themes.split(","),
-                         parse_sizes(args.sizes))
-    problems = {n: sum(len(e[n]) for e in report.values()) for n in _LISTS}
-    print(f"{len(report)} screens in {time.perf_counter() - started:.1f}s -> {out}")
-    print("totals: " + ", ".join(f"{n}={c}" for n, c in problems.items()))
-    shutil.rmtree(appdata, ignore_errors=True)
-    code = 1 if args.strict and (problems["overflow"] or problems["clipped_text"]
-                                 or problems["contrast"]) else 0
-    sys.stdout.flush()
+    code = 1
+    try:
+        report = run_gallery(out, args.skins.split(","), args.themes.split(","),
+                             parse_sizes(args.sizes))
+        problems = {n: sum(len(e.get(n, [])) for e in report.values()) for n in _LISTS}
+        problems["errors"] = sum(1 for e in report.values() if "error" in e)
+        print(f"{len(report)} screens in {time.perf_counter() - started:.1f}s -> {out}")
+        print("totals: " + ", ".join(f"{n}={c}" for n, c in problems.items()))
+        failing = (problems["overflow"] or problems["clipped_text"]
+                   or problems["contrast"] or problems["errors"])
+        code = 1 if args.strict and failing else 0
+    finally:
+        shutil.rmtree(appdata, ignore_errors=True)
+        sys.stdout.flush()
+        sys.stderr.flush()
     os._exit(code)
 
 
