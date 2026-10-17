@@ -16,16 +16,16 @@ SKIN = look_mod.BUILTIN_SKINS["skeuomorphic"]
 EMPTY_BY_DESIGN = {("screws", "none")}
 
 
-def render(slot, variant, palette_id, state, size=64):
+def render(slot, variant, palette_id, state, size=64, element=None, width=None):
     from PySide6.QtCore import QRectF
     from PySide6.QtGui import QImage, QPainter
 
     look = look_mod.Look(look_mod.BUILTIN_PALETTES[palette_id], SKIN)
-    element = registry.get(slot, variant)()
-    img = QImage(size, size, QImage.Format.Format_ARGB32)
+    element = element if element is not None else registry.get(slot, variant)()
+    img = QImage(width or size, size, QImage.Format.Format_ARGB32)
     img.fill(0)
     p = QPainter(img)
-    element.paint(p, QRectF(0, 0, size, size), state, look)
+    element.paint(p, QRectF(0, 0, width or size, size), state, look)
     p.end()
     return img
 
@@ -135,3 +135,146 @@ def test_flat_panel_is_one_flat_colour_and_brushed_is_not(qapp):
     assert len(inner) == 1
     assert len({brushed.pixel(32, y) for y in range(8, 56)}) > 1
     assert flat != brushed
+
+
+# ----------------------------------------------- ctor variants Task 7 will construct
+
+def _ctor_cases():
+    from mandible.ui.elements.knobs import FlatRing, Machined, VintageBakelite
+    from mandible.ui.elements.meters import LedSegments, SmoothBar
+    from mandible.ui.elements.switches import BatToggle, Pill, Rocker
+
+    cases = []
+    for cls in (BatToggle, Rocker, Pill):
+        for kw in ({"compact": True}, {"vertical": True}, {"compact": True, "vertical": True}):
+            cases.append(("switch", f"{cls.__name__}{kw}", lambda cls=cls, kw=kw: cls(**kw)))
+    for cls in (Machined, VintageBakelite, FlatRing):
+        cases.append(("knob", f"{cls.__name__}(compact)", lambda cls=cls: cls(compact=True)))
+    cases += [
+        ("meter", "LedSegments.main", LedSegments.main),
+        ("meter", "LedSegments.thin", LedSegments.thin),
+        ("meter", "LedSegments.prepost", LedSegments.prepost),
+        ("meter", "SmoothBar(thin)", lambda: SmoothBar(corner=2.5, size=(80, 8))),
+    ]
+    return cases
+
+
+CTOR_CASES = _ctor_cases()
+CTOR_IDS = [c[1] for c in CTOR_CASES]
+
+
+@pytest.mark.parametrize("slot,name,factory", CTOR_CASES, ids=CTOR_IDS)
+@pytest.mark.parametrize("state", [
+    ElementState(value=0.0),
+    ElementState(active=True, value=0.7, peak=0.9, label="Gain", readout="+3 dB"),
+    ElementState(enabled=False, value=0.5),
+], ids=["off", "on", "disabled"])
+def test_ctor_variants_paint(qapp, slot, name, factory, state):
+    size, width = (30, 80) if slot == "meter" else (64, None)
+    img = render(slot, None, "scarlet", state, size=size, element=factory(), width=width)
+    assert not is_blank(img), name
+
+
+@pytest.mark.parametrize("slot,name,factory",
+                         [c for c in CTOR_CASES if c[0] == "switch"], ids=lambda v: v if isinstance(v, str) else "")
+def test_ctor_switches_differ_between_off_and_on(qapp, slot, name, factory):
+    off = render(slot, None, "scarlet", ElementState(active=False), element=factory())
+    on = render(slot, None, "scarlet", ElementState(active=True), element=factory())
+    assert off != on, name
+
+
+@pytest.mark.parametrize("slot,name,factory",
+                         [c for c in CTOR_CASES if c[0] in ("knob", "meter")], ids=lambda v: v if isinstance(v, str) else "")
+def test_ctor_knobs_and_meters_differ_with_value(qapp, slot, name, factory):
+    size, width = (30, 80) if slot == "meter" else (64, None)
+    low = render(slot, None, "scarlet", ElementState(value=0.1), size=size, element=factory(), width=width)
+    high = render(slot, None, "scarlet", ElementState(value=0.9), size=size, element=factory(), width=width)
+    assert low != high, name
+
+
+@pytest.mark.parametrize("variant", registry.variants("knob"))
+@pytest.mark.parametrize("compact", [False, True])
+def test_knob_label_and_readout_are_painted(qapp, variant, compact):
+    cls = registry.get("knob", variant)
+    bare = render("knob", variant, "scarlet", ElementState(value=0.5), element=cls(compact=compact))
+    label = render("knob", variant, "scarlet", ElementState(value=0.5, label="Gain"),
+                   element=cls(compact=compact))
+    readout = render("knob", variant, "scarlet", ElementState(value=0.5, readout="+3.0 dB"),
+                     element=cls(compact=compact))
+    both = render("knob", variant, "scarlet",
+                  ElementState(value=0.5, label="Gain", readout="+3.0 dB"), element=cls(compact=compact))
+    assert bare != label and bare != readout and label != both and readout != both
+
+
+def test_machined_readout_draws_an_lcd_box(qapp):
+    from mandible.ui.elements.knobs import Machined
+
+    bare = render("knob", None, "scarlet", ElementState(value=0.5), element=Machined())
+    with_box = render("knob", None, "scarlet", ElementState(value=0.5, readout=" "), element=Machined())
+    assert bare != with_box
+
+
+def _lit_segments(img, meter, look):
+    """Indices of segments whose centre pixel is the peak-marker colour (text.primary)."""
+    from PySide6.QtGui import QColor
+
+    n = meter.segments
+    w, h = img.width(), img.height()
+    seg_w = max(meter.min_seg_w, (w - (n - 1) * meter.gap) / n)
+    want = QColor(look.palette.color("text.primary")).rgb()
+    out = []
+    for i in range(n):
+        x = int(i * (seg_w + meter.gap) + seg_w / 2)
+        if img.pixelColor(x, h // 2).rgb() == want:
+            out.append(i)
+    return out
+
+
+def _paint_meter(meter, peak, width=200, height=13):
+    from PySide6.QtCore import QRectF
+    from PySide6.QtGui import QImage, QPainter
+
+    look = look_mod.Look(look_mod.BUILTIN_PALETTES["scarlet"], SKIN)
+    img = QImage(width, height, QImage.Format.Format_ARGB32)
+    img.fill(0)
+    p = QPainter(img)
+    meter.paint(p, QRectF(0, 0, width, height), ElementState(value=0.0, peak=peak), look)
+    p.end()
+    return img, look
+
+
+@pytest.mark.parametrize("preset,segments,offset,tiny_lit", [
+    ("main", 26, 0, [0]),       # source LevelMeter: round(pk * n), no -1
+    ("thin", 18, -1, []),       # source ThinLevelMeter / PluginPrePostMeter: round(pk * n) - 1
+    ("prepost", 14, -1, []),
+])
+def test_led_peak_marker_matches_each_source_meter(qapp, preset, segments, offset, tiny_lit):
+    from mandible.ui.elements.meters import LedSegments
+
+    meter = getattr(LedSegments, preset)()
+    assert (meter.segments, meter.peak_offset) == (segments, offset)
+    for peak in (0.25, 0.5, 0.9):
+        img, look = _paint_meter(meter, peak)
+        expected = round(peak * segments) + offset
+        assert _lit_segments(img, meter, look) == [expected], (preset, peak)
+    # A tiny peak: the main meter lights segment 0, the others draw nothing.
+    img, look = _paint_meter(meter, 0.01)
+    assert _lit_segments(img, meter, look) == tiny_lit
+    # Full scale: the main meter's offset 0 puts the marker past the ladder; the others hit the top.
+    img, look = _paint_meter(meter, 1.0)
+    assert _lit_segments(img, meter, look) == ([] if offset == 0 else [segments - 1])
+    # No peak: no marker.
+    img, look = _paint_meter(meter, None)
+    assert _lit_segments(img, meter, look) == []
+
+
+def test_smooth_bar_peak_marker_position(qapp):
+    from mandible.ui.elements.meters import SmoothBar
+
+    img, look = _paint_meter(SmoothBar(), 0.5, width=200, height=13)
+    from PySide6.QtGui import QColor
+    want = QColor(look.palette.color("text.primary")).rgb()
+    assert img.pixelColor(101, 6).rgb() == want        # marker is 2 px wide at w * 0.5
+    assert img.pixelColor(60, 6).rgb() != want
+    none_img, _ = _paint_meter(SmoothBar(), None, width=200, height=13)
+    assert none_img.pixelColor(101, 6).rgb() != want

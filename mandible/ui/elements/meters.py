@@ -23,20 +23,46 @@ def _clamp01(v: float) -> float:
 class LedSegments(Element):
     """Segmented LED ladder: green, then amber from ``warn_at``, red from ``danger_at``.
 
-    Defaults are the 26-segment main meter; the 18-segment thin meter used
-    ``(18, 1.5, 1.2, 12/18, 15/18)`` and the 14-segment plugin pre/post meter
-    ``(14, 1.6, 1.0, 9/14, 12/14)``.
+    Defaults are the 26-segment main meter. ``thin()`` and ``prepost()`` reproduce the
+    18-segment condensed-strip meter and the 14-segment plugin pre/post meter exactly.
+    The peak-hold segment is ``round(peak * segments) + peak_offset`` (the main meter
+    used offset 0, the other two -1); an index outside the ladder lights nothing.
     """
 
     def __init__(self, segments: int = 26, gap: float = 2.0, corner: float = 1.5,
                  warn_at: float = 18 / 26, danger_at: float = 22 / 26,
-                 size: tuple[int, int] = (140, 13)) -> None:
+                 size: tuple[int, int] = (140, 13), peak_offset: int = 0,
+                 min_seg_w: float = 1.0) -> None:
         self.segments = int(segments)
+        self.peak_offset = int(peak_offset)
+        self.min_seg_w = float(min_seg_w)
         self.gap = float(gap)
         self.corner = float(corner)
         self.warn_at = float(warn_at)
         self.danger_at = float(danger_at)
         self._size = size
+
+    @classmethod
+    def main(cls) -> "LedSegments":
+        """26 segments: the main channel meter."""
+        return cls()
+
+    @classmethod
+    def thin(cls) -> "LedSegments":
+        """18 segments: the 8 px condensed-strip meter."""
+        return cls(18, 1.5, 1.2, 12 / 18, 15 / 18, size=(80, 8), peak_offset=-1, min_seg_w=1.5)
+
+    @classmethod
+    def prepost(cls) -> "LedSegments":
+        """14 segments: one row of the plugin pre/post meter."""
+        return cls(14, 1.6, 1.0, 9 / 14, 12 / 14, size=(78, 9), peak_offset=-1, min_seg_w=1.5)
+
+    def peak_segment(self, peak: float | None) -> int | None:
+        """Index of the lit peak segment for ``peak`` 0..1 (None if hidden or off the ladder)."""
+        if peak is None:
+            return None
+        idx = int(round(_clamp01(peak) * self.segments)) + self.peak_offset
+        return idx if 0 <= idx < self.segments else None
 
     def _zone(self, look: Look, i: int):
         frac = i / self.segments
@@ -51,11 +77,9 @@ class LedSegments(Element):
 
     def draw(self, p: QPainter, w: float, h: float, state: ElementState, look: Look) -> None:
         n = self.segments
-        seg_w = max(1.0, (w - (n - 1) * self.gap) / n)
+        seg_w = max(self.min_seg_w, (w - (n - 1) * self.gap) / n)
         active = int(round(_clamp01(state.value) * n))
-        peak_seg = None
-        if state.peak is not None:
-            peak_seg = min(n - 1, max(0, int(round(_clamp01(state.peak) * n)) - 1))
+        peak_seg = self.peak_segment(state.peak)
         p.setPen(Qt.PenStyle.NoPen)
         for i in range(n):
             on, off = self._zone(look, i)
