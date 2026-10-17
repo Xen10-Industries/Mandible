@@ -10,8 +10,7 @@ from PySide6.QtGui import QLinearGradient, QPainter, QPainterPath, QPen
 
 from ..look import Look
 from . import registry
-from .base import Element, ElementState, alpha, metal, mix, tok
-from .screws import draw_silver_screw
+from .base import Element, ElementState, alpha, metal, mix, tok, wood
 
 __all__ = ["MetalRack", "WoodCheeks", "Frameless", "resolve_frame"]
 
@@ -23,19 +22,6 @@ def resolve_frame(look: Look, override: str = "auto") -> str:
         return override
     chosen = look.skin.elements.get("frame", registry.DEFAULTS["frame"])
     return chosen if chosen in registry.variants("frame") else registry.DEFAULTS["frame"]
-
-
-def _wood(look: Look):
-    """Walnut ramp derived from the fixed-hue amber status colour (dark .. light)."""
-    warn = tok(look, "status.warn")
-    base = tok(look, "status.warn.subtle")
-    return {
-        "light": mix(base, warn, 0.30).darker(120),
-        "mid": mix(base, warn, 0.18).darker(115),
-        "dark": base,
-        "deep": base.darker(170),
-        "edge": base.darker(300),
-    }
 
 
 class MetalRack(Element):
@@ -123,32 +109,42 @@ class MetalRack(Element):
 
 
 class WoodCheeks(Element):
-    """Sculpted walnut cheek blocks, valence rail and padded leather armrest bolster."""
+    """Sculpted walnut cheek blocks, valence rail and padded leather armrest bolster; the
+    skin's ``screws`` element fixes the four corners (one top and one bottom per cheek)."""
 
-    CHEEK_W = 26.0
+    CHEEK_W = 22.0
     TOP_RAIL_H = 12.0
     BOLSTER_H = 16.0
+    SCREW_PX = 12.0
+    CORNER_Y = 24.0   # corner screw centre from the top / bottom edge
 
     def content_margins(self, look: Look) -> tuple[int, int, int, int]:
-        return (28, 14, 28, 18)
+        # On the spacing scale (24 / 12 / 16), clear of the cheeks, rail and bolster.
+        return (24, 12, 24, 16)
+
+    def corner_screws(self, w: float, h: float) -> list[QPointF]:
+        """Centres of the four corner screws (one per cheek, top and bottom)."""
+        xs = (0.5 + self.CHEEK_W / 2.0, w - 0.5 - self.CHEEK_W / 2.0)
+        ys = (self.CORNER_Y, h - self.CORNER_Y)
+        return [QPointF(x, y) for y in ys for x in xs]
 
     def draw(self, p: QPainter, w: float, h: float, state: ElementState, look: Look) -> None:
-        wood = _wood(look)
+        wd = wood(look)
         m = metal(look)
         win = tok(look, "bg.window")
         cheek_w, top_rail_h, bolster_h = self.CHEEK_W, self.TOP_RAIL_H, self.BOLSTER_H
 
         # Top carved wood valence rail
         top_grad = QLinearGradient(0, 0, 0, top_rail_h)
-        top_grad.setColorAt(0.0, wood["mid"])
-        top_grad.setColorAt(0.5, wood["dark"])
-        top_grad.setColorAt(1.0, wood["deep"])
-        p.setPen(QPen(wood["edge"], 1.0))
+        top_grad.setColorAt(0.0, wd.mid)
+        top_grad.setColorAt(0.5, wd.dark)
+        top_grad.setColorAt(1.0, wd.deep)
+        p.setPen(QPen(wd.edge, 1.0))
         p.setBrush(top_grad)
         p.drawRect(QRectF(cheek_w - 2.0, 0.5, w - 2 * cheek_w + 4.0, top_rail_h))
 
         # Inner console well
-        p.setPen(QPen(wood["edge"].darker(130), 1.6))
+        p.setPen(QPen(wd.edge.darker(130), 1.6))
         p.setBrush(win)
         p.drawRect(QRectF(cheek_w, top_rail_h, w - 2 * cheek_w, h - top_rail_h - bolster_h))
 
@@ -156,31 +152,31 @@ class WoodCheeks(Element):
         bol_y = h - bolster_h
         leather = tok(look, "bg.raised")
         bol_grad = QLinearGradient(0, bol_y, 0, h)
-        bol_grad.setColorAt(0.0, mix(leather, wood["dark"], 0.35))
+        bol_grad.setColorAt(0.0, mix(leather, wd.dark, 0.35))
         bol_grad.setColorAt(0.35, tok(look, "bg.inset"))
         bol_grad.setColorAt(1.0, win.darker(150))
         p.setPen(QPen(m.black, 1.2))
         p.setBrush(bol_grad)
         p.drawRect(QRectF(cheek_w - 2.0, bol_y, w - 2 * cheek_w + 4.0, bolster_h - 0.5))
         # Warm stitch line along the top of the bolster
-        p.setPen(QPen(alpha(wood["light"].lighter(220), 75), 1.0, Qt.PenStyle.DashLine))
+        p.setPen(QPen(alpha(wd.light.lighter(220), 75), 1.0, Qt.PenStyle.DashLine))
         p.drawLine(QPointF(cheek_w + 8.0, bol_y + 3.0), QPointF(w - cheek_w - 8.0, bol_y + 3.0))
 
         # Left and right sculpted wood cheek blocks
         for cx_left in (0.5, w - cheek_w - 0.5):
             wg = QLinearGradient(cx_left, 0, cx_left + cheek_w, 0)
-            wg.setColorAt(0.0, wood["light"])
-            wg.setColorAt(0.22, wood["mid"])
-            wg.setColorAt(0.65, wood["dark"])
-            wg.setColorAt(1.0, wood["deep"])
-            p.setPen(QPen(wood["edge"], 1.2))
+            wg.setColorAt(0.0, wd.light)
+            wg.setColorAt(0.22, wd.mid)
+            wg.setColorAt(0.65, wd.dark)
+            wg.setColorAt(1.0, wd.deep)
+            p.setPen(QPen(wd.edge, 1.2))
             p.setBrush(wg)
-            p.drawRoundedRect(QRectF(cx_left, 0.5, cheek_w, h - 1.0), 7.0, 7.0)
+            p.drawRoundedRect(QRectF(cx_left, 0.5, cheek_w, h - 1.0), 6.0, 6.0)
 
             # Organic vertical grain fibres
-            for gi in range(5):
-                gx = cx_left + 4.0 + gi * 4.4
-                p.setPen(QPen(alpha(wood["edge"], 70 if gi % 2 == 0 else 40), 1.1))
+            for gi in range(4):
+                gx = cx_left + 4.0 + gi * 4.6
+                p.setPen(QPen(alpha(wd.edge, 70 if gi % 2 == 0 else 40), 1.1))
                 path = QPainterPath(QPointF(gx, 5.0))
                 path.cubicTo(
                     QPointF(gx + (1.6 if gi % 2 == 0 else -1.4), h * 0.33),
@@ -192,16 +188,15 @@ class WoodCheeks(Element):
 
             # Inner chamfered highlight edge
             hl_x = cx_left + cheek_w - 1.5 if cx_left < 10 else cx_left + 1.5
-            p.setPen(QPen(alpha(wood["light"].lighter(260), 45), 1.0))
+            p.setPen(QPen(alpha(wd.light.lighter(260), 45), 1.0))
             p.drawLine(QPointF(hl_x, 6.0), QPointF(hl_x, h - 6.0))
 
-            # Silver mounting screws on dark steel cup washers
-            sc_x = cx_left + cheek_w / 2.0
-            for idx_s, sy in enumerate((34.0, h / 2.0, h - 34.0)):
-                p.setPen(QPen(wood["edge"], 1.0))
-                p.setBrush(m.dark)
-                p.drawEllipse(QPointF(sc_x, sy), 6.6, 6.6)
-                draw_silver_screw(p, sc_x, sy, look, r=5.2, angle_deg=40.0 + idx_s * 30.0)
+        # The four corner screws, drawn by the skin's screws element (none: no screws)
+        screw = registry.get("screws", registry.resolve(look.skin.elements)[0]["screws"])()
+        half = self.SCREW_PX / 2.0
+        for c in self.corner_screws(w, h):
+            screw.paint(p, QRectF(c.x() - half, c.y() - half, self.SCREW_PX, self.SCREW_PX),
+                        ElementState(), look)
 
 
 class Frameless(Element):

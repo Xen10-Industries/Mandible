@@ -120,13 +120,13 @@ def test_resolve_frame_follows_the_skin_unless_overridden():
 
 
 def test_frame_margins_match_the_old_chassis():
-    """The metal rack's margins sit on the spacing scale (Task 12); the others are as before
-    until their skins' standard tasks."""
+    """The metal rack's (Task 12) and wood cheeks' (Task 13) margins sit on the spacing scale;
+    frameless is as before until its skin's standard task."""
     from mandible.ui.elements.frames import Frameless, MetalRack, WoodCheeks
 
     look = look_mod.current_look()
     assert MetalRack().content_margins(look) == (24, 12, 24, 12)
-    assert WoodCheeks().content_margins(look) == (28, 14, 28, 18)
+    assert WoodCheeks().content_margins(look) == (24, 12, 24, 16)
     assert Frameless().content_margins(look) == (2, 2, 2, 2)
 
 
@@ -376,3 +376,35 @@ def test_metal_rack_keeps_only_its_four_corner_screws(qapp, monkeypatch):
     corners = frame.corner_screws(400, 300)
     assert len(corners) == 4
     assert {round(c.x()) for c in corners} == {12, 388} and {round(c.y()) for c in corners} == {24, 276}
+
+
+def test_wood_cheeks_keep_only_their_four_corner_screws(qapp, monkeypatch):
+    """The vintage frame paints exactly four screws, through the skin's screws element (one
+    per cheek corner, none with ``screws: none``), all on the cheeks, clear of the content."""
+    from PySide6.QtCore import QRectF
+    from PySide6.QtGui import QImage, QPainter
+
+    from mandible.ui.elements import screws
+    from mandible.ui.elements.frames import WoodCheeks
+
+    painted = []
+    real = screws.CornersOnly.draw
+    monkeypatch.setattr(screws.CornersOnly, "draw",
+                        lambda self, p, w, h, st, lk: (painted.append((w, h)), real(self, p, w, h, st, lk)))
+    img = QImage(400, 300, QImage.Format.Format_ARGB32)
+    img.fill(0)
+    frame = WoodCheeks()
+    vintage = look_mod.Look(look_mod.BUILTIN_PALETTES["amber"], look_mod.BUILTIN_SKINS["vintage"])
+    for look, want in ((vintage, 4), (look_mod.with_elements(vintage, screws="none"), 0)):
+        painted.clear()
+        p = QPainter(img)
+        frame.paint(p, QRectF(0, 0, 400, 300), ElementState(), look)
+        p.end()
+        assert len(painted) == want, look.skin.elements["screws"]
+    corners = frame.corner_screws(400, 300)
+    assert len(corners) == 4
+    assert {round(c.y()) for c in corners} == {24, 276}
+    left, _top, right, _bottom = frame.content_margins(vintage)
+    half = frame.SCREW_PX / 2
+    for c in corners:   # every screw sits on a cheek, outside the content rect
+        assert c.x() + half <= left or c.x() - half >= 400 - right, c

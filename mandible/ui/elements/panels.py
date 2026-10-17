@@ -60,10 +60,16 @@ class Brushed(_Panel):
 
 
 class Lacquer(_Panel):
-    """Card gradient under a glossy highlight along the top edge."""
+    """The stylesheet's lacquer surface: a thin glossy band (``bg.overlay``) on top, a deeper
+    finish (``bg.inset``) at the bottom, and a highlight along the top edge."""
 
     def raised_brush(self, look: Look, h: float):
-        return _card_gradient(look, h)
+        g = QLinearGradient(0, 0, 0, h)
+        g.setColorAt(0.0, tok(look, "bg.overlay"))
+        g.setColorAt(0.08, tok(look, "bg.raised"))
+        g.setColorAt(0.6, tok(look, "bg.panel"))
+        g.setColorAt(1.0, tok(look, "bg.inset"))
+        return g
 
     def finish(self, p: QPainter, body: QRectF, radius: float, look: Look) -> None:
         p.setPen(QPen(alpha(tok(look, "text.primary"), 38), 1.0, Qt.PenStyle.SolidLine,

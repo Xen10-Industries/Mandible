@@ -16,7 +16,7 @@ import sys
 import pytest
 from _probe import run_probe
 
-SKINS = ["skeuomorphic"]
+SKINS = ["skeuomorphic", "vintage"]
 THEMES = ("scarlet", "cyan", "stealth", "amber")
 SIZES = [(1024, 640), (1280, 720), (1920, 1080)]
 WIN32 = sys.platform == "win32"
@@ -248,3 +248,111 @@ def test_status_pills_never_look_like_buttons():
     for state in ("off", "on", "warn", "danger"):
         rule = re.search(r'QLabel#statusPill\[state="%s"\] \{([^}]*)\}' % state, qss).group(1)
         assert "border-color" not in rule and "border:" not in rule, state
+
+
+# ------------------------------------------------------------------ vintage details
+
+def _oklab_delta(a: str, b: str) -> float:
+    """Euclidean distance in OKLab (perceptual; ~0.02 is a just-noticeable difference)."""
+    import math
+
+    from mandible.ui.palette_gen import hex_to_oklch
+
+    def lab(hex_):
+        light, chroma, hue = hex_to_oklch(hex_)
+        return (light, chroma * math.cos(math.radians(hue)), chroma * math.sin(math.radians(hue)))
+
+    return math.dist(lab(a), lab(b))
+
+
+@pytest.mark.parametrize("palette_id", THEMES)
+def test_vintage_wood_and_bakelite_stay_distinct_from_the_accent(palette_id):
+    """Walnut and bakelite come from status.warn's hue at fixed low lightness, never from the
+    accent, so the accent (active / primary states) stays distinguishable from them, Amber's
+    orange accent included."""
+    from mandible.ui.elements.base import wood
+    from mandible.ui.look import BUILTIN_PALETTES, BUILTIN_SKINS, Look
+
+    look = Look(BUILTIN_PALETTES[palette_id], BUILTIN_SKINS["vintage"])
+    accent = look.palette.color("accent")
+    wd = wood(look)
+    for name in ("light", "mid", "dark", "deep", "bakelite"):
+        colour = getattr(wd, name).name()
+        assert _oklab_delta(colour, accent) >= 0.2, (palette_id, name, colour, accent)
+    # Same skin, same wood, whatever the accent: the derivation never reads it.
+    other = Look(BUILTIN_PALETTES["cyan" if palette_id != "cyan" else "amber"], look.skin)
+    assert wood(other).light.name() == wd.light.name()
+
+
+def test_vintage_shape_is_tight_not_rounded_modern():
+    import re
+
+    from mandible.ui.look import BUILTIN_PALETTES, BUILTIN_SKINS, Look
+    from mandible.ui.stylesheet import build_qss
+
+    shape = BUILTIN_SKINS["vintage"].shape
+    assert shape["radius.panel"] <= 3 and shape["radius.control"] <= 3
+    qss = build_qss(Look(BUILTIN_PALETTES["amber"], BUILTIN_SKINS["vintage"]))
+    bay = re.search(r"QFrame#modularBay[^{]*\{([^}]*)\}", qss).group(1)
+    assert "border-radius: 3px" in bay
+
+
+@pytest.mark.parametrize("palette_id", THEMES)
+def test_lacquer_panels_are_their_own_material_and_keep_text_readable(palette_id):
+    """Vintage (lacquer) raised surfaces differ from skeuomorphic (brushed) ones: a thin gloss
+    band on top. Every gradient stop is a palette surface on which body text keeps 4.5:1."""
+    import re
+
+    from mandible.ui.look import BUILTIN_PALETTES, BUILTIN_SKINS, Look
+    from mandible.ui.palette_gen import contrast_ratio
+    from mandible.ui.stylesheet import build_qss
+
+    pal = BUILTIN_PALETTES[palette_id]
+    vintage = build_qss(Look(pal, BUILTIN_SKINS["vintage"]))
+    skeuo = build_qss(Look(pal, BUILTIN_SKINS["skeuomorphic"]))
+    for selector in (r'QFrame\[surface="raised"\]', r"QFrame#pluginRackCard",
+                     r"QFrame#masterHeadStrip"):
+        lac = re.search(selector + r" \{([^}]*)\}", vintage).group(1)
+        brushed = re.search(selector + r" \{([^}]*)\}", skeuo).group(1)
+        assert lac != brushed, selector
+        assert pal.color("bg.overlay") in lac, selector
+        stops = re.findall(r"stop:[0-9.]+ (#[0-9a-fA-F]{6})", lac)
+        assert len(stops) >= 3, selector
+        for colour in stops:
+            for text in ("text.primary", "text.secondary"):
+                ratio = contrast_ratio(pal.color(text), colour)
+                assert ratio >= 4.5, (selector, text, colour, round(ratio, 2))
+
+
+@pytest.mark.parametrize("palette_id", THEMES)
+def test_rocker_cap_is_lacquer_from_the_surfaces(qapp, palette_id):
+    """The rocker's lifted cap is a dark lacquer face from the palette surfaces: no bright
+    readout-coloured (amber in Amber) cap edge and no accent, on or off."""
+    from PySide6.QtCore import QRectF
+    from PySide6.QtGui import QColor, QImage, QPainter
+
+    from mandible.ui.elements.base import ElementState
+    from mandible.ui.elements.switches import Rocker
+    from mandible.ui.look import BUILTIN_PALETTES, BUILTIN_SKINS, Look
+
+    look = Look(BUILTIN_PALETTES[palette_id], BUILTIN_SKINS["vintage"])
+    banned = [QColor(look.palette.color(t)) for t in ("readout.text", "accent")]
+    for element in (Rocker(), Rocker(compact=True), Rocker(vertical=True)):
+        size = element.size_hint(look)
+        for active in (True, False):
+            img = QImage(size.width() * 4, size.height() * 4, QImage.Format.Format_ARGB32)
+            img.fill(0)
+            p = QPainter(img)
+            p.scale(4, 4)
+            element.paint(p, QRectF(0, 0, size.width(), size.height()),
+                          ElementState(active=active), look)
+            p.end()
+            for y in range(img.height()):
+                for x in range(img.width()):
+                    c = img.pixelColor(x, y)
+                    if c.alpha() < 200:
+                        continue
+                    for b in banned:
+                        assert max(abs(c.red() - b.red()), abs(c.green() - b.green()),
+                                   abs(c.blue() - b.blue())) > 24, (
+                            element.vertical, element.compact, active, x, y, c.name(), b.name())

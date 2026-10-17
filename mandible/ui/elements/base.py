@@ -7,13 +7,15 @@ glass and wood are derived from those tokens with QColor arithmetic (``mix``,
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 
 from PySide6.QtCore import QRectF, QSize
 from PySide6.QtGui import QColor, QPainter
 
 from ..look import Look
 
-__all__ = ["ElementState", "Element", "tok", "mix", "alpha", "metal", "Metal", "DISABLED_OPACITY"]
+__all__ = ["ElementState", "Element", "tok", "mix", "alpha", "metal", "Metal", "wood", "Wood",
+           "DISABLED_OPACITY"]
 
 DISABLED_OPACITY = 0.4
 
@@ -76,6 +78,38 @@ class Metal:
 
 def metal(look: Look) -> Metal:
     return Metal(look)
+
+
+# Walnut and bakelite: OKLCH (lightness, chroma) steps at the hue of the fixed-hue
+# ``status.warn`` (amber, ~75 degrees), never derived from the accent. Lightness stays at or
+# below 0.38, so the warm wood keeps well clear of any accent (a built-in or derived accent
+# clears 3:1 on bg.panel, which puts it at OKLCH L >= ~0.55), the Amber palette's included.
+_WOOD_STEPS = {"light": (0.37, 0.074), "mid": (0.32, 0.066), "dark": (0.26, 0.055),
+               "deep": (0.195, 0.042), "edge": (0.15, 0.03)}
+_BAKELITE_STEP = (0.245, 0.045)
+
+
+@lru_cache(maxsize=16)
+def _warm_ramp(warn_hex: str) -> dict[str, str]:
+    from ..palette_gen import hex_to_oklch, oklch_to_hex
+
+    hue = hex_to_oklch(warn_hex)[2]
+    ramp = {name: oklch_to_hex(l, c, hue) for name, (l, c) in _WOOD_STEPS.items()}
+    ramp["bakelite"] = oklch_to_hex(*_BAKELITE_STEP, hue)
+    return ramp
+
+
+class Wood:
+    """Walnut ramp (``light`` .. ``edge``) and the ``bakelite`` knob body for the vintage skin."""
+
+    def __init__(self, look: Look) -> None:
+        ramp = _warm_ramp(look.palette.color("status.warn"))
+        self.light, self.mid, self.dark, self.deep, self.edge, self.bakelite = (
+            QColor(ramp[k]) for k in ("light", "mid", "dark", "deep", "edge", "bakelite"))
+
+
+def wood(look: Look) -> Wood:
+    return Wood(look)
 
 
 class Element:

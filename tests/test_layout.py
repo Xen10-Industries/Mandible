@@ -104,8 +104,11 @@ def test_flow_actions_reachable_at_every_size(sweep):
     _assert_flow_actions_reachable(sweep, "sweep")
 
 
-# Widths between the breakpoints: compact strip while folded, hidden strip while unfolded.
-IN_BETWEEN = [(1100, 720), (1150, 720), (1180, 720), (1200, 720), (1240, 720)]
+# Widths around the breakpoints: hidden strip just below 1100 px, compact strip from 1100 px
+# with the actions folded (below 1180 px) and unfolded. (With every frame's margins on the
+# spacing scale no built-in skin hides the strip while unfolded any more; that MORE-menu path
+# is covered in-process by test_more_menu_items_follow_what_is_hidden.)
+IN_BETWEEN = [(1090, 720), (1100, 720), (1150, 720), (1180, 720), (1200, 720), (1240, 720)]
 
 
 def test_flow_actions_reachable_between_breakpoints(tmp_path):

@@ -13,7 +13,7 @@ from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPen
 
 from ..look import Look, font_px
 from . import registry
-from .base import Element, ElementState, alpha, metal, mix, tok
+from .base import Element, ElementState, alpha, metal, mix, tok, wood
 
 __all__ = ["Machined", "VintageBakelite", "FlatRing", "TITLE_H", "READOUT_H", "KNOB_SIZE",
            "COMPACT_KNOB_SIZE"]
@@ -155,7 +155,7 @@ class VintageBakelite(_Knob):
         frac = max(0.0, min(1.0, float(state.value)))
         m = metal(look)
         accent = tok(look, "accent")
-        bake = tok(look, "status.warn.subtle")        # warm brown-black bakelite
+        bake = wood(look).bakelite                    # warm brown-black bakelite
         cx, cy, radius = self._geometry(w)
         angle_rad = math.radians(_START - frac * _SWEEP)
         self._title(p, w, state.label, tok(look, "text.primary"))

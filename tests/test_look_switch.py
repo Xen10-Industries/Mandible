@@ -393,7 +393,8 @@ def test_chassis_margins_follow_frame(qapp, restore_look):
         m = frame.layout().contentsMargins()
         assert (m.left(), m.top(), m.right(), m.bottom()) == (2, 2, 2, 2)
         set_look(_look("vintage", "scarlet"))
-        assert frame.layout().contentsMargins().bottom() == 18
+        m = frame.layout().contentsMargins()
+        assert (m.left(), m.top(), m.right(), m.bottom()) == (24, 12, 24, 16)
     finally:
         frame.deleteLater()
 

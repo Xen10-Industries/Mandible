@@ -35,7 +35,9 @@ def build_qss(look: "Look") -> str:
     """Return the application stylesheet for ``look`` (cached per Look)."""
     t = look.palette.color
     shape = look.skin.shape
-    flat = look.skin.elements.get("panel") == "flat"
+    panel = look.skin.elements.get("panel")
+    flat = panel == "flat"
+    lacquer = panel == "lacquer"
 
     # ---- palette tokens (old gui.THEMES key in the comment)
     win = t("bg.window")            # bg_win
@@ -80,6 +82,14 @@ def build_qss(look: "Look") -> str:
     head_bg = card if flat else f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {alt}, stop:1 {win})"
     bay_bg = card if flat else win
     raised_bg = alt if flat else f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {alt}, stop:1 {card})"
+    if lacquer:
+        # Lacquer: a thin glossy band (bg.overlay) at the top of raised surfaces and a deeper
+        # finish towards the bottom (bg.inset); brushed metal keeps the plain card gradient.
+        # Every stop is a palette surface that body text clears 4.5:1 on.
+        head_bg = (f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {overlay}, stop:0.12 {alt}, "
+                   f"stop:1 {win})")
+        raised_bg = (f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {overlay}, stop:0.08 {alt}, "
+                     f"stop:0.6 {card}, stop:1 {inset})")
 
     # Button tiers: rules of equal specificity go base, checked, status state, hover, pressed,
     # focus, disabled, so focus and disabled always show whatever else is set. No button has

@@ -186,10 +186,10 @@ class Rocker(_Switch):
         else:
             lifted, sunk = (second, first) if active else (first, second)
 
-        face_top = tok(look, "bg.overlay")
-        face_bot = tok(look, "bg.raised")
+        # Lacquer cap: a glossy dark lacquer face from the palette surfaces, the same in both
+        # states (the state reads from which half is lifted, the glyphs and the pilot LED).
+        gloss = tok(look, "text.primary")
         dark_pad = tok(look, "bg.inset")
-
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(dark_pad)
         p.drawRoundedRect(sunk, 1.5, 1.5)
@@ -197,28 +197,16 @@ class Rocker(_Switch):
             rg = QLinearGradient(lifted.left(), lifted.top(), lifted.right(), lifted.bottom())
         else:
             rg = QLinearGradient(lifted.left(), lifted.top(), lifted.left(), lifted.bottom())
-        rg.setColorAt(0.0, face_top)
-        rg.setColorAt(1.0, face_bot)
+        rg.setColorAt(0.0, mix(tok(look, "bg.overlay"), gloss, 0.12))
+        rg.setColorAt(0.5, tok(look, "bg.raised"))
+        rg.setColorAt(1.0, mix(tok(look, "bg.raised"), dark_pad, 0.6))
         p.setBrush(QBrush(rg))
         p.drawRoundedRect(lifted, 1.5, 1.5)
 
-        # Edge highlight on the lifted pad
-        if active:
-            p.setPen(QPen(tok(look, "readout.text"), 1.0))
-            if self.vertical:
-                p.drawLine(QPointF(lifted.left() + 1, lifted.top() + 1),
-                           QPointF(lifted.right() - 1, lifted.top() + 1))
-            else:
-                p.drawLine(QPointF(lifted.left(), lifted.top() + 1),
-                           QPointF(lifted.right() - 2, lifted.top() + 1))
-        else:
-            p.setPen(QPen(m.mid, 1.0))
-            if self.vertical:
-                p.drawLine(QPointF(lifted.left() + 1, lifted.bottom() - 1),
-                           QPointF(lifted.right() - 1, lifted.bottom() - 1))
-            else:
-                p.drawLine(QPointF(lifted.left() + 2, lifted.top() + 1),
-                           QPointF(lifted.right(), lifted.top() + 1))
+        # Gloss highlight along the cap's top edge
+        p.setPen(QPen(alpha(gloss, 64), 1.0, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        p.drawLine(QPointF(lifted.left() + 1.5, lifted.top() + 1.0),
+                   QPointF(lifted.right() - 1.5, lifted.top() + 1.0))
 
         # Glyphs: a lit dot on the lifted pad when on; a red ring when off
         if active:

@@ -211,7 +211,8 @@ BUILTIN_PALETTES: dict[str, Palette] = {
 # Shape tokens per skin (radius.control, radius.panel in px; shadow.depth 0-2).
 _SHAPES: dict[str, dict[str, float]] = {
     "skeuomorphic": {"radius.control": 4, "radius.panel": 6, "border.width": 1, "shadow.depth": 2},
-    "vintage": {"radius.control": 6, "radius.panel": 8, "border.width": 1, "shadow.depth": 1},
+    # Vintage: tight 3 px corners (the old console character), not rounded-modern.
+    "vintage": {"radius.control": 3, "radius.panel": 3, "border.width": 1, "shadow.depth": 1},
     "minimal": {"radius.control": 8, "radius.panel": 10, "border.width": 1, "shadow.depth": 0},
 }
 
