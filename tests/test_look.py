@@ -202,3 +202,36 @@ def test_set_look_without_app_does_not_fail(qapp, restore_look, monkeypatch):
 def test_skin_dataclass_shape():
     s = Skin("x", "X", {"frame": "metal_rack"}, {"radius.control": 4.0})
     assert s.id == "x"
+
+
+def test_palette_skin_look_are_hashable_by_id():
+    pal, skin = BUILTIN_PALETTES["amber"], BUILTIN_SKINS["vintage"]
+    look = Look(pal, skin)
+    assert hash(pal) == hash(BUILTIN_PALETTES["amber"])
+    assert hash(skin) == hash(BUILTIN_SKINS["vintage"])
+    assert hash(look) == hash(Look(pal, skin)) == hash((pal.id, skin.id))
+    assert len({look, Look(pal, skin)}) == 1
+    assert {pal: 1}[BUILTIN_PALETTES["amber"]] == 1
+    # Same id but different content: still distinct keys (hash collides, eq separates).
+    edited = dataclasses.replace(pal, colors={**pal.colors, "accent": "#123456"})
+    assert hash(edited) == hash(pal) and edited != pal
+    assert len({pal, edited}) == 2
+
+
+def test_set_look_is_exception_safe(qapp, restore_look, monkeypatch):
+    good = Look(BUILTIN_PALETTES["cyan"], BUILTIN_SKINS["minimal"])
+    set_look(good)
+    sheet_before = qapp.styleSheet()
+    seen = []
+    look_bus().lookChanged.connect(lambda: seen.append(1))
+
+    def boom(look):
+        raise RuntimeError("bad look")
+
+    monkeypatch.setattr("mandible.ui.stylesheet.build_qss", boom)
+    with pytest.raises(RuntimeError):
+        set_look(Look(BUILTIN_PALETTES["amber"], BUILTIN_SKINS["vintage"]))
+    assert current_look() is good
+    assert qapp.styleSheet() == sheet_before
+    assert seen == []
+    look_bus().lookChanged.disconnect()

@@ -47,6 +47,10 @@ class Palette:
         """``#rrggbb`` for ``token``; KeyError for an unknown token."""
         return self.colors[token]
 
+    def __hash__(self) -> int:
+        # Mapping fields are not hashable; ids are enough (equal palettes share an id).
+        return hash(self.id)
+
 
 @dataclass(frozen=True)
 class Skin:
@@ -59,11 +63,17 @@ class Skin:
         object.__setattr__(self, "elements", _frozen(self.elements))
         object.__setattr__(self, "shape", _frozen(self.shape))
 
+    def __hash__(self) -> int:
+        return hash(self.id)
+
 
 @dataclass(frozen=True)
 class Look:
     palette: Palette
     skin: Skin
+
+    def __hash__(self) -> int:
+        return hash((self.palette.id, self.skin.id))
 
 
 # ------------------------------------------------------------ built-in palettes
@@ -246,16 +256,21 @@ def current_look() -> Look:
 
 
 def set_look(look: Look, app: "QApplication | None" = None) -> None:
-    """Make ``look`` current, apply its stylesheet once, then emit ``lookChanged``."""
+    """Make ``look`` current, apply its stylesheet once, then emit ``lookChanged``.
+
+    The stylesheet is built before anything changes, so a failing build leaves the
+    previous look, stylesheet and listeners untouched.
+    """
     global _current
     from PySide6.QtWidgets import QApplication
 
     from .stylesheet import build_qss
 
+    qss = build_qss(look)
     _current = look
     app = app or QApplication.instance()
     if app is not None:
-        app.setStyleSheet(build_qss(look))
+        app.setStyleSheet(qss)
     look_bus().lookChanged.emit()
 
 
