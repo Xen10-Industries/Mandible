@@ -136,3 +136,34 @@ def test_indicator_states_are_distinct(qapp, restore_look):
         p.end()
         seen[name] = bytes(img.constBits())
     assert len(set(seen.values())) == len(states), [k for k in states]
+
+
+@pytest.mark.parametrize("look", ALL_LOOKS, ids=lambda lk: f"{lk.skin.id}-{lk.palette.id}")
+def test_spin_box_step_arrows_are_visible(qapp, restore_look, look):
+    """Under the stylesheet Fusion's spin-box arrows came out invisible on the inset field;
+    the app style draws them (text.secondary chevrons) in every look."""
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtWidgets import QSpinBox, QStyle, QStyleOptionSpinBox
+
+    from mandible.ui.app import apply_theme
+
+    apply_theme(qapp, look)                   # installs the app style, as main() does
+    box = QSpinBox()
+    box.setAttribute(Qt.WA_DontShowOnScreen)
+    box.setSuffix(" Hz")
+    box.resize(110, 30)
+    box.show()
+    qapp.processEvents()
+    img = box.grab().toImage()
+    opt = QStyleOptionSpinBox()
+    box.initStyleOption(opt)
+    for sub in (QStyle.SC_SpinBoxUp, QStyle.SC_SpinBoxDown):
+        rect = box.style().subControlRect(QStyle.CC_SpinBox, opt, sub, box)
+        rect.translate(box.mapTo(box, QPoint(0, 0)))
+        ground = _hex(img, rect.left() + 1, rect.top() + 1)
+        best = max(contrast_ratio(_hex(img, x, y), ground)
+                   for y in range(rect.top(), rect.bottom() + 1)
+                   for x in range(rect.left(), rect.right() + 1))
+        assert best >= 2.5, (sub, round(best, 2))
+    box.deleteLater()
+

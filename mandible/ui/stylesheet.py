@@ -38,6 +38,7 @@ def build_qss(look: "Look") -> str:
     panel = look.skin.elements.get("panel")
     flat = panel == "flat"
     lacquer = panel == "lacquer"
+    frameless = look.skin.elements.get("frame") == "frameless"
 
     # ---- palette tokens (old gui.THEMES key in the comment)
     win = t("bg.window")            # bg_win
@@ -90,6 +91,11 @@ def build_qss(look: "Look") -> str:
                    f"stop:1 {win})")
         raised_bg = (f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {overlay}, stop:0.08 {alt}, "
                      f"stop:0.6 {card}, stop:1 {inset})")
+
+    # Frameless: the console strip sits flush at the bottom of the window outline (frame
+    # margins 0; the chassis strokes the outline over it), so it takes the panel radius there.
+    console_radius = (f"border-bottom-left-radius: {r_pnl}; border-bottom-right-radius: {r_pnl};"
+                      if frameless else "")
 
     # Button tiers: rules of equal specificity go base, checked, status state, hover, pressed,
     # focus, disabled, so focus and disabled always show whatever else is set. No button has
@@ -868,6 +874,7 @@ QLabel#limiterThreshold[active="true"] {{
 QFrame#consoleFrame {{
     background: {inset};
     border-top: {bw} solid {line};
+    {console_radius}
 }}
 QFrame#consoleFrame QFrame#condensedStrip {{
     background: {inset};

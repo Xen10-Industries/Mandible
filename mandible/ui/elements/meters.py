@@ -11,7 +11,7 @@ Every meter variant offers the same three presets, one per meter widget:
 from __future__ import annotations
 
 from PySide6.QtCore import QRectF, QSize, Qt
-from PySide6.QtGui import QLinearGradient, QPainter, QPen
+from PySide6.QtGui import QLinearGradient, QPainter
 
 from ..look import Look
 from . import registry
@@ -131,15 +131,12 @@ class SmoothBar(Element):
     def draw(self, p: QPainter, w: float, h: float, state: ElementState, look: Look) -> None:
         corner = self.corner
         frac = _clamp01(state.value) if state.enabled else 0.0
-        track = QRectF(0, 0, w, h)
-        if h >= 12.0:
-            p.setPen(QPen(tok(look, "line.subtle"), 1.0))
-            inset = 1.0
-        else:
-            p.setPen(Qt.PenStyle.NoPen)
-            inset = 0.0
-        p.setBrush(tok(look, "bg.inset"))
-        p.drawRoundedRect(track, corner, corner)
+        # A flat groove in the hairline colour: visible on every surface the bar sits on
+        # (bg.inset alone vanished on panels and inset bezels), no outline.
+        inset = 0.0
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(tok(look, "line.subtle"))
+        p.drawRoundedRect(QRectF(0, 0, w, h), corner, corner)
 
         if frac > 0.01:
             grad = QLinearGradient(0, 0, w, 0)

@@ -200,15 +200,31 @@ class WoodCheeks(Element):
 
 
 class Frameless(Element):
-    """Clean borderless matte DAW wrapper."""
+    """No chrome: one flat window panel outlined by a ``line.subtle`` hairline with the skin's
+    panel radius. Content sits flush inside it (margins 0), so the header strip is the
+    panel's top zone and the console strip its bottom zone. Because that content covers the
+    edge, the chassis re-strokes the outline on top of its children (``overlay_outline``);
+    a border on the strips themselves would push their content 1 px off the body's edges."""
+
+    overlay_outline = True
 
     def content_margins(self, look: Look) -> tuple[int, int, int, int]:
-        return (2, 2, 2, 2)
+        return (0, 0, 0, 0)
+
+    def outline(self, p: QPainter, w: float, h: float, look: Look) -> None:
+        """The hairline outline alone (what the chassis overlay paints over the content)."""
+        bw = float(look.skin.shape.get("border.width", 1))
+        radius = float(look.skin.shape.get("radius.panel", 10))
+        p.setPen(QPen(tok(look, "line.subtle"), bw))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawRoundedRect(QRectF(bw / 2.0, bw / 2.0, w - bw, h - bw), radius, radius)
 
     def draw(self, p: QPainter, w: float, h: float, state: ElementState, look: Look) -> None:
-        p.setPen(QPen(tok(look, "line.subtle"), 1.2))
+        radius = float(look.skin.shape.get("radius.panel", 10))
+        p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(tok(look, "bg.window"))
-        p.drawRoundedRect(QRectF(0.6, 0.6, w - 1.2, h - 1.2), 10.0, 10.0)
+        p.drawRoundedRect(QRectF(0, 0, w, h), radius, radius)
+        self.outline(p, w, h, look)
 
 
 registry.register("frame", "metal_rack", MetalRack, "Metal rack")

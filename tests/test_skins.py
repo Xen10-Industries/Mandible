@@ -10,13 +10,14 @@ legibility) are also reviewed by eye on the gallery sheet (``tools/ui_gallery.py
 """
 from __future__ import annotations
 
+import math
 import statistics
 import sys
 
 import pytest
 from _probe import run_probe
 
-SKINS = ["skeuomorphic", "vintage"]
+SKINS = ["skeuomorphic", "vintage", "minimal"]
 THEMES = ("scarlet", "cyan", "stealth", "amber")
 SIZES = [(1024, 640), (1280, 720), (1920, 1080)]
 WIN32 = sys.platform == "win32"
@@ -356,3 +357,341 @@ def test_rocker_cap_is_lacquer_from_the_surfaces(qapp, palette_id):
                         assert max(abs(c.red() - b.red()), abs(c.green() - b.green()),
                                    abs(c.blue() - b.blue())) > 24, (
                             element.vertical, element.compact, active, x, y, c.name(), b.name())
+
+
+# ------------------------------------------------------------------ minimal details
+
+def _minimal_look(palette_id: str = "scarlet"):
+    from mandible.ui.look import BUILTIN_PALETTES, BUILTIN_SKINS, Look
+
+    return Look(BUILTIN_PALETTES[palette_id], BUILTIN_SKINS["minimal"])
+
+
+def _close(a, b, tol: int = 24) -> bool:
+    return max(abs(a.red() - b.red()), abs(a.green() - b.green()), abs(a.blue() - b.blue())) <= tol
+
+
+def _paint_element(element, w: int, h: int, state, look, scale: int = 1, background=None):
+    from PySide6.QtCore import QRectF
+    from PySide6.QtGui import QImage, QPainter
+
+    img = QImage(w * scale, h * scale, QImage.Format.Format_ARGB32)
+    img.fill(background if background is not None else 0)
+    p = QPainter(img)
+    p.scale(scale, scale)
+    element.paint(p, QRectF(0, 0, w, h), state, look)
+    p.end()
+    return img
+
+
+@pytest.fixture
+def minimal_window(qapp, sample_core):
+    """A main window (never shown on screen) under the minimal look; the previous look comes
+    back afterwards."""
+    from PySide6.QtCore import Qt
+
+    from mandible.ui.look import current_look, set_look
+    from mandible.ui.main_window import MainWindow
+
+    before = current_look()
+    sample_core.cfg.close_to_tray = False
+    win = MainWindow(sample_core, show_tray=False)
+    win.setAttribute(Qt.WA_DontShowOnScreen)
+    set_look(_minimal_look())
+    win.resize(1280, 720)
+    win.show()
+    for _ in range(3):
+        qapp.processEvents()
+    yield win
+    win.meter_timer.stop()
+    win.status_timer.stop()
+    win._quitting = True
+    win.hide()
+    win.deleteLater()
+    _flush()
+    set_look(before)
+
+
+def test_minimal_frame_is_flush_on_the_compact_scale_with_one_outline(qapp, minimal_window):
+    """Carry 1: the frameless frame's margins are on the compact scale (0: content flush with
+    its hairline). The chassis strokes the outline over the header and console strips that
+    cover the edge, so the window reads as one outlined panel all the way round, and the
+    header, body and console content share one left edge (no strip border shifts it)."""
+    from PySide6.QtGui import QColor
+    from PySide6.QtWidgets import QFrame
+
+    from mandible.ui.elements.frames import Frameless
+    from mandible.ui.inspect import COMPACT_SPACING_SCALE
+
+    look = _minimal_look()
+    margins = Frameless().content_margins(look)
+    assert margins == (0, 0, 0, 0) and set(margins) <= COMPACT_SPACING_SCALE
+
+    chassis = minimal_window.chassis
+    m = chassis.layout().contentsMargins()
+    assert (m.left(), m.top(), m.right(), m.bottom()) == margins
+    img = chassis.grab().toImage()
+    w, h = img.width(), img.height()
+    line = QColor(look.palette.color("line.subtle"))
+    header = minimal_window.header.geometry()
+    console = minimal_window.console_frame.geometry()
+    body_y = (header.bottom() + console.top()) // 2
+    for y in (header.center().y(), body_y, console.center().y()):   # left and right edges
+        for x in (0, w - 1):
+            assert _close(img.pixelColor(x, y), line, 12), (x, y, img.pixelColor(x, y).name())
+    for x in (w // 4, w // 2):                                       # top and bottom edges
+        for y in (0, h - 1):
+            assert _close(img.pixelColor(x, y), line, 12), (x, y, img.pixelColor(x, y).name())
+
+    from PySide6.QtCore import QPoint
+
+    win = minimal_window
+    left = win.left_panel.mapTo(win, QPoint(0, 0)).x()
+    header_first = win.header.left.mapTo(win, QPoint(0, 0)).x()
+    strips = [c for c in win.console_frame.findChildren(QFrame) if c.isVisible()
+              and c.objectName() in ("condensedStrip", "channelStrip", "channelStripCard")]
+    assert strips
+    console_first = min(c.mapTo(win, QPoint(0, 0)).x() for c in strips)
+    assert header_first == left == console_first, (header_first, left, console_first)
+
+
+def test_compact_minimal_is_tighter_at_the_window_gutters(qapp, minimal_window):
+    """Carry 2: compact density with the frameless frame brings the content closer to the
+    window edge than the comfortable skins, whose frames need 24 px. Card padding (8 / 12 px)
+    is the same in both densities: spec 7.7 maps only 16 and 24. Clipping at every size is
+    covered by ``test_skin_meets_standard[minimal]``."""
+    from PySide6.QtCore import QPoint
+
+    from mandible.ui.look import BUILTIN_PALETTES, BUILTIN_SKINS, Look, set_look
+
+    win = minimal_window
+    gutters = {}
+    for skin in ("skeuomorphic", "vintage", "minimal"):
+        set_look(Look(BUILTIN_PALETTES["scarlet"], BUILTIN_SKINS[skin]))
+        for _ in range(3):
+            qapp.processEvents()
+        left = win.left_panel.mapTo(win, QPoint(0, 0)).x()
+        rack = win.splitter.widget(1)
+        right = win.width() - (rack.mapTo(win, QPoint(0, 0)).x() + rack.width())
+        top = win.header.mapTo(win, QPoint(0, 0)).y()
+        gutters[skin] = (left, right, top)
+    for skin in ("skeuomorphic", "vintage"):
+        assert all(a < b for a, b in zip(gutters["minimal"], gutters[skin])), gutters
+    assert gutters["minimal"][0] == gutters["minimal"][1], gutters      # symmetric
+
+
+def test_minimal_elements_paint_legible_text_and_the_pill_none(qapp):
+    """Carry 3: the pill paints no text; the flat ring's title and value and the meters'
+    labels are at least 10 px (11 px: the type scale's small / readout sizes)."""
+    from mandible.ui.inspect import MIN_TEXT_PX, painted_text_sizes
+    from mandible.ui.look import current_look, set_look
+    from mandible.ui.widgets.knobs import HardwareKnob
+    from mandible.ui.widgets.meters import LevelMeter, PluginPrePostMeter, ThinLevelMeter
+    from mandible.ui.widgets.switches import HardwareSwitch
+
+    before = current_look()
+    set_look(_minimal_look())
+    widgets = []
+    try:
+        switches = [HardwareSwitch(active=a, compact=c, vertical=v)
+                    for a in (True, False) for c, v in ((False, False), (True, False), (True, True))]
+        knob = HardwareKnob("DRY/WET", min_val=0.0, max_val=100.0, default_val=50.0, suffix="%")
+        meters = [LevelMeter("CH 01"), ThinLevelMeter(), PluginPrePostMeter()]
+        widgets = [*switches, knob, *meters]
+        for sw in switches:
+            assert painted_text_sizes(sw) == [], (sw.compact, sw.vertical)
+        knob_text = painted_text_sizes(knob)       # title and value (offscreen fonts may elide)
+        assert len(knob_text) == 2 and min(px for _c, _t, px in knob_text) >= 11, knob_text
+        for meter in meters:
+            assert all(px >= MIN_TEXT_PX for _c, _t, px in painted_text_sizes(meter)), meter
+    finally:
+        for wdg in widgets:
+            wdg.deleteLater()
+        _flush()
+        set_look(before)
+
+
+@pytest.mark.parametrize("palette_id", THEMES)
+def test_pill_reads_on_and_off_by_position_and_fill(qapp, palette_id):
+    """Carry 4: the pill is a finished drawing. On: a solid accent track, thumb at the right.
+    Off: a hollow track outlined in a hairline that clears 3:1 on every surface, thumb at the
+    left. The thumb clears 3:1 on its track in both states. Crisp: the track is snapped to
+    the pixel grid, so at 1x its outline is one full-colour pixel row; 2x draws the same."""
+    from PySide6.QtGui import QColor
+
+    from mandible.ui.elements.base import ElementState
+    from mandible.ui.elements.switches import Pill
+    from mandible.ui.palette_gen import contrast_ratio
+    from mandible.ui.style import INDICATOR_TOKENS as ind
+
+    look = _minimal_look(palette_id)
+    c = look.palette.color
+    for surface in ("bg.window", "bg.panel", "bg.raised", "bg.inset"):
+        assert contrast_ratio(c(ind["on"]), c(surface)) >= 3.0, surface
+        assert contrast_ratio(c(ind["border"]), c(surface)) >= 3.0, surface
+    assert contrast_ratio(c(ind["mark"]), c(ind["on"])) >= 3.0
+    assert contrast_ratio(c(ind["border"]), c(ind["fill"])) >= 3.0
+
+    on_fill, mark = QColor(c(ind["on"])), QColor(c(ind["mark"]))
+    outline, well = QColor(c(ind["border"])), QColor(c(ind["fill"]))
+    for pill in (Pill(), Pill(compact=True), Pill(compact=True, vertical=True)):
+        size = pill.size_hint(look)
+        w, h = size.width(), size.height()
+        track = pill.track_rect(w, h)
+        assert track.x() == int(track.x()) and track.y() == int(track.y())   # on the grid
+        right, left = pill.thumb_centre(w, h, True), pill.thumb_centre(w, h, False)
+        mid_x = track.center().x()
+        for scale in (1, 2):
+            on = _paint_element(pill, w, h, ElementState(active=True), look, scale)
+            off = _paint_element(pill, w, h, ElementState(active=False), look, scale)
+
+            def at(img, x, y):
+                return img.pixelColor(int(x * scale), int(y * scale))
+
+            assert _close(at(on, right.x(), right.y()), mark)
+            assert _close(at(on, left.x(), left.y()), on_fill)
+            assert _close(at(off, left.x(), left.y()), outline)
+            assert _close(at(off, right.x(), right.y()), well)
+            top = int(track.top() * scale)
+            col = int(mid_x * scale)
+            assert _close(off.pixelColor(col, top), outline, 8), (pill.compact, scale)
+            assert off.pixelColor(col, top - 1).alpha() == 0
+            if scale == 1:
+                assert _close(off.pixelColor(col, top + 1), well, 8)    # one row, not a blur
+
+
+@pytest.mark.parametrize("palette_id", THEMES)
+def test_flat_ring_is_finished_and_legible(qapp, palette_id):
+    """Carry 4: the flat ring is a flat drawing (track, value arc, disc and indicator; no
+    gradient) with a visible track on the inset strips knobs sit on, the value arc in the
+    accent and the value in text.primary."""
+    from PySide6.QtGui import QColor
+
+    from mandible.ui.elements.base import ElementState
+    from mandible.ui.elements.knobs import READOUT_H, FlatRing
+    from mandible.ui.palette_gen import contrast_ratio
+
+    look = _minimal_look(palette_id)
+    c = look.palette.color
+    assert contrast_ratio(c("line.subtle"), c("bg.inset")) >= 1.2      # the track shows
+    assert contrast_ratio(c("text.primary"), c("bg.inset")) >= 4.5     # the value reads
+    inset = QColor(c("bg.inset"))
+    accent, line, primary = (QColor(c(t)) for t in ("accent", "line.subtle", "text.primary"))
+
+    def has(img, colour):
+        return any(_close(img.pixelColor(x, y), colour, 6)
+                   for y in range(img.height()) for x in range(img.width()))
+
+    for knob in (FlatRing(), FlatRing(compact=True)):
+        size = knob.size_hint(look)
+        w, h = size.width(), size.height()
+        zero = _paint_element(knob, w, h, ElementState(value=0.0, label="MIX", readout="0 %"),
+                              look, 2, inset)
+        most = _paint_element(knob, w, h, ElementState(value=0.75, label="MIX", readout="75 %"),
+                              look, 2, inset)
+        assert has(most, accent) and not has(zero, accent)
+        assert has(zero, line) and has(most, primary)
+        # Flat: the disc away from the indicator (which points up-right at 0.75) is one colour.
+        cx, cy, radius = knob._geometry(w)
+        for deg in (180.0, 202.5, 247.5, 270.0):
+            r = (radius - 2.5) * 0.55
+            x = cx + r * math.cos(math.radians(deg))
+            y = cy - r * math.sin(math.radians(deg))
+            assert _close(most.pixelColor(int(x * 2), int(y * 2)), line, 2), deg
+        readout_row = most.copy(0, int((h - READOUT_H) * 2), most.width(), int(READOUT_H * 2))
+        assert has(readout_row, primary)
+
+
+@pytest.mark.parametrize("palette_id", THEMES)
+def test_smooth_bar_track_shows_on_its_surfaces(qapp, palette_id):
+    """Carry 4: an idle smooth bar is still visibly a meter on the surface each preset sits
+    on (main: channel card; thin: console strip; prepost: the pre/post bezel), and a signal
+    starts in meter.low."""
+    from PySide6.QtGui import QColor
+
+    from mandible.ui.elements.base import ElementState
+    from mandible.ui.elements.meters import SmoothBar
+
+    look = _minimal_look(palette_id)
+    c = look.palette.color
+    hosts = {"main": QColor(c("bg.panel")), "thin": QColor(c("bg.inset")),
+             "prepost": QColor(c("bg.inset")).darker(150)}
+    low = QColor(c("meter.low"))
+    for preset, surface in hosts.items():
+        bar = getattr(SmoothBar, preset)()
+        size = bar.size_hint(look)
+        w, h = size.width(), size.height()
+        idle = _paint_element(bar, w, h, ElementState(value=0.0), look, 1, surface)
+        mid = idle.pixelColor(w // 2, h // 2)
+        assert not _close(mid, surface, 5), (preset, mid.name(), surface.name())
+        lit = _paint_element(bar, w, h, ElementState(value=0.5), look, 1, surface)
+        assert _close(lit.pixelColor(4, h // 2), low), preset
+
+
+def test_minimal_has_structure_and_no_screws(qapp, minimal_window, monkeypatch):
+    """Carry 5: flat panels stay separated by 1 px line.subtle borders (no gradients), and
+    nothing in the minimal main window paints a screw."""
+    import re
+
+    from mandible.ui.elements import screws
+    from mandible.ui.stylesheet import build_qss
+    from mandible.ui.widgets.chassis import RackScrew
+
+    look = _minimal_look()
+    qss = build_qss(look)
+    hairline = f"border: 1px solid {look.palette.color('line.subtle')}"
+    for selector in (r"QFrame#modularBay, QFrame#presetModularBay",
+                     r"QFrame#prefxModule, QFrame#limiterModule", r"QFrame#pluginRackCard",
+                     r"QFrame#pluginMacroBay", r"QFrame#channelStripCard, QFrame#channelStrip",
+                     r"QFrame#inspectorBox", r'QFrame\[surface="panel"\]',
+                     r'QFrame\[surface="raised"\]', r'QFrame\[surface="inset"\]'):
+        body = re.search(selector + r" \{([^}]*)\}", qss).group(1)
+        assert hairline in body, selector
+        assert "gradient" not in body, selector
+    for selector, edge in (("QFrame#masterHeadStrip", "border-bottom"),
+                           ("QFrame#consoleFrame", "border-top")):    # the window's zones
+        body = re.search(selector + r" \{([^}]*)\}", qss).group(1)
+        assert f"{edge}: " in body and look.palette.color("line.subtle") in body, selector
+        assert "gradient" not in body, selector
+
+    painted = []
+    real = screws.CornersOnly.draw
+    monkeypatch.setattr(screws.CornersOnly, "draw",
+                        lambda self, *a: painted.append(1) or real(self, *a))
+    minimal_window.grab()
+    assert painted == []
+    assert not [s for s in minimal_window.findChildren(RackScrew) if s.isVisible()]
+
+
+def test_flat_pilot_lamps_read_on_and_off(qapp):
+    """Gallery fix: in the flat skin the chain-card lamp was a 3 px smudge. Flat lamps are a
+    solid status dot when on and a hollow text.secondary ring when off, 6 px or more across."""
+    from PySide6.QtGui import QColor
+
+    from mandible.ui.look import current_look, set_look
+    from mandible.ui.palette_gen import contrast_ratio
+    from mandible.ui.widgets.lamps import PilotLamp
+
+    before = current_look()
+    look = _minimal_look()
+    set_look(look)
+    lamps = []
+    try:
+        for size in (10, 18):
+            on, off = PilotLamp(active=True, size=size), PilotLamp(active=False, size=size)
+            lamps += [on, off]
+            on_img, off_img = on.grab().toImage(), off.grab().toImage()
+            centre = size // 2
+            ok = QColor(look.palette.color("status.ok"))
+            row_on = [x for x in range(size) if _close(on_img.pixelColor(x, centre), ok, 16)]
+            assert len(row_on) >= 5, (size, row_on)                         # a solid dot
+            bg = off_img.pixelColor(0, 0)
+            assert _close(off_img.pixelColor(centre, centre), bg, 4)        # hollow ...
+            ring = max(contrast_ratio(off_img.pixelColor(x, centre).name(), bg.name())
+                       for x in range(size // 2))
+            assert ring >= 2.0, (size, ring)                                 # ... ring
+    finally:
+        for lamp in lamps:
+            lamp.deleteLater()
+        _flush()
+        set_look(before)

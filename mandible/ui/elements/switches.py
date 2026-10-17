@@ -10,6 +10,7 @@ from PySide6.QtCore import QPointF, QRectF, QSize, Qt
 from PySide6.QtGui import QBrush, QLinearGradient, QPainter, QPen, QRadialGradient
 
 from ..look import Look, font_px
+from ..style import INDICATOR_TOKENS as ind
 from . import registry
 from .base import Element, ElementState, alpha, metal, mix, tok
 
@@ -226,23 +227,43 @@ class Rocker(_Switch):
 
 
 class Pill(_Switch):
-    """Flat sliding pill toggle (the minimal skin's switch)."""
+    """Flat sliding pill toggle (the minimal skin's switch). State reads from position and
+    fill, not colour alone: on is a solid accent track with the thumb at the right; off is a
+    hollow outlined track with the thumb at the left. Colours are the check-box indicator
+    tokens (``style.INDICATOR_TOKENS``), whose outline clears 3:1 on every surface."""
+
+    TRACK = (38, 18)          # normal switch
+    SMALL_TRACK = (34, 16)    # compact / vertical (plugin rows)
+
+    def track_rect(self, w: float, h: float) -> QRectF:
+        """The pill track, centred and snapped to the pixel grid so its hairline is crisp."""
+        tw, th = self.SMALL_TRACK if self._small else self.TRACK
+        return QRectF(float(round((w - tw) / 2.0)), float(round((h - th) / 2.0)), tw, th)
+
+    def thumb_centre(self, w: float, h: float, active: bool) -> QPointF:
+        r = self.track_rect(w, h)
+        inset = r.height() / 2.0
+        return QPointF(r.right() - inset if active else r.left() + inset, r.center().y())
 
     def draw(self, p: QPainter, w: float, h: float, state: ElementState, look: Look) -> None:
         active = state.active
-        accent = tok(look, "accent")
-        pw = 34.0 if self._small else 38.0
-        ph = 16.0
-        px, py = (w - pw) / 2.0, (h - ph) / 2.0
-        p.setPen(QPen(accent if active else tok(look, "line.subtle"), 1.0))
-        p.setBrush(accent if active else tok(look, "bg.inset"))
-        p.drawRoundedRect(QRectF(px, py, pw, ph), ph / 2.0, ph / 2.0)
+        track = self.track_rect(w, h)
+        radius = track.height() / 2.0
+        if active:
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(tok(look, ind["on"]))
+            p.drawRoundedRect(track, radius, radius)
+        else:
+            bw = float(look.skin.shape.get("border.width", 1))
+            body = track.adjusted(bw / 2.0, bw / 2.0, -bw / 2.0, -bw / 2.0)
+            p.setPen(QPen(tok(look, ind["border"]), bw))
+            p.setBrush(tok(look, ind["fill"]))
+            p.drawRoundedRect(body, body.height() / 2.0, body.height() / 2.0)
 
-        thumb_r = (ph - 4.0) / 2.0
-        tx = (px + pw - thumb_r - 2.0) if active else (px + thumb_r + 2.0)
+        thumb_r = radius - 3.0
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(tok(look, "text.on_accent") if active else tok(look, "line.strong"))
-        p.drawEllipse(QPointF(tx, h / 2.0), thumb_r, thumb_r)
+        p.setBrush(tok(look, ind["mark"] if active else ind["border"]))
+        p.drawEllipse(self.thumb_centre(w, h, active), thumb_r, thumb_r)
 
 
 registry.register("switch", "bat_toggle", BatToggle, "Bat toggle")

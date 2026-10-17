@@ -199,33 +199,38 @@ class VintageBakelite(_Knob):
 
 
 class FlatRing(_Knob):
-    """Minimalist vector arc around a flat matte cap with a crisp indicator line."""
+    """Minimal flat knob: a value arc (accent) on a ``line.subtle`` track ring around a flat
+    disc of the same hairline colour with a ``text.primary`` indicator; muted title, value in
+    ``text.primary``. No gradients, shadows or bezels."""
+
+    TRACK_W = 3.0
 
     def draw(self, p: QPainter, w: float, h: float, state: ElementState, look: Look) -> None:
         frac = max(0.0, min(1.0, float(state.value)))
-        accent = tok(look, "accent")
+        groove = tok(look, "line.subtle")
         cx, cy, radius = self._geometry(w)
         angle_rad = math.radians(_START - frac * _SWEEP)
         self._title(p, w, state.label, tok(look, "text.secondary"))
 
-        arc_r = radius + 2.4
+        arc_r = radius + 2.5
         track = QRectF(cx - arc_r, cy - arc_r, arc_r * 2, arc_r * 2)
-        p.setPen(QPen(tok(look, "bg.raised"), 2.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
         p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(groove, self.TRACK_W, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
         p.drawArc(track, int(_START * 16), int(-_SWEEP * 16))
         if frac > 0.005:
-            p.setPen(QPen(accent, 2.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            p.setPen(QPen(tok(look, "accent"), self.TRACK_W, Qt.PenStyle.SolidLine,
+                          Qt.PenCapStyle.RoundCap))
             p.drawArc(track, int(_START * 16), int(-frac * _SWEEP * 16))
 
-        # Flat matte inner cap
-        p.setPen(QPen(tok(look, "line.subtle"), 1.0))
-        p.setBrush(tok(look, "bg.inset"))
-        p.drawEllipse(QPointF(cx, cy), radius - 0.8, radius - 0.8)
-
-        self._pointer(p, cx, cy, angle_rad, 3.0, radius - 2.0, tok(look, "text.primary"), 1.8)
+        # Flat disc (no outline) and the indicator line
+        cap_r = radius - 2.5
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(groove)
+        p.drawEllipse(QPointF(cx, cy), cap_r, cap_r)
+        self._pointer(p, cx, cy, angle_rad, 2.0, cap_r - 1.5, tok(look, "text.primary"), 2.0)
 
         if state.readout:
-            self._readout(p, w, h, state.readout, tok(look, "text.secondary"), False)
+            self._readout(p, w, h, state.readout, tok(look, "text.primary"), False)
 
 
 registry.register("knob", "machined", Machined, "Machined")

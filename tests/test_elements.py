@@ -120,14 +120,14 @@ def test_resolve_frame_follows_the_skin_unless_overridden():
 
 
 def test_frame_margins_match_the_old_chassis():
-    """The metal rack's (Task 12) and wood cheeks' (Task 13) margins sit on the spacing scale;
-    frameless is as before until its skin's standard task."""
+    """The metal rack's (Task 12), wood cheeks' (Task 13) and frameless (Task 14) margins sit
+    on the spacing scale; frameless content is flush with its hairline outline."""
     from mandible.ui.elements.frames import Frameless, MetalRack, WoodCheeks
 
     look = look_mod.current_look()
     assert MetalRack().content_margins(look) == (24, 12, 24, 12)
     assert WoodCheeks().content_margins(look) == (24, 12, 24, 16)
-    assert Frameless().content_margins(look) == (2, 2, 2, 2)
+    assert Frameless().content_margins(look) == (0, 0, 0, 0)
 
 
 def test_flat_panel_is_one_flat_colour_and_brushed_is_not(qapp):

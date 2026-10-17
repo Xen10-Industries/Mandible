@@ -391,7 +391,7 @@ def test_chassis_margins_follow_frame(qapp, restore_look):
         assert frame.layout().contentsMargins().left() == 24
         set_look(_look("minimal", "scarlet"))   # lookChanged updates the margins
         m = frame.layout().contentsMargins()
-        assert (m.left(), m.top(), m.right(), m.bottom()) == (2, 2, 2, 2)
+        assert (m.left(), m.top(), m.right(), m.bottom()) == (0, 0, 0, 0)
         set_look(_look("vintage", "scarlet"))
         m = frame.layout().contentsMargins()
         assert (m.left(), m.top(), m.right(), m.bottom()) == (24, 12, 24, 16)

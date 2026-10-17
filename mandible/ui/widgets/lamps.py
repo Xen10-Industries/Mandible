@@ -36,9 +36,19 @@ class PilotLamp(QWidget):
         on = look_color(self.token)
 
         if look.skin.shape.get("shadow.depth", 1) == 0:
-            p.setPen(Qt.NoPen)
-            p.setBrush(on if self.active else look_color("line.subtle"))
-            p.drawEllipse(jr)
+            # Flat: a solid status dot when on, a hollow ring when off (fill and shape, not
+            # colour alone), big enough to read on a 10 px chain-card lamp (was a 3 px dot).
+            d = max(6.0, round(self.width() * 0.6))
+            dot = QRectF((self.width() - d) / 2.0, (self.height() - d) / 2.0, d, d)
+            if self.active:
+                p.setPen(Qt.NoPen)
+                p.setBrush(on)
+                p.drawEllipse(dot)
+            else:
+                # The pill's off outline token: it clears 3:1 on every surface.
+                p.setPen(QPen(look_color("text.secondary"), 1.2))
+                p.setBrush(Qt.NoBrush)
+                p.drawEllipse(dot.adjusted(0.6, 0.6, -0.6, -0.6))
             p.end()
             return
 

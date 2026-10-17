@@ -57,8 +57,32 @@ class ScaleStyle(QProxyStyle):
             _draw_indicator(painter, option, radio=False)
         elif element == QStyle.PE_IndicatorRadioButton:
             _draw_indicator(painter, option, radio=True)
+        elif element in (QStyle.PE_IndicatorSpinUp, QStyle.PE_IndicatorSpinDown):
+            _draw_spin_arrow(painter, option, up=element == QStyle.PE_IndicatorSpinUp)
         else:
             super().drawPrimitive(element, option, painter, widget)
+
+
+def _draw_spin_arrow(painter, option, up: bool) -> None:
+    """Spin-box step arrows: a small chevron in text.secondary (text.disabled while disabled).
+    Under the stylesheet, Fusion's own arrows came out invisible on the inset field."""
+    pal = current_look().palette
+    enabled = bool(option.state & QStyle.State_Enabled)
+    color = QColor(pal.color("text.secondary" if enabled else "text.disabled"))
+    r = QRectF(option.rect)
+    half_w = min(4.0, max(2.0, (r.width() - 4.0) / 2.0))
+    half_h = half_w / 2.0
+    cx, cy = r.center().x(), r.center().y()
+    dy = -half_h if up else half_h
+    path = QPainterPath(QPointF(cx - half_w, cy - dy))
+    path.lineTo(QPointF(cx, cy + dy))
+    path.lineTo(QPointF(cx + half_w, cy - dy))
+    painter.save()
+    painter.setRenderHint(painter.RenderHint.Antialiasing)
+    painter.setPen(QPen(color, 1.4, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+    painter.setBrush(Qt.NoBrush)
+    painter.drawPath(path)
+    painter.restore()
 
 
 def _colors(state) -> tuple[QColor, QColor, QColor | None, float]:
