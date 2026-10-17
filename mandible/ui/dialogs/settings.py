@@ -8,7 +8,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QAbstractScrollArea, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
                                QDoubleSpinBox, QFormLayout, QFrame, QHBoxLayout, QHeaderView, QLabel,
                                QListWidget, QListWidgetItem, QMessageBox, QScrollArea, QSizePolicy,
-                               QSlider, QSpinBox, QStackedWidget, QStyle, QTableWidget,
+                               QSlider, QSpinBox, QStackedWidget, QTableWidget,
                                QVBoxLayout, QWidget)
 
 from ... import devices as D
@@ -20,6 +20,7 @@ from ..look import (BUILTIN_PALETTES, BUILTIN_SKINS, Look, current_look, look_fo
 from ..widgets.base import SpacedLayouts, _follow_look
 from ..widgets.buttons import make_button, tier_button_box
 from .hotkey import HotkeyDialog
+from .parts import check_row, group_label, hint_label
 from .setup_assistant import SetupAssistantDialog
 
 
@@ -204,31 +205,14 @@ class SettingsDialog(QDialog):
         return combo
 
     def _group(self, form: QFormLayout, text: str) -> None:
-        """A section label row (uppercase, spaced): the only place small caps are used."""
-        label = QLabel(text.upper())
-        label.setObjectName("settingsGroupLabel")
-        if form.rowCount():          # air between a group and whatever precedes it
-            label.setContentsMargins(0, space(3), 0, 0)
-        form.addRow(label)
+        group_label(form, text)
 
     def _check(self, form: QFormLayout, text: str, checked: bool = False, hint: str = "") -> QCheckBox:
-        """A check box on a row of its own, with an optional muted explanation under it."""
-        box = QCheckBox(text)
-        box.setChecked(checked)
-        form.addRow(box)
-        if hint:
-            form.addRow(self._hint(hint, indent=True))
-        return box
+        return check_row(form, text, checked, hint)
 
-    def _hint(self, text: str, indent: bool = False) -> QLabel:
-        label = QLabel(text)
-        label.setObjectName("dialogInfo")
-        label.setWordWrap(True)
-        if indent:
-            style = self.style()
-            label.setIndent(style.pixelMetric(QStyle.PM_IndicatorWidth)
-                            + style.pixelMetric(QStyle.PM_CheckBoxLabelSpacing))
-        return label
+    @staticmethod
+    def _hint(text: str, indent: bool = False) -> QLabel:
+        return hint_label(text, indent)
 
     def _left(self, *widgets: QWidget) -> QHBoxLayout:
         """A row that keeps its widgets at their natural width, at the left."""

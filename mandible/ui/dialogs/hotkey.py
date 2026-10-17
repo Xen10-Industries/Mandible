@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QVBoxLayout
 from ...config import Hotkey
 from ...core import Core
 from ..widgets.buttons import make_button
+from .parts import keep_wrapped_text_visible
 
 
 class HotkeyDialog(QDialog):
@@ -27,7 +28,7 @@ class HotkeyDialog(QDialog):
         hint = QLabel("Modifiers (Ctrl / Shift / Alt / Win) are allowed. Esc cancels.")
         hint.setAlignment(Qt.AlignCenter)
         hint.setWordWrap(True)
-        hint.setObjectName("dialogInfo")
+        hint.setObjectName("hint")
         lay.addWidget(hint)
         row = QHBoxLayout()
         clear = make_button("Remove hotkey", "danger")
@@ -40,6 +41,7 @@ class HotkeyDialog(QDialog):
         cancel.clicked.connect(self.reject)
         self.captured.connect(self._got)
         self.setMinimumWidth(400)
+        keep_wrapped_text_visible(self)
         core.hotkeys.capture_next(lambda hk: self.captured.emit(hk))
 
     def _got(self, hk):

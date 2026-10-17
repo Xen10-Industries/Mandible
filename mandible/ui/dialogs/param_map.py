@@ -3,16 +3,17 @@ from __future__ import annotations
 
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
-                               QListWidget, QListWidgetItem,
-                               QMessageBox, QVBoxLayout)
+from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QLineEdit,
+                               QListView, QListWidget, QListWidgetItem, QMessageBox, QVBoxLayout)
 
 from ... import plugins as P
 from ...config import PluginSlot
 from ...core import Core, inst
 from ...internal_dsp import is_internal_plugin
-from ..look import space
+from ..widgets.base import SpacedLayouts, _follow_look
 from ..widgets.buttons import make_button, tier_button_box
+from ..widgets.labels import ElidedLabel
+from .parts import keep_wrapped_text_visible
 
 
 class PluginParamMapDialog(QDialog):
@@ -37,13 +38,13 @@ class PluginParamMapDialog(QDialog):
         self.param_by_key = dict(self.usable_params)
         self.selected_keys: list[str] = list(P.resolve_slot_mapped_params(slot, core.cfg))[: self.MAX_KNOBS]
 
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(*(space(3),) * 4)
-        lay.setSpacing(space(3))
+        self._spaced = SpacedLayouts()
+        _follow_look(self)
+        lay = self._spaced.add(QVBoxLayout(self), spacing=3, margins=3)
 
-        # Header
-        hdr_row = QHBoxLayout()
-        title_lbl = QLabel(f"KNOB MAPPING  //  {(slot.display_name or '').upper()}")
+        # Header: the plugin's name in its own case (uppercase is for section labels and readouts)
+        hdr_row = self._spaced.add(QHBoxLayout(), spacing=2, margins=0)
+        title_lbl = ElidedLabel(f"Knob mapping — {slot.display_name or slot.path}", min_chars=12)
         title_lbl.setObjectName("paramMapTitle")
         hdr_row.addWidget(title_lbl, 1)
 
@@ -57,14 +58,13 @@ class PluginParamMapDialog(QDialog):
             "This mapping is saved globally for this plugin whenever you insert it into any voice preset."
         )
         sub_lbl.setWordWrap(True)
-        sub_lbl.setObjectName("dialogInfo")
+        sub_lbl.setObjectName("hint")
         lay.addWidget(sub_lbl)
 
         # Search filter bar + Quick action buttons
-        filter_row = QHBoxLayout()
-        filter_row.setSpacing(space(2))
+        filter_row = self._spaced.add(QHBoxLayout(), spacing=2, margins=0)
         self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText(f"Search {len(self.usable_params)} parameters (e.g. Threshold, Mix, Macro, Gain, Decay)…")
+        self.search_edit.setPlaceholderText(f"Search {len(self.usable_params)} parameters…")
         self.search_edit.textChanged.connect(self._populate_available)
         filter_row.addWidget(self.search_edit, 1)
 
@@ -82,23 +82,21 @@ class PluginParamMapDialog(QDialog):
         lay.addLayout(filter_row)
 
         # Two-column body: Available Parameters (left) | Mapped Module Knobs (right)
-        cols = QHBoxLayout()
-        cols.setSpacing(space(3))
+        cols = self._spaced.add(QHBoxLayout(), spacing=3, margins=0)
 
-        left_box = QGroupBox(f"Available {self.kind} ({len(self.usable_params)})")
-        left_lay = QVBoxLayout(left_box)
-        self.avail_list = QListWidget()
+        left_lay = self._spaced.add(QVBoxLayout(), spacing=2, margins=0)
+        left_lay.addWidget(self._section_label(f"Available {self.kind} ({len(self.usable_params)})"))
+        self.avail_list = self._list()
         self.avail_list.itemChanged.connect(self._on_avail_item_changed)
         left_lay.addWidget(self.avail_list, 1)
-        cols.addWidget(left_box, 3)
+        cols.addLayout(left_lay, 3)
 
-        right_box = QGroupBox("Mapped module knobs (left to right)")
-        right_lay = QVBoxLayout(right_box)
-        self.mapped_list = QListWidget()
+        right_lay = self._spaced.add(QVBoxLayout(), spacing=2, margins=0)
+        right_lay.addWidget(self._section_label("Mapped module knobs (left to right)"))
+        self.mapped_list = self._list()
         right_lay.addWidget(self.mapped_list, 1)
 
-        order_row = QHBoxLayout()
-        order_row.setSpacing(space(2))
+        order_row = self._spaced.add(QHBoxLayout(), spacing=2, margins=0)
         btn_up = make_button("Move left", "quiet", icon="chevron_left",
                              tooltip="Move the selected knob one place left")
         btn_dn = make_button("Move right", "quiet", icon="chevron_right",
@@ -111,7 +109,7 @@ class PluginParamMapDialog(QDialog):
             b.setObjectName("paramMapOrderBtn")
             order_row.addWidget(b)
         right_lay.addLayout(order_row)
-        cols.addWidget(right_box, 2)
+        cols.addLayout(right_lay, 2)
 
         lay.addLayout(cols, 1)
 
@@ -122,8 +120,30 @@ class PluginParamMapDialog(QDialog):
         bb.rejected.connect(self.reject)
         lay.addWidget(bb)
 
+        keep_wrapped_text_visible(self)
         self._populate_available()
         self._refresh_mapped_list()
+
+    @staticmethod
+    def _section_label(text: str) -> QLabel:
+        label = QLabel(text.upper())
+        label.setObjectName("settingsGroupLabel")
+        return label
+
+    @staticmethod
+    def _list() -> QListWidget:
+        """A list that wraps long parameter names onto a second line instead of scrolling
+        sideways, so every name is readable in full at the default size."""
+        lst = QListWidget()
+        lst.setWordWrap(True)
+        lst.setTextElideMode(Qt.ElideNone)
+        lst.setResizeMode(QListView.Adjust)
+        lst.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        lst.setMinimumHeight(5 * (lst.fontMetrics().height() + 8))     # a few rows even when small
+        return lst
+
+    def _on_look_changed(self) -> None:
+        self._spaced.apply()
 
     def _populate_available(self):
         query = self.search_edit.text().strip().lower()
@@ -135,6 +155,7 @@ class PluginParamMapDialog(QDialog):
                 continue
             val_s = P.clean_param_string(param)
             it = QListWidgetItem(f"{pname}   [{val_s}]")
+            it.setToolTip(it.text())
             it.setData(Qt.UserRole, key)
             it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
             it.setCheckState(Qt.Checked if key in self.selected_keys else Qt.Unchecked)
@@ -147,8 +168,9 @@ class PluginParamMapDialog(QDialog):
         for idx, key in enumerate(self.selected_keys):
             param = self.param_by_key.get(key)
             pname = str(getattr(param, "name", key) or key).strip() if param else key
-            short = P.format_knob_title(pname, max_len=9)
-            it = QListWidgetItem(f"KNOB {idx + 1:02d}:  {pname}  ({short})")
+            short = P.format_knob_title(pname, max_len=9).strip()
+            it = QListWidgetItem(f"Knob {idx + 1}: {pname} ({short})")
+            it.setToolTip(it.text())
             it.setData(Qt.UserRole, key)
             self.mapped_list.addItem(it)
         if 0 <= cur_row < self.mapped_list.count():
@@ -167,7 +189,7 @@ class PluginParamMapDialog(QDialog):
                     self.avail_list.blockSignals(False)
                     QMessageBox.information(
                         self,
-                        "Maximum Knobs Reached",
+                        "Maximum knobs reached",
                         f"Up to {self.MAX_KNOBS} parameters can be mapped as hardware knobs on a single module.",
                     )
                     return

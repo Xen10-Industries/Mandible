@@ -8,17 +8,18 @@ import webbrowser
 from typing import TYPE_CHECKING
 
 import numpy as np
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont, QPainter, QLinearGradient
 from PySide6.QtWidgets import (
-    QComboBox, QDialog, QFrame, QHBoxLayout, QLabel,
+    QComboBox, QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel,
     QStackedWidget, QVBoxLayout, QWidget, QMessageBox
 )
 
 from ... import devices as D
-from ..look import font_px, space
-from ..widgets.base import _follow_look, look_color, set_style_property
+from ..look import font_px
+from ..widgets.base import SpacedLayouts, _follow_look, look_color, set_style_property
 from ..widgets.buttons import make_button
+from .parts import keep_wrapped_text_visible
 
 if TYPE_CHECKING:
     from ...core import Core
@@ -81,20 +82,20 @@ class SetupAssistantDialog(QDialog):
     def __init__(self, core: Core, parent=None):
         super().__init__(parent)
         self.core = core
-        self.setWindowTitle("Mandible - Audio Setup Assistant")
+        self.setWindowTitle("Audio setup assistant")
         self.resize(680, 520)
         self.setObjectName("setupAssistant")
+        self._spaced = SpacedLayouts()
+        _follow_look(self)
 
-        main_lay = QVBoxLayout(self)
-        main_lay.setContentsMargins(space(5), space(4), space(5), space(4))
-        main_lay.setSpacing(space(4))
+        main_lay = self._spaced.add(QVBoxLayout(self), spacing=4, margins=(4, 5, 4, 5))
 
         # Header
-        head_box = QHBoxLayout()
-        title_box = QVBoxLayout()
+        head_box = self._spaced.add(QHBoxLayout(), spacing=0, margins=0)
+        title_box = self._spaced.add(QVBoxLayout(), spacing=1, margins=0)
         self.step_lbl = QLabel("STEP 1 OF 4")
         self.step_lbl.setObjectName("wizardStep")
-        self.main_title = QLabel("Select Your Microphone")
+        self.main_title = QLabel("Select your microphone")
         self.main_title.setObjectName("wizardTitle")
         title_box.addWidget(self.step_lbl)
         title_box.addWidget(self.main_title)
@@ -111,7 +112,7 @@ class SetupAssistantDialog(QDialog):
         main_lay.addWidget(self.pages, 1)
 
         # Bottom navigation
-        nav_box = QHBoxLayout()
+        nav_box = self._spaced.add(QHBoxLayout(), spacing=2, margins=0)
         self.back_btn = make_button("Back", "secondary", icon="chevron_left")
         self.back_btn.clicked.connect(self._prev_step)
         self.back_btn.setEnabled(False)
@@ -131,6 +132,25 @@ class SetupAssistantDialog(QDialog):
 
         # Populate initial device states
         self._load_current_settings()
+        keep_wrapped_text_visible(self)
+
+    def _on_look_changed(self) -> None:
+        self._spaced.apply()
+
+    def _page(self) -> tuple[QWidget, QVBoxLayout]:
+        """A wizard page: its own layout flush with the header and the navigation row."""
+        w = QWidget()
+        lay = self._spaced.add(QVBoxLayout(w), spacing=3, margins=0)
+        return w, lay
+
+    def _field(self, lay: QVBoxLayout, text: str, widget: QWidget) -> None:
+        """A label over its control."""
+        box = self._spaced.add(QVBoxLayout(), spacing=1, margins=0)
+        label = QLabel(text)
+        label.setObjectName("wizardFieldLabel")
+        box.addWidget(label)
+        box.addWidget(widget)
+        lay.addLayout(box)
 
     def _load_current_settings(self):
         # Driver
@@ -147,10 +167,7 @@ class SetupAssistantDialog(QDialog):
 
     # ------------------------------------------------------------- Step 1: Mic
     def _build_step1_mic(self) -> QWidget:
-        w = QWidget()
-        lay = QVBoxLayout(w)
-        lay.setSpacing(space(3))
-        lay.setContentsMargins(0, 0, 0, 0)   # flush with the header and nav row
+        w, lay = self._page()
 
         desc = QLabel(
             "Choose the microphone you speak into. If you have an audio interface (Focusrite, Motu, etc.), "
@@ -160,41 +177,23 @@ class SetupAssistantDialog(QDialog):
         desc.setObjectName("wizardDesc")
         lay.addWidget(desc)
 
-        # Driver
-        drv_box = QVBoxLayout()
-        drv_lbl = QLabel("AUDIO DRIVER:")
-        drv_lbl.setObjectName("wizardFieldLabel")
         self.mic_drv = QComboBox()
         self.mic_drv.currentIndexChanged.connect(self._on_driver_changed)
-        drv_box.addWidget(drv_lbl)
-        drv_box.addWidget(self.mic_drv)
-        lay.addLayout(drv_box)
+        self._field(lay, "Audio driver", self.mic_drv)
 
-        # Input device
-        dev_box = QVBoxLayout()
-        dev_lbl = QLabel("INPUT MICROPHONE:")
-        dev_lbl.setObjectName("wizardFieldLabel")
         self.mic_dev = QComboBox()
         self.mic_dev.currentIndexChanged.connect(self._on_mic_device_changed)
-        dev_box.addWidget(dev_lbl)
-        dev_box.addWidget(self.mic_dev)
-        lay.addLayout(dev_box)
+        self._field(lay, "Input microphone", self.mic_dev)
 
-        # Input channel
-        ch_box = QVBoxLayout()
-        ch_lbl = QLabel("MIC INPUT CHANNEL:")
-        ch_lbl.setObjectName("wizardFieldLabel")
         self.mic_ch = QComboBox()
-        ch_box.addWidget(ch_lbl)
-        ch_box.addWidget(self.mic_ch)
-        lay.addLayout(ch_box)
+        self._field(lay, "Mic input channel", self.mic_ch)
 
         # Live VU meter
-        meter_box = QVBoxLayout()
-        m_head = QHBoxLayout()
-        m_lbl = QLabel("LIVE MICROPHONE LEVEL (Speak to test):")
+        meter_box = self._spaced.add(QVBoxLayout(), spacing=1, margins=0)
+        m_head = self._spaced.add(QHBoxLayout(), spacing=2, margins=0)
+        m_lbl = QLabel("Live microphone level (speak to test)")
         m_lbl.setObjectName("wizardFieldLabel")
-        self.mic_status_lbl = QLabel("Awaiting sound...")
+        self.mic_status_lbl = QLabel("Awaiting sound…")
         self.mic_status_lbl.setObjectName("wizardMicStatus")
         m_head.addWidget(m_lbl)
         m_head.addStretch()
@@ -248,14 +247,11 @@ class SetupAssistantDialog(QDialog):
 
     # ------------------------------------------------------------- Step 2: Cable
     def _build_step2_cable(self) -> QWidget:
-        w = QWidget()
-        lay = QVBoxLayout(w)
-        lay.setSpacing(space(3))
-        lay.setContentsMargins(0, 0, 0, 0)   # flush with the header and nav row
+        w, lay = self._page()
 
         desc = QLabel(
-            "Mandible modifies your voice in real time, then sends the audio to a Virtual Audio Cable "
-            "(or Focusrite Loopback). In Discord and OBS, you simply select that cable as your microphone!"
+            "Mandible modifies your voice in real time, then sends the audio to a virtual audio cable "
+            "(or Focusrite Loopback). In Discord and OBS, you simply select that cable as your microphone."
         )
         desc.setWordWrap(True)
         desc.setObjectName("wizardDesc")
@@ -264,10 +260,10 @@ class SetupAssistantDialog(QDialog):
         # Status card
         self.cable_card = QFrame()
         self.cable_card.setObjectName("wizardCard")
-        card_lay = QVBoxLayout(self.cable_card)
-        self.cable_card_title = QLabel("DETECTING VIRTUAL AUDIO CABLES...")
+        card_lay = self._spaced.add(QVBoxLayout(self.cable_card), spacing=1, margins=3)
+        self.cable_card_title = QLabel("Detecting virtual audio cables…")
         self.cable_card_title.setObjectName("wizardCardTitle")
-        self.cable_card_desc = QLabel("Checking Windows for VB-Audio Virtual Cable and Focusrite Loopback...")
+        self.cable_card_desc = QLabel("Checking Windows for VB-Audio Virtual Cable and Focusrite Loopback…")
         self.cable_card_desc.setWordWrap(True)
         self.cable_card_desc.setObjectName("wizardCardDesc")
         card_lay.addWidget(self.cable_card_title)
@@ -275,7 +271,7 @@ class SetupAssistantDialog(QDialog):
         lay.addWidget(self.cable_card)
 
         # Download / Refresh buttons
-        action_row = QHBoxLayout()
+        action_row = self._spaced.add(QHBoxLayout(), spacing=2, margins=0)
         self.download_cable_btn = make_button("Download the free VB-Audio Cable", icon="open_window",
                                               tooltip="Opens vb-audio.com in your browser")
         self.download_cable_btn.setObjectName("wizardDownloadBtn")
@@ -288,13 +284,8 @@ class SetupAssistantDialog(QDialog):
         lay.addLayout(action_row)
 
         # Output device selector
-        out_box = QVBoxLayout()
-        out_lbl = QLabel("SEND MANDIBLE OUTPUT TO (Cable / Loopback):")
-        out_lbl.setObjectName("wizardFieldLabel")
         self.cable_dev_combo = QComboBox()
-        out_box.addWidget(out_lbl)
-        out_box.addWidget(self.cable_dev_combo)
-        lay.addLayout(out_box)
+        self._field(lay, "Send the output to (cable or loopback)", self.cable_dev_combo)
 
         lay.addStretch()
         return w
@@ -307,8 +298,9 @@ class SetupAssistantDialog(QDialog):
         self._refresh_cable_detection()
 
     def _set_cable_state(self, state: str):
-        """``ok`` / ``warn`` on the card and its two labels (the stylesheet has no ancestor rule)."""
-        for w in (self.cable_card, self.cable_card_title, self.cable_card_desc):
+        """``ok`` / ``warn`` on the card (fill and outline) and its title (colour): each widget
+        is styled by its own rule, so the state goes on each of them."""
+        for w in (self.cable_card, self.cable_card_title):
             set_style_property(w, "state", state)
 
     def _refresh_cable_detection(self):
@@ -324,7 +316,7 @@ class SetupAssistantDialog(QDialog):
         if cables:
             best = cables[0]
             self._set_cable_state("ok")
-            self.cable_card_title.setText(f"READY: {best['desc']} Detected")
+            self.cable_card_title.setText(f"{best['desc']} detected")
             self.cable_card_desc.setText(f"Detected: {best['device']}. Mandible will stream processed voice here.")
             
             # Pre-select in combo
@@ -333,7 +325,7 @@ class SetupAssistantDialog(QDialog):
                 self.cable_dev_combo.setCurrentIndex(idx)
         else:
             self._set_cable_state("warn")
-            self.cable_card_title.setText("NOTE: No Virtual Audio Cable Detected")
+            self.cable_card_title.setText("No virtual audio cable detected")
             self.cable_card_desc.setText(
                 "Windows doesn't have a virtual cable installed. Click 'Download the free VB-Audio Cable' "
                 "below, run the installer, and click 'Refresh the device list'."
@@ -341,10 +333,7 @@ class SetupAssistantDialog(QDialog):
 
     # ------------------------------------------------------------- Step 3: Monitor
     def _build_step3_monitor(self) -> QWidget:
-        w = QWidget()
-        lay = QVBoxLayout(w)
-        lay.setSpacing(space(3))
-        lay.setContentsMargins(0, 0, 0, 0)   # flush with the header and nav row
+        w, lay = self._page()
 
         desc = QLabel(
             "Select your headphones or speakers so you can monitor your voice in real time and audition "
@@ -354,28 +343,18 @@ class SetupAssistantDialog(QDialog):
         desc.setObjectName("wizardDesc")
         lay.addWidget(desc)
 
-        mon_box = QVBoxLayout()
-        mon_lbl = QLabel("HEADPHONE / MONITOR DEVICE:")
-        mon_lbl.setObjectName("wizardFieldLabel")
         self.mon_dev_combo = QComboBox()
-        mon_box.addWidget(mon_lbl)
-        mon_box.addWidget(self.mon_dev_combo)
-        lay.addLayout(mon_box)
+        self._field(lay, "Headphone or monitor device", self.mon_dev_combo)
 
         # Monitor feed mode
-        feed_box = QVBoxLayout()
-        feed_lbl = QLabel("WHAT DO YOU WANT TO HEAR IN HEADPHONES?:")
-        feed_lbl.setObjectName("wizardFieldLabel")
         self.mon_feed_combo = QComboBox()
-        self.mon_feed_combo.addItem("Processed Voice (hear your effects & soundboard)", "processed")
-        self.mon_feed_combo.addItem("Clean Mic (zero-latency direct mic monitor)", "dry")
-        self.mon_feed_combo.addItem("50/50 Mix (blend of both)", "mix")
-        feed_box.addWidget(feed_lbl)
-        feed_box.addWidget(self.mon_feed_combo)
-        lay.addLayout(feed_box)
+        self.mon_feed_combo.addItem("Processed voice (hear your effects and soundboard)", "processed")
+        self.mon_feed_combo.addItem("Clean mic (zero-latency direct mic monitor)", "dry")
+        self.mon_feed_combo.addItem("50/50 mix (blend of both)", "mix")
+        self._field(lay, "What do you want to hear in your headphones?", self.mon_feed_combo)
 
         # Test headphone monitor button
-        test_box = QHBoxLayout()
+        test_box = self._spaced.add(QHBoxLayout(), spacing=2, margins=0)
         self.test_audio_btn = make_button("Test headphones (play a chime)", icon="play")
         self.test_audio_btn.clicked.connect(self._test_headphones)
         test_box.addWidget(self.test_audio_btn)
@@ -388,7 +367,7 @@ class SetupAssistantDialog(QDialog):
         drv = self.mic_drv.currentData() or "Windows WASAPI"
         outs = D.list_devices(drv, "output")
         self.mon_dev_combo.clear()
-        self.mon_dev_combo.addItem("Disabled (No headphone monitor)", "")
+        self.mon_dev_combo.addItem("Disabled (no headphone monitor)", "")
         for idx, name, chans in outs:
             # Filter out cables from headphone list
             nl = name.lower()
@@ -413,40 +392,40 @@ class SetupAssistantDialog(QDialog):
             stereo = np.column_stack([sig, sig])
             sd.play(stereo, sr)
         except Exception as exc:
-            QMessageBox.information(self, "Headphone Test", f"Could not play test sound: {exc}")
+            QMessageBox.information(self, "Headphone test", f"Could not play test sound: {exc}")
 
     # ------------------------------------------------------------- Step 4: Discord / OBS Guide
     def _build_step4_guide(self) -> QWidget:
-        w = QWidget()
-        lay = QVBoxLayout(w)
-        lay.setSpacing(space(3))
-        lay.setContentsMargins(0, 0, 0, 0)   # flush with the header and nav row
+        w, lay = self._page()
 
         guide_card = QFrame()
         guide_card.setObjectName("wizardGuideCard")
-        g_lay = QVBoxLayout(guide_card)
-        g_lay.setSpacing(space(2))
+        g_lay = self._spaced.add(QVBoxLayout(guide_card), spacing=2, margins=3)
 
-        g_title = QLabel("CONNECTING TO DISCORD, OBS & GAMES:")
+        g_title = QLabel("Connecting to Discord, OBS and games")
         g_title.setObjectName("wizardGuideTitle")
         g_lay.addWidget(g_title)
 
+        # Numbered steps: the step names share one column, their explanations the next.
         steps = [
-            ("1. Open Discord Settings", "Go to User Settings -> Voice & Video."),
-            ("2. Set INPUT DEVICE", "Select 'CABLE Output (VB-Audio Virtual Cable)' or your Focusrite Loopback."),
-            ("3. Set OUTPUT DEVICE", "Select your standard headphones or speakers."),
-            ("4. Disable Discord Echo Cancellation", "Turn off Discord's 'Echo Cancellation' and 'Noise Suppression' (Mandible provides high-end studio noise gates and VSTs!)."),
-            ("5. OBS / Streamlabs", "Add an 'Audio Input Capture' source and select 'CABLE Output' as the device."),
+            ("1. Open Discord settings", "Go to User Settings \u2192 Voice & Video."),
+            ("2. Set the input device", "Select 'CABLE Output (VB-Audio Virtual Cable)' or your Focusrite Loopback."),
+            ("3. Set the output device", "Select your standard headphones or speakers."),
+            ("4. Turn off echo cancellation", "Turn off Discord's 'Echo Cancellation' and 'Noise Suppression' "
+                                              "(Mandible provides studio noise gates and VST plugins)."),
+            ("5. OBS or Streamlabs", "Add an 'Audio Input Capture' source and select 'CABLE Output' as the device."),
         ]
-        for num, text in steps:
-            row = QHBoxLayout()
+        grid = self._spaced.add(QGridLayout(), spacing=2, margins=0)
+        grid.setColumnStretch(1, 1)
+        for row, (num, text) in enumerate(steps):
             s_num = QLabel(num)
             s_num.setObjectName("wizardGuideNum")
             s_txt = QLabel(text)
             s_txt.setObjectName("wizardGuideText")
-            row.addWidget(s_num)
-            row.addWidget(s_txt, 1)
-            g_lay.addLayout(row)
+            s_txt.setWordWrap(True)
+            grid.addWidget(s_num, row, 0, Qt.AlignTop)
+            grid.addWidget(s_txt, row, 1)
+        g_lay.addLayout(grid)
 
         lay.addWidget(guide_card)
         lay.addStretch()
@@ -476,10 +455,10 @@ class SetupAssistantDialog(QDialog):
         self.step_lbl.setText(f"STEP {idx + 1} OF 4")
         self.back_btn.setEnabled(idx > 0)
         titles = [
-            "Select Your Microphone",
-            "Output & Virtual Cable Setup",
-            "Headphone Monitoring",
-            "Discord & OBS Quick Connection",
+            "Select your microphone",
+            "Output and virtual cable setup",
+            "Headphone monitoring",
+            "Discord and OBS quick connection",
         ]
         self.main_title.setText(titles[idx])
         if idx == 3:
@@ -511,6 +490,6 @@ class SetupAssistantDialog(QDialog):
         try:
             self.core.start_audio()
         except Exception as exc:
-            QMessageBox.warning(self, "Audio Start", f"Could not start audio with new settings:\n{exc}")
+            QMessageBox.warning(self, "Audio start", f"Could not start audio with new settings:\n{exc}")
 
         self.accept()

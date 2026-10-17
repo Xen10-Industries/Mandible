@@ -10,6 +10,7 @@ from ... import APP_NAME, PUBLISHER, __version__
 from ...config import resource_path
 from ..look import font_px
 from ..widgets.buttons import tier_button_box
+from .parts import keep_wrapped_text_visible
 
 TRADEMARK_NOTICE = "VST is a trademark of Steinberg Media Technologies GmbH, registered in Europe and other countries."
 
@@ -38,6 +39,7 @@ class AboutDialog(QDialog):
     def __init__(self, parent=None, start_tab: int = 0):
         super().__init__(parent)
         self.setWindowTitle(f"About {APP_NAME}")
+        self.setMinimumWidth(480)
         self.resize(760, 560)
         lay = QVBoxLayout(self)
 
@@ -51,7 +53,7 @@ class AboutDialog(QDialog):
         header.setWordWrap(True)
         lay.addWidget(header)
         notice = QLabel(TRADEMARK_NOTICE)
-        notice.setObjectName("dialogInfo")
+        notice.setObjectName("hint")
         notice.setWordWrap(True)
         lay.addWidget(notice)
 
@@ -64,3 +66,4 @@ class AboutDialog(QDialog):
         buttons = tier_button_box(QDialogButtonBox(QDialogButtonBox.StandardButton.Close))
         buttons.rejected.connect(self.reject)
         lay.addWidget(buttons)
+        keep_wrapped_text_visible(self)

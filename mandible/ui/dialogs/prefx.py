@@ -1,94 +1,105 @@
-"""Microphone pre-processing settings."""
+"""Microphone pre-processing settings ("Mic cleanup")."""
 from __future__ import annotations
 
 import copy
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QGroupBox, QHBoxLayout, QLabel,
-                               QSlider, QSpinBox, QVBoxLayout)
+from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QSlider, QSpinBox,
+                               QVBoxLayout, QWidget)
 
 from ...core import Core
+from ..widgets.base import SpacedLayouts, _follow_look, reserve_text_width
 from ..widgets.buttons import tier_button_box
+from .parts import check_row, group_label, keep_wrapped_text_visible
+
+FIELD_LABELS = ("Cutoff frequency", "Intensity", "Threshold", "Release")
 
 
 class PreFXDialog(QDialog):
-    """Microphone Pre-processing: High-pass rumble filter, RNNoise AI, and Noise Gate."""
+    """Mic cleanup: high-pass rumble filter, RNNoise AI suppression and a noise gate."""
+
     def __init__(self, core: Core, parent=None):
         super().__init__(parent)
         self.core = core
         self.cfg = copy.copy(core.cfg.prefx)
-        self.setWindowTitle("Microphone Clean-up (Pre-FX)")
-        self.resize(460, 380)
-        lay = QVBoxLayout(self)
+        self.setWindowTitle("Mic cleanup")
+        self.setMinimumWidth(360)
+        self.resize(480, 420)
+        self._spaced = SpacedLayouts()
+        self._labels: list[QLabel] = []
+        _follow_look(self)
 
-        # Highpass
-        hp_box = QGroupBox("Rumble Filter (Low-Cut)")
-        hp_lay = QVBoxLayout(hp_box)
-        self.hp_en = QCheckBox("Enable High-pass filter (removes desk thumps, AC rumble, and plosives)")
-        self.hp_en.setChecked(self.cfg.highpass_enabled)
-        hp_row = QHBoxLayout()
-        hp_row.addWidget(QLabel("Cutoff frequency:"))
+        lay = self._spaced.add(QVBoxLayout(self), spacing=2, margins=4)
+
+        group_label(lay, "Rumble filter")
+        self.hp_en = check_row(lay, "Enable high-pass filter", self.cfg.highpass_enabled,
+                               "Removes desk thumps, air-conditioning rumble and plosives.")
         self.hp_freq = QSpinBox()
         self.hp_freq.setRange(20, 300)
         self.hp_freq.setValue(int(self.cfg.highpass_cutoff_hz))
         self.hp_freq.setSuffix(" Hz")
-        hp_row.addWidget(self.hp_freq)
-        hp_row.addStretch()
-        hp_lay.addWidget(self.hp_en)
-        hp_lay.addLayout(hp_row)
-        lay.addWidget(hp_box)
+        self._field(lay, "Cutoff frequency", self.hp_freq)
 
-        # AI RNNoise
-        rnn_box = QGroupBox("AI Noise Suppression (RNNoise)")
-        rnn_lay = QVBoxLayout(rnn_box)
-        self.rnn_en = QCheckBox("Enable RNNoise AI suppression (removes fan noise, keyboard clicks, and mic hiss)")
-        self.rnn_en.setChecked(self.cfg.rnnoise_enabled)
-        rnn_row = QHBoxLayout()
-        rnn_row.addWidget(QLabel("Suppression intensity:"))
+        group_label(lay, "Noise suppression")
+        self.rnn_en = check_row(lay, "Enable AI noise suppression", self.cfg.rnnoise_enabled,
+                                "RNNoise removes fan noise, keyboard clicks and mic hiss.")
         self.rnn_wet = QSlider(Qt.Horizontal)
         self.rnn_wet.setRange(0, 100)
         self.rnn_wet.setValue(int(round(self.cfg.rnnoise_wet * 100)))
-        self.rnn_lbl = QLabel(f"{self.rnn_wet.value()}%")
-        self.rnn_wet.valueChanged.connect(lambda v: self.rnn_lbl.setText(f"{v}%"))
-        rnn_row.addWidget(self.rnn_wet, 1)
-        rnn_row.addWidget(self.rnn_lbl)
-        rnn_lay.addWidget(self.rnn_en)
-        rnn_lay.addLayout(rnn_row)
-        lay.addWidget(rnn_box)
+        self.rnn_lbl = self._readout(self.rnn_wet, "{}%", "100%")
+        self._field(lay, "Intensity", self.rnn_wet, self.rnn_lbl)
 
-        # Noise Gate
-        gate_box = QGroupBox("Noise Gate (Silence during pauses)")
-        gate_lay = QVBoxLayout(gate_box)
-        self.gate_en = QCheckBox("Enable Noise Gate (completely mutes room background when you are silent)")
-        self.gate_en.setChecked(self.cfg.noise_gate_enabled)
-        g_row1 = QHBoxLayout()
-        g_row1.addWidget(QLabel("Threshold:"))
+        group_label(lay, "Noise gate")
+        self.gate_en = check_row(lay, "Enable noise gate", self.cfg.noise_gate_enabled,
+                                 "Silences the room while you are not speaking.")
         self.gate_thresh = QSlider(Qt.Horizontal)
         self.gate_thresh.setRange(-70, -20)
         self.gate_thresh.setValue(int(round(self.cfg.noise_gate_threshold_db)))
-        self.gate_t_lbl = QLabel(f"{self.gate_thresh.value()} dB")
-        self.gate_thresh.valueChanged.connect(lambda v: self.gate_t_lbl.setText(f"{v} dB"))
-        g_row1.addWidget(self.gate_thresh, 1)
-        g_row1.addWidget(self.gate_t_lbl)
-
-        g_row2 = QHBoxLayout()
-        g_row2.addWidget(QLabel("Release:"))
+        self.gate_t_lbl = self._readout(self.gate_thresh, "{} dB", "-70 dB")
+        self._field(lay, "Threshold", self.gate_thresh, self.gate_t_lbl)
         self.gate_rel = QSpinBox()
         self.gate_rel.setRange(10, 1000)
         self.gate_rel.setValue(int(round(self.cfg.noise_gate_release_ms)))
         self.gate_rel.setSuffix(" ms")
-        g_row2.addWidget(self.gate_rel)
-        g_row2.addStretch()
+        self._field(lay, "Release", self.gate_rel)
 
-        gate_lay.addWidget(self.gate_en)
-        gate_lay.addLayout(g_row1)
-        gate_lay.addLayout(g_row2)
-        lay.addWidget(gate_box)
+        for label in self._labels:           # one label column: the fields line up
+            reserve_text_width(label, *FIELD_LABELS)
 
+        lay.addStretch(1)
         bb = tier_button_box(QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel))
         bb.accepted.connect(self._save)
         bb.rejected.connect(self.reject)
         lay.addWidget(bb)
+        keep_wrapped_text_visible(self)
+
+    def _on_look_changed(self) -> None:
+        self._spaced.apply()
+
+    def _field(self, lay: QVBoxLayout, text: str, field: QWidget, trailing: QWidget | None = None) -> None:
+        """``text`` and its field on one row. A slider takes the width that is left (its value
+        label follows it); a spin box keeps its natural width, at the left."""
+        row = self._spaced.add(QHBoxLayout(), spacing=3, margins=0)
+        label = QLabel(text)
+        self._labels.append(label)
+        row.addWidget(label)
+        if trailing is not None:
+            row.addWidget(field, 1)
+            row.addWidget(trailing)
+        else:
+            row.addWidget(field)
+            row.addStretch(1)
+        lay.addLayout(row)
+
+    @staticmethod
+    def _readout(slider: QSlider, fmt: str, widest: str) -> QLabel:
+        """A value label that follows the slider and keeps one width, so the slider does not
+        change length as the number gains or loses digits."""
+        label = QLabel(fmt.format(slider.value()))
+        label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        slider.valueChanged.connect(lambda v: label.setText(fmt.format(v)))
+        reserve_text_width(label, widest)
+        return label
 
     def _save(self):
         self.cfg.highpass_enabled = self.hp_en.isChecked()

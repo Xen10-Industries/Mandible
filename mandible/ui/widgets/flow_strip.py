@@ -23,7 +23,7 @@ MODES = ("full", "icons", "hidden")
 # step key -> (icon shown in icons mode, what the step is)
 _STEPS = {
     "mic": ("mic", "Microphone input"),
-    "prefx": ("filter", "Pre-FX (mic clean-up before the effects)"),
+    "prefx": ("filter", "Mic cleanup (Pre-FX)"),
     "rack": ("rack", "Active plugin rack"),
     "sb": ("pads", "Soundboard"),
     "lim": ("limiter", "Output limiter"),
@@ -201,7 +201,7 @@ class SignalFlowStrip(QFrame):
             icon_name, what = _STEPS[key]
             if key == "prefx":
                 stage_txt = ", ".join(stages) if stages else "all stages off"
-                full.setToolTip(f"Pre-FX: {stage_txt}\n{self._tips[key]}")
+                full.setToolTip(f"Mic cleanup: {stage_txt}\n{self._tips[key]}")
                 icon.setToolTip(f"{what}: {stage_txt}\n{self._tips[key]}")
             else:
                 extra = f"\n{full.toolTip()}" if isinstance(full, QPushButton) and full.toolTip() else ""

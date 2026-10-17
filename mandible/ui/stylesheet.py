@@ -888,15 +888,14 @@ QLabel#condensedLabel {{
     color: {muted};
 }}
 
-QLabel#dialogInfo {{
+QLabel#hint {{
     color: {muted};
     font-size: {f_small};
 }}
 QLabel#paramMapTitle {{
-    font-weight: 800;
-    font-size: {f_body};
+    font-weight: bold;
+    font-size: {f_title};
     color: {text};
-    letter-spacing: 0.6px;
 }}
 QLabel#paramMapBadge {{
     background-color: {inset};
@@ -950,11 +949,6 @@ QFrame#duckStrip {{
     border: {bw} solid {line};
     border-radius: {r_pnl};
 }}
-QFrame#duckStrip QCheckBox, QFrame#duckStrip QLabel {{
-    background: transparent;
-    border: none;
-    padding: 4px 0px;
-}}
 QLabel#duckLabel {{
     color: {muted};
     font-size: {f_small};
@@ -966,17 +960,6 @@ QLabel#duckValue {{
     font-weight: bold;
 }}
 
-QDialog#setupAssistant QComboBox {{
-    background-color: {inset};
-    border: {bw} solid {line};
-    border-radius: {r_sm};
-    padding: 6px 10px;
-    color: {text};
-    font-size: {f_body};
-}}
-QDialog#setupAssistant QComboBox:hover {{
-    border-color: {strong};
-}}
 QLabel#wizardStep {{
     color: {accent_hover};
     font-weight: 800;
@@ -1007,17 +990,16 @@ QLabel#wizardMicStatus[ok="true"] {{
     font-weight: bold;
     font-size: {f_body};
 }}
-QFrame#wizardCard, QLabel#wizardCardTitle, QLabel#wizardCardDesc {{
+QFrame#wizardCard {{
     background-color: {card};
     border: {bw} solid {line};
     border-radius: {r_pnl};
-    padding: 12px;
 }}
-QFrame#wizardCard[state="ok"], QLabel#wizardCardTitle[state="ok"], QLabel#wizardCardDesc[state="ok"] {{
+QFrame#wizardCard[state="ok"] {{
     background-color: {ok_bg};
     border: {bw} solid {ok};
 }}
-QFrame#wizardCard[state="warn"], QLabel#wizardCardTitle[state="warn"], QLabel#wizardCardDesc[state="warn"] {{
+QFrame#wizardCard[state="warn"] {{
     background-color: {warn_bg};
     border: {bw} solid {warn};
 }}
@@ -1035,11 +1017,10 @@ QLabel#wizardCardDesc {{
     color: {muted};
     font-size: {f_small};
 }}
-QFrame#wizardGuideCard, QFrame#wizardGuideCard QLabel {{
+QFrame#wizardGuideCard {{
     background-color: {card};
     border: {bw} solid {line};
     border-radius: {r_pnl};
-    padding: 14px;
 }}
 QLabel#wizardGuideTitle {{
     font-weight: 800;
@@ -1055,21 +1036,6 @@ QLabel#wizardGuideNum {{
 QLabel#wizardGuideText {{
     color: {muted};
     font-size: {f_small};
-}}
-
-QGroupBox {{
-    border: {bw} solid {line};
-    border-radius: {r_pnl};
-    margin-top: 14px;
-    padding-top: 10px;
-    background-color: {card};
-}}
-QGroupBox::title {{
-    subcontrol-origin: margin;
-    left: 12px;
-    padding: 0 6px;
-    font-weight: bold;
-    color: {accent};
 }}
 
 QTabWidget::pane {{

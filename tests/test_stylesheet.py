@@ -231,7 +231,7 @@ def test_set_look_applies_the_real_stylesheet(qapp, restore_look):
 
 INFO_TEXT_SELECTORS = ("QLabel#flowBusLabel", "QLabel#flowArrow", "QLabel#chainSub",
                        "QLabel#rackSlotIndex", "QLabel#latencyChip", "QLabel#rackBayLabel",
-                       "QLabel#dialogInfo", "QLabel#duckLabel", "QLabel#wizardDesc",
+                       "QLabel#hint", "QLabel#duckLabel", "QLabel#wizardDesc",
                        "QLabel#wizardFieldLabel", "QLabel#wizardMicStatus",
                        "QLabel#wizardCardDesc", "QLabel#wizardGuideText",
                        "QLabel#rackBusLabel", "QLabel#rackLatency", "QLabel#vfdValue",
@@ -286,6 +286,14 @@ SMALL_TEXT_ON_SURFACE = {
     "QListWidget#settingsSections::item:hover": "bg.raised",
     "QListWidget#settingsSections::item:selected": "accent.subtle",
     "QLabel#hotkeyPrompt": "bg.window",
+    # Remaining dialogs (Task 16)
+    "QLabel#paramMapTitle": "bg.window",
+    "QLabel#paramMapBadge": "bg.inset",
+    "QLabel#wizardTitle": "bg.window",
+    "QLabel#wizardGuideTitle": "bg.panel",
+    "QLabel#wizardGuideNum": "bg.panel",
+    'QLabel#wizardCardTitle[state="ok"]': "status.ok.subtle",
+    'QLabel#wizardCardTitle[state="warn"]': "status.warn.subtle",
 }
 
 
@@ -304,12 +312,26 @@ def test_small_accent_text_meets_contrast_on_its_surface(look):
 
 
 @pytest.mark.parametrize("look", ALL_LOOKS)
+def test_wizard_card_description_reads_on_the_state_fills(look):
+    """The status card's muted description sits on the ok / warn fill, not only on a panel."""
+    from mandible.ui.palette_gen import contrast_ratio
+
+    qss = build_qss(look)
+    body = " ".join(rule_blocks(qss, "QLabel#wizardCardDesc"))
+    colour = re.search(r"(?<![-\w])color:\s*(#[0-9a-fA-F]{6})", body).group(1)
+    for fill in ("status.ok.subtle", "status.warn.subtle"):
+        assert contrast_ratio(colour, look.palette.color(fill)) >= 4.5, (look.palette.id, fill)
+
+
+@pytest.mark.parametrize("look", ALL_LOOKS)
 def test_dialog_title_rules_use_the_title_size(look):
-    """Settings' section title and the hotkey prompt are the most prominent text in their dialogs."""
+    """Settings' section title, the hotkey prompt, the knob mapping header and the setup
+    assistant's page title are the most prominent text in their dialogs."""
     from mandible.ui.look import font_px
 
     qss = build_qss(look)
-    for selector in ("QLabel#settingsSectionTitle", "QLabel#hotkeyPrompt"):
+    for selector in ("QLabel#settingsSectionTitle", "QLabel#hotkeyPrompt", "QLabel#paramMapTitle",
+                     "QLabel#wizardTitle"):
         body = " ".join(rule_blocks(qss, selector))
         assert f"font-size: {font_px('title')}px" in body, selector
 

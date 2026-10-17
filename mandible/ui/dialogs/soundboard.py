@@ -6,15 +6,13 @@ from functools import partial
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QCheckBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QHeaderView,
-                               QLabel, QSlider,
-                               QTableWidget, QTableWidgetItem,
-                               QVBoxLayout)
+                               QLabel, QSlider, QTableWidget, QTableWidgetItem, QVBoxLayout,
+                               QWidget)
 
 from ...config import SoundboardClipConfig
 from ...core import Core
 from ...waveform_widget import SoundboardWaveformWidget
-from ..look import space
-from ..widgets.base import _follow_look, reserve_text_width
+from ..widgets.base import SpacedLayouts, _follow_look, reserve_text_width
 from ..widgets.buttons import make_button
 from .hotkey import HotkeyDialog
 
@@ -22,19 +20,24 @@ from .hotkey import HotkeyDialog
 class SoundboardDialog(QDialog):
     """Soundboard management: add clips, assign hotkeys, adjust volumes, and trigger sounds."""
     ROW_PAD = 8   # the table items' vertical padding (2 px a side in the stylesheet) plus grid
+    COL_PAD = 16  # a column's horizontal item padding (6 px a side in the stylesheet) plus grid
 
     def __init__(self, core: Core, parent=None):
         super().__init__(parent)
         self.core = core
         self.setWindowTitle("Soundboard")
-        self.resize(680, 420)
-        lay = QVBoxLayout(self)
+        self._spaced = SpacedLayouts()
+        lay = self._spaced.add(QVBoxLayout(self), spacing=2, margins=3)
 
         self.table = QTableWidget()
         self.table.setObjectName("soundboardTable")
         self.table.setColumnCount(6)
         self.table.setHorizontalHeaderLabels(["Name", "Hotkey", "Volume", "Out", "Headphones", "Action"])
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.Stretch)
+        for col in (1, 3, 4, 5):          # sized to their buttons / check boxes (_fit_columns)
+            header.setSectionResizeMode(col, QHeaderView.Fixed)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.itemSelectionChanged.connect(self._on_table_selection_changed)
         lay.addWidget(self.table, 1)
@@ -46,9 +49,7 @@ class SoundboardDialog(QDialog):
         # Soundboard Mic Ducking Options Strip
         duck_strip = QFrame()
         duck_strip.setObjectName("duckStrip")
-        duck_lay = QHBoxLayout(duck_strip)
-        duck_lay.setContentsMargins(space(2), space(1), space(2), space(1))
-        duck_lay.setSpacing(space(2))
+        duck_lay = self._spaced.add(QHBoxLayout(duck_strip), spacing=2, margins=(1, 2, 1, 2))
 
         self.duck_en = QCheckBox("Duck microphone during soundboard playback")
         self.duck_en.setChecked(getattr(self.core.cfg, "soundboard_ducking_enabled", False))
@@ -71,13 +72,12 @@ class SoundboardDialog(QDialog):
         self.duck_val_lbl = QLabel(f"{self.duck_slider.value()} dB")
         self.duck_val_lbl.setObjectName("duckValue")
         duck_lay.addWidget(self.duck_val_lbl)
-        # Measured in place: the duck strip's stylesheet pads its labels.
         reserve_text_width(self.duck_val_lbl, "-30 dB")
         self.duck_val_lbl.setFixedWidth(self.duck_val_lbl.minimumWidth())
 
         lay.addWidget(duck_strip)
 
-        bottom = QHBoxLayout()
+        bottom = self._spaced.add(QHBoxLayout(), spacing=2, margins=0)
         add_btn = make_button("Add sound clip…", icon="plus")
         stop_all_btn = make_button("Stop all sounds", icon="stop")
         bottom.addWidget(add_btn)
@@ -107,12 +107,42 @@ class SoundboardDialog(QDialog):
                     w.ensurePolished()
                     need = max(need, w.sizeHint().height())
         if need:
+            # a couple of rows stay in view however small the dialog is made
+            self.table.setMinimumHeight(self.table.horizontalHeader().sizeHint().height()
+                                        + 2 * (need + self.ROW_PAD) + 2 * self.table.frameWidth())
             self.table.verticalHeader().setDefaultSectionSize(need + self.ROW_PAD)
             for row in range(self.table.rowCount()):
                 self.table.setRowHeight(row, need + self.ROW_PAD)
 
+    def _fit_columns(self) -> None:
+        """Hotkey, route and action columns are as wide as their widest content (header text or
+        cell widget), so the hotkey button text and "Headphones" are never cut; Name and Volume
+        share the rest."""
+        header = self.table.horizontalHeader()
+        for col in (1, 3, 4, 5):
+            need = header.sectionSizeHint(col)
+            for row in range(self.table.rowCount()):
+                w = self.table.cellWidget(row, col)
+                if w is not None:
+                    w.ensurePolished()
+                    need = max(need, w.sizeHint().width() + self.COL_PAD)
+            self.table.setColumnWidth(col, need)
+
+    @staticmethod
+    def _centered(widget: QWidget) -> QWidget:
+        """A cell holding ``widget`` in the middle of its column."""
+        cell = QWidget()
+        row = QHBoxLayout(cell)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addStretch(1)
+        row.addWidget(widget)
+        row.addStretch(1)
+        return cell
+
     def _on_look_changed(self) -> None:
+        self._spaced.apply()
         self._fit_row_height()
+        self._fit_columns()
 
     def _refresh_rows(self):
         selected = self.table.currentRow() if self.table.selectionModel().hasSelection() else -1
@@ -140,13 +170,13 @@ class SoundboardDialog(QDialog):
             out_cb = QCheckBox()
             out_cb.setChecked(clip.route_output)
             out_cb.toggled.connect(partial(self._route_out_changed, clip))
-            self.table.setCellWidget(row, 3, out_cb)
+            self.table.setCellWidget(row, 3, self._centered(out_cb))
 
             # Route mon
             mon_cb = QCheckBox()
             mon_cb.setChecked(clip.route_monitor)
             mon_cb.toggled.connect(partial(self._route_mon_changed, clip))
-            self.table.setCellWidget(row, 4, mon_cb)
+            self.table.setCellWidget(row, 4, self._centered(mon_cb))
 
             # Play / Stop button
             playing = self.core.engine.soundboard.is_playing(clip.id)
@@ -157,6 +187,7 @@ class SoundboardDialog(QDialog):
             self.table.setCellWidget(row, 5, action_btn)
 
         self._fit_row_height()
+        self._fit_columns()
         # Nothing is pre-selected: the detail panel says so until the user picks a clip, and
         # a refresh keeps only a selection the user made.
         if 0 <= selected < len(self.core.cfg.soundboard):

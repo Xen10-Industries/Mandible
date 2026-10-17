@@ -42,7 +42,8 @@ minimum size), contrast, and the live switch into the skin::
 
     {"platform": ..., "skin": id, "themes": {"<theme>": {"contrast": [...],
         "screens": {"main|<WxH>" | "<dialog>": {"size", "min_size", "overflow",
-            "clipped_text", "elided_without_tooltip", "untiered_buttons", "off_scale_spacing",
+            "clipped_text", "elided_without_tooltip", "untiered_buttons", "multiple_primaries",
+            "off_scale_spacing",
             "unnamed_icon_controls", "small_painted_text", "painted_text_count"}}}},
      "switch": {"ms": [...], "errors": [...]}}
 """
@@ -249,6 +250,7 @@ def _standard_lists(widget, allowed) -> dict:
         "clipped_text": ins.find_clipped_text(widget),
         "elided_without_tooltip": missing,
         "untiered_buttons": ins.untiered_buttons(widget),
+        "multiple_primaries": ins.extra_primary_buttons(widget),
         "off_scale_spacing": ins.off_scale_spacing(widget, allowed),
         "unnamed_icon_controls": ins.unnamed_icon_controls(widget),
         "small_painted_text": sorted({f"{cls} {text!r} {px:g}px" for cls, text, px in painted

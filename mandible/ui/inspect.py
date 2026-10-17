@@ -167,6 +167,15 @@ def untiered_buttons(root: QWidget) -> list[str]:
             and not w.property("tier")]
 
 
+def extra_primary_buttons(root: QWidget) -> list[str]:
+    """Every visible primary-tier button under ``root`` when there is more than one (spec 7.7:
+    at most one primary per view); an empty list when there is one or none."""
+    primaries = [w for w in root.findChildren(QAbstractButton)
+                 if isinstance(w, (QPushButton, QToolButton)) and _own_widget(w)
+                 and w.property("tier") == "primary" and w.isVisible()]
+    return [_describe(w) for w in primaries] if len(primaries) > 1 else []
+
+
 def _layout_owner(lay: QLayout) -> str:
     w = lay.parentWidget()
     if w is None:

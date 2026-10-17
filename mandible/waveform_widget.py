@@ -20,6 +20,9 @@ if TYPE_CHECKING:
     from .core import Core
 
 
+EMPTY_TEXT = "Select a sound clip to view waveform"
+
+
 def _px_font(family: str, px: int, bold: bool = False) -> QFont:
     f = QFont(family)
     f.setPixelSize(px)
@@ -40,6 +43,7 @@ class WaveformCanvas(QWidget):
         self.duration_s: float = 0.0
         self.trim_start_s: float = 0.0
         self.trim_end_s: float = 0.0
+        self.empty_text = EMPTY_TEXT
         self._dragging: str | None = None  # "start" | "end" | None
         _follow_look(self)
 
@@ -131,7 +135,7 @@ class WaveformCanvas(QWidget):
         if not self.peaks or self.duration_s <= 0.01:
             p.setPen(look_color("text.secondary"))
             p.setFont(_px_font("Consolas", font_px("readout")))
-            p.drawText(QRectF(0, 0, w, h), Qt.AlignmentFlag.AlignCenter, "Select a sound clip to view waveform")
+            p.drawText(QRectF(0, 0, w, h), Qt.AlignmentFlag.AlignCenter, self.empty_text)
             return
 
         # 2. Draw waveform peaks
@@ -249,19 +253,32 @@ class SoundboardWaveformWidget(QFrame):
         if self._timing is not None:
             self._update_timing_label(*self._timing)
 
+    def _show_empty(self, title: str, tooltip: str, canvas_text: str) -> None:
+        """Nothing to show: say why (no selection, or the selected clip has no usable file),
+        and switch the clip actions off."""
+        self.clip_name_lbl.setText(title)
+        self.clip_name_lbl.setToolTip(tooltip)
+        self._timing = None
+        self.timing_lbl.setText("Start: 0.00s | End: 0.00s | Len: 0.00s")
+        self.canvas.empty_text = canvas_text
+        self.canvas.set_audio_data([], 0.0, 0.0, 0.0)
+        self.play_btn.setEnabled(False)
+        self.stop_btn.setEnabled(False)
+        self.reset_btn.setEnabled(False)
+
     def set_clip(self, clip: SoundboardClipConfig | None):
         self.current_clip = clip
-        if not clip or not clip.path or not os.path.isfile(clip.path):
-            self.clip_name_lbl.setText("No clip selected")
-            self._timing = None
-            self.timing_lbl.setText("Start: 0.00s | End: 0.00s | Len: 0.00s")
-            self.canvas.set_audio_data([], 0.0, 0.0, 0.0)
-            self.play_btn.setEnabled(False)
-            self.stop_btn.setEnabled(False)
-            self.reset_btn.setEnabled(False)
+        if clip is None:
+            self._show_empty("No clip selected", "", EMPTY_TEXT)
+            return
+        if not clip.path or not os.path.isfile(clip.path):
+            self._show_empty(f"File not found: {clip.name}",
+                             clip.path or "This clip has no audio file.",
+                             "The audio file for this clip is missing")
             return
 
         self.clip_name_lbl.setText(clip.name)
+        self.clip_name_lbl.setToolTip("")
         self.play_btn.setEnabled(True)
         self.stop_btn.setEnabled(True)
         self.reset_btn.setEnabled(True)

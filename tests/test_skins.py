@@ -56,6 +56,7 @@ def test_skin_meets_standard(standard):
     for theme, entry in standard["themes"].items():
         assert entry["contrast"] == [], (theme, entry["contrast"])
     assert _failures(standard, "untiered_buttons") == {}
+    assert _failures(standard, "multiple_primaries") == {}
     if WIN32:
         assert _failures(standard, "overflow") == {}
         assert _failures(standard, "clipped_text") == {}

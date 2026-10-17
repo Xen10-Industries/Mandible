@@ -560,7 +560,7 @@ class MainWindow(QMainWindow):
             else:
                 self._open_prefx()
         self.prefx_strip.mousePressEvent = on_pfx_click
-        self.prefx_strip.setToolTip("Left-click: Configure Pre-FX  ·  Right-click: Quick Toggle ON/BYPASS")
+        self.prefx_strip.setToolTip("Left-click: open mic cleanup (Pre-FX)  ·  Right-click: switch on or bypass")
         ll.addWidget(self.prefx_strip)
 
         # 2. Middle: VOICE PRESET BANK (Recessed / Inset 500-Series Modular Bay)
