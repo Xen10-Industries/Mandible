@@ -10,6 +10,7 @@ from ...config import PluginSlot
 from ...core import Core, inst
 from ..elements.base import ElementState
 from ..look import current_look
+from ..text import abbreviate_title
 from .base import _follow_look, look_element
 from .sliders import InlineValueEdit, parse_audio_value
 
@@ -171,7 +172,7 @@ class PluginParamKnob(QWidget):
 
         raw_name = getattr(self.param, "name", param_key) if self.param is not None else param_key
         self.full_name = str(raw_name or param_key).strip()
-        self.title = P.format_knob_title(self.full_name, max_len=9)
+        self.title = abbreviate_title(self.full_name, max_len=9)
 
         defaults = getattr(self.plugin, "_factory_defaults", None) or {}
         cur_raw = float(getattr(self.param, "raw_value", 0.5)) if self.param is not None else 0.5

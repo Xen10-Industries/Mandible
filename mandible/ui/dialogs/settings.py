@@ -295,6 +295,28 @@ class SettingsDialog(QDialog):
         for w in (self.launch_startup, self.autostart, self.tray, self.minimized, self.keep_awake):
             gl.addWidget(w)
 
+        # Idle mode, hotkeys and the all-off key (also in the main window's header status zone)
+        hk_box = QGroupBox("Hotkeys and idle")
+        hk_form = QFormLayout(hk_box)
+        self.idle_combo = QComboBox()
+        self.idle_combo.addItem("Clean voice (pass-through)", "dry")
+        self.idle_combo.addItem("Mute", "mute")
+        for c in self.cfg.chains:
+            self.idle_combo.addItem(f"Chain: {c.name}", c.id)
+        i = self.idle_combo.findData(self.cfg.idle_mode)
+        self.idle_combo.setCurrentIndex(i if i >= 0 else 0)
+        hk_form.addRow("When no chain is active", self.idle_combo)
+        self.hotkeys_check = QCheckBox("Global hotkeys enabled")
+        self.hotkeys_check.setChecked(bool(self.cfg.hotkeys_enabled))
+        hk_form.addRow("", self.hotkeys_check)
+        self._panic_hotkey_work = copy.deepcopy(self.cfg.panic_hotkey)
+        self.panic_key_btn = QPushButton()
+        self.panic_key_btn.setToolTip("Global hotkey that turns every chain off")
+        self.panic_key_btn.clicked.connect(self._pick_panic_hotkey)
+        self._update_panic_key_btn()
+        hk_form.addRow("All-off key", self.panic_key_btn)
+        gl.addWidget(hk_box)
+
         gl.addSpacing(8)
         diag_row = QHBoxLayout()
         open_appdata_btn = QPushButton("Open Config && Logs Folder…")
@@ -590,7 +612,31 @@ class SettingsDialog(QDialog):
         a.wasapi_exclusive = self.excl.isChecked()
         return a
 
+    def _update_panic_key_btn(self):
+        hk = self._panic_hotkey_work
+        self.panic_key_btn.setText(hk.label if hk.is_set() else "Not set")
+
+    def _pick_panic_hotkey(self):
+        dlg = HotkeyDialog(self.core, self, "All-off hotkey")
+        if dlg.exec() and dlg.result_hotkey is not None:
+            hk = dlg.result_hotkey
+            if hk.is_set():
+                clash = self.core.find_hotkey_conflict(hk, exclude=self.cfg.panic_hotkey)
+                if clash:
+                    QMessageBox.warning(self, "Hotkey in use", f"{hk.label} is already used by {clash}.")
+                    return
+            self._panic_hotkey_work = hk
+            self._update_panic_key_btn()
+
     def apply_all(self):
+        # Idle mode, hotkeys, all-off key
+        self.cfg.idle_mode = self.idle_combo.currentData() or "dry"
+        self.cfg.hotkeys_enabled = self.hotkeys_check.isChecked()
+        self.core.hotkeys.enabled = self.cfg.hotkeys_enabled
+        self.cfg.panic_hotkey = copy.deepcopy(self._panic_hotkey_work)
+        self.core.rebind_hotkeys()
+        self.core._apply()
+
         self.cfg.launch_at_startup = self.launch_startup.isChecked()
         set_startup_enabled(self.launch_startup.isChecked(), start_minimized=self.minimized.isChecked())
 

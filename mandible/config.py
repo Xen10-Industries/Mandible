@@ -219,6 +219,7 @@ class AppConfig:
     api_port: int = 38420                      # local API port
     extra_plugin_dirs: list[str] = field(default_factory=list)
     plugin_param_mappings: dict[str, list[str]] = field(default_factory=dict)
+    left_panel_width: int = 300                # main window preset panel (splitter), 240..420 px
 
 
 # ---------------------------------------------------------------- (de)serialisation

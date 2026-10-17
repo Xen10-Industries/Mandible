@@ -2,14 +2,16 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from ... import plugins as P
 from ...config import Chain, PluginSlot
 from ...core import Core, inst, slot_error
+from .base import SpacedLayouts, _follow_look, reserve_text_width
 from .buttons import RackToolButton
 from .chassis import RackScrew
 from .knobs import PluginParamKnob
+from .labels import ElidedLabel
 from .meters import PluginPrePostMeter
 from .switches import HardwareSwitch
 
@@ -40,14 +42,11 @@ class PluginRackCard(QFrame):
         if err:
             self.setProperty("error", "true")
 
-        outer_lay = QVBoxLayout(self)
-        outer_lay.setContentsMargins(10, 7, 10, 7)
-        outer_lay.setSpacing(6)
+        self._spaced = SpacedLayouts()
+        outer_lay = self._spaced.add(QVBoxLayout(self), spacing=1, margins=1)
 
         # ---- Top Row: 1U Module Faceplate Header
-        lay = QHBoxLayout()
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(10)
+        lay = self._spaced.add(QHBoxLayout(), spacing=1, margins=0)
 
         # Left Rack Screw
         lay.addWidget(RackScrew(12))
@@ -65,55 +64,55 @@ class PluginRackCard(QFrame):
         lay.addWidget(self.pwr_switch)
 
         # 2. Plugin Info Column
-        info_col = QVBoxLayout()
-        info_col.setSpacing(2)
+        info_col = self._spaced.add(QVBoxLayout(), spacing=1, margins=0)
 
-        name_row = QHBoxLayout()
-        name_row.setSpacing(6)
-        name_lbl = QLabel(slot.display_name or slot.path)
-        f = name_lbl.font()
-        f.setBold(True)
-        f.setPointSize(9.5)
-        name_lbl.setFont(f)
-        name_row.addWidget(name_lbl)
+        # The name elides (full text in the tooltip) instead of widening the card; badges
+        # show only while the full name still fits beside them (their text joins the name's
+        # tooltip), so a narrow card keeps the name rather than four stubs.
+        self._name_row = name_row = self._spaced.add(QHBoxLayout(), spacing=1, margins=0)
+        self.name_lbl = ElidedLabel(slot.display_name or slot.path, min_chars=4)
+        self.name_lbl.setObjectName("rackPluginName")
+        name_row.addWidget(self.name_lbl)
+        self._badges: list[QLabel] = []
 
-        # Vendor name
+        def badge(text: str, name: str, tip: str = "") -> QLabel:
+            b = QLabel(text)
+            b.setObjectName(name)
+            if tip:
+                b.setToolTip(tip)
+            b.setMinimumWidth(1)   # never part of the card's minimum width
+            self._badges.append(b)
+            name_row.addWidget(b)
+            return b
+
+        badge("VST3", "formatBadge", "VST3 plugin")
         v_name = P.guess_vendor(slot.path) if hasattr(P, "guess_vendor") else ""
         if v_name:
-            v_badge = QLabel(v_name)
-            v_badge.setObjectName("vendorBadge")
-            name_row.addWidget(v_badge)
-
-        # VST Format Badge
-        fmt_badge = QLabel("VST3")
-        fmt_badge.setObjectName("formatBadge")
-        name_row.addWidget(fmt_badge)
-
+            badge(v_name, "vendorBadge")
         # Keep-Awake Badge (Serum 2 / persistent silence pump)
         is_serum = "serum" in (slot.display_name or slot.path).lower()
         if is_serum or getattr(core.cfg, "keep_chains_awake", False):
-            awake_badge = QLabel("KEEP-AWAKE ACTIVE")
-            awake_badge.setObjectName("awakeBadge")
-            name_row.addWidget(awake_badge)
+            badge("KEEP-AWAKE ACTIVE", "awakeBadge",
+                  "A silent signal keeps this plugin from suspending")
+        self.name_lbl.setBaseToolTip(" · ".join([slot.path] + [b.text() for b in self._badges]))
 
         if err:
-            err_lbl = QLabel(f"ERROR: {err}")
+            err_lbl = ElidedLabel(f"ERROR: {err}", min_chars=5)
             err_lbl.setObjectName("rackSlotError")
             name_row.addWidget(err_lbl)
 
         name_row.addStretch()
         info_col.addLayout(name_row)
 
-        sub_row = QHBoxLayout()
-        sub_row.setSpacing(8)
+        sub_row = self._spaced.add(QHBoxLayout(), spacing=2, margins=0)
 
         # Latency chip (zero emojis)
         inst_p = inst(slot)
         lat_smp = getattr(inst_p, "latency_samples", 0) if inst_p else 0
         sr = core.engine.samplerate or 48000
         lat_ms = (lat_smp / sr) * 1000.0 if sr else 0.0
-        lat_txt = f"{lat_ms:.1f} ms ({lat_smp} smp)" if lat_smp > 0 else "0.0 ms (0 smp)"
-        lat_chip = QLabel(f"LATENCY: {lat_txt}")
+        lat_chip = ElidedLabel(f"LAT {lat_ms:.1f} ms", min_chars=3)
+        lat_chip.setBaseToolTip(f"Plugin latency: {lat_ms:.1f} ms ({lat_smp} samples)")
         lat_chip.setObjectName("latencyChip")
         sub_row.addWidget(lat_chip)
 
@@ -133,38 +132,38 @@ class PluginRackCard(QFrame):
         self.pre_post_meter = PluginPrePostMeter(enabled=slot.enabled, parent=self)
         lay.addWidget(self.pre_post_meter)
 
-        # 4. Actions: Collapse Macros (1U/2U), MAP, OPEN UI, Up, Down, Remove
-        btn_row = QHBoxLayout()
-        btn_row.setSpacing(4)
-
+        # 4. Actions: a right-aligned cluster of fixed width (the same on every card, so the
+        #    columns line up): knobs expand/collapse, MAP, open UI, move up/down, remove.
         mapped_keys = P.resolve_slot_mapped_params(slot, core.cfg)
         is_collapsed = bool(getattr(slot, "macros_collapsed", False))
 
-        if mapped_keys:
-            arrow = "▼" if is_collapsed else "▲"
-            col_btn = QPushButton(f"{arrow} KNOBS ({len(mapped_keys)})")
-            col_btn.setObjectName("rackKnobsBtn")
-            col_btn.setToolTip(
-                "Expand VST macro knobs (2U view)"
-                if is_collapsed
-                else "Collapse VST macro knobs to compact 1U display"
-            )
-            col_btn.clicked.connect(self._toggle_macros_collapsed)
-            btn_row.addWidget(col_btn)
+        self.actions = QWidget()
+        self.actions.setObjectName("rackActions")
+        btn_row = self._spaced.add(QHBoxLayout(self.actions), spacing=1, margins=0)
+
+        self.knobs_btn = RackToolButton(
+            "expand" if is_collapsed else "collapse",
+            (f"Show the {len(mapped_keys)} macro knobs" if is_collapsed
+             else f"Hide the {len(mapped_keys)} macro knobs"))
+        self.knobs_btn.clicked.connect(self._toggle_macros_collapsed)
+        # Cards without mapped knobs keep the slot so every cluster has the same layout.
+        policy = self.knobs_btn.sizePolicy()
+        policy.setRetainSizeWhenHidden(True)
+        self.knobs_btn.setSizePolicy(policy)
+        self.knobs_btn.setVisible(bool(mapped_keys))
+        btn_row.addWidget(self.knobs_btn)
 
         map_txt = f"MAP ({len(mapped_keys)})" if mapped_keys else "MAP"
         self.map_btn = QPushButton(map_txt)
         self.map_btn.setObjectName("rackMapBtn")
         self.map_btn.setProperty("mapped", "true" if mapped_keys else "false")
-        self.map_btn.setToolTip("Map VST plugin parameters to hardware macro knobs on this module")
+        self.map_btn.setToolTip("Map plugin parameters to macro knobs on this module")
         self.map_btn.clicked.connect(self.mapClicked.emit)
         btn_row.addWidget(self.map_btn)
 
-        ui_btn = QPushButton("OPEN UI")
-        ui_btn.setObjectName("rackUiBtn")
-        ui_btn.setToolTip("Open the VST plugin window")
-        ui_btn.clicked.connect(self.editClicked.emit)
-        btn_row.addWidget(ui_btn)
+        self.ui_btn = RackToolButton("open", "Open the plugin window")
+        self.ui_btn.clicked.connect(self.editClicked.emit)
+        btn_row.addWidget(self.ui_btn)
 
         up_btn = RackToolButton("up", "Move earlier in signal chain")
         up_btn.clicked.connect(self.moveUpClicked.emit)
@@ -178,23 +177,23 @@ class PluginRackCard(QFrame):
         rm_btn.clicked.connect(self.removeClicked.emit)
         btn_row.addWidget(rm_btn)
 
-        lay.addLayout(btn_row)
+        lay.addWidget(self.actions)
 
         # Right Rack Screw
         lay.addWidget(RackScrew(12))
         outer_lay.addLayout(lay)
+        reserve_text_width(self.map_btn, "MAP (88)")
+        self._fix_actions_width()
 
         # ---- Bottom Row: Recessed Hardware Macro Knob Strip (when parameters are mapped & not collapsed)
         if mapped_keys and not is_collapsed:
             knob_bay = QFrame()
             knob_bay.setObjectName("pluginMacroBay")   # styled by the generated stylesheet
-            kb_lay = QHBoxLayout(knob_bay)
-            kb_lay.setContentsMargins(10, 4, 10, 4)
-            kb_lay.setSpacing(8)
+            kb_lay = self._spaced.add(QHBoxLayout(knob_bay), spacing=1, margins=(2, 1, 2, 1))
 
-            bay_lbl = QLabel("PLUGIN\nMACROS")
-            bay_lbl.setObjectName("rackBayLabel")
-            kb_lay.addWidget(bay_lbl)
+            self.bay_lbl = QLabel("PLUGIN\nMACROS")
+            self.bay_lbl.setObjectName("rackBayLabel")
+            kb_lay.addWidget(self.bay_lbl)
 
             vsep = QFrame()
             vsep.setFrameShape(QFrame.VLine)
@@ -208,6 +207,41 @@ class PluginRackCard(QFrame):
 
             kb_lay.addStretch()
             outer_lay.addWidget(knob_bay)
+        _follow_look(self)
+
+    def _fit_badges(self) -> None:
+        avail = self._name_row.geometry().width()
+        if avail <= 0:
+            return
+        gap = self._name_row.spacing()
+        used = self.name_lbl.sizeHint().width()
+        err = [w for w in (self.findChild(QLabel, "rackSlotError"),) if w is not None]
+        for w in err:
+            used += gap + w.minimumSizeHint().width()
+        for b in self._badges:
+            w = gap + b.sizeHint().width()
+            show = used + w <= avail
+            if show:
+                used += w
+            if b.isHidden() == show:
+                b.setVisible(show)
+
+    def resizeEvent(self, ev) -> None:  # noqa: N802
+        super().resizeEvent(ev)
+        self._fit_badges()
+
+    def showEvent(self, ev) -> None:  # noqa: N802
+        super().showEvent(ev)
+        self._fit_badges()
+
+    def _fix_actions_width(self) -> None:
+        self.actions.setMinimumWidth(0)
+        self.actions.setMaximumWidth(16777215)
+        self.actions.setFixedWidth(self.actions.sizeHint().width())
+
+    def _on_look_changed(self) -> None:
+        self._spaced.apply()
+        self._fix_actions_width()
 
     def _toggle_macros_collapsed(self):
         self.slot.macros_collapsed = not bool(getattr(self.slot, "macros_collapsed", False))

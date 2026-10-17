@@ -3,7 +3,8 @@
 Usage::
 
     python tools/ui_gallery.py --out DIR [--skins a,b] [--themes a,b]
-        [--sizes 1024x640,1280x720,1920x1080] [--user-looks DIR] [--strict]
+        [--sizes 1024x640,1280x720,1920x1080] [--screens main,settings,...]
+        [--user-looks DIR] [--strict]
 
 Writes ``DIR/*.png`` (one per screen x skin x theme x size), ``DIR/index.html`` (a plain
 page with the images and a table of report counts) and ``DIR/report.json``::
@@ -119,7 +120,22 @@ def build_main_window(core):
     win.setAttribute(Qt.WA_DontShowOnScreen)
     win.show()
     QApplication.instance().processEvents()
+    freeze_main_window(win)
     return win
+
+
+def freeze_main_window(win) -> None:
+    """Make captures deterministic: stop the meter and status timers (a status tick landing
+    between two captures changed the readout texts) and drive one status update by hand
+    (the sample engine is stopped, so the readout says STOPPED / DSP: OFF)."""
+    from PySide6.QtWidgets import QApplication
+
+    for name in ("meter_timer", "status_timer"):
+        timer = getattr(win, name, None)
+        if timer is not None:
+            timer.stop()
+    win._update_status()
+    QApplication.instance().processEvents()
 
 
 def dispose_main_window(win) -> None:
@@ -143,12 +159,14 @@ def _error_entry(exc: BaseException) -> dict:
 
 
 def run_gallery(out: pathlib.Path, skins: list[str], themes: list[str],
-                sizes: list[tuple[int, int]]) -> dict:
+                sizes: list[tuple[int, int]], screens: list[str] | None = None) -> dict:
     """Render the gallery into ``out`` and return the report. Needs a QApplication.
 
     A screen that raises is recorded as ``{"error": ...}`` and the run continues; the report
-    and index are written even then.
+    and index are written even then. ``screens`` limits the run (default: ``main`` and every
+    dialog).
     """
+    screens = list(screens) if screens else ["main", *DIALOGS]
     from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QApplication
 
@@ -238,11 +256,12 @@ def run_gallery(out: pathlib.Path, skins: list[str], themes: list[str],
                 except Exception as exc:  # noqa: BLE001 - report and keep going
                     report[f"main|{skin}|{theme}|all"] = _error_entry(exc)
                     continue
-                try:
-                    capture_main(skin, theme, contrast)
-                except Exception as exc:  # noqa: BLE001
-                    report[f"main|{skin}|{theme}|error"] = _error_entry(exc)
-                for screen in DIALOGS:
+                if "main" in screens:
+                    try:
+                        capture_main(skin, theme, contrast)
+                    except Exception as exc:  # noqa: BLE001
+                        report[f"main|{skin}|{theme}|error"] = _error_entry(exc)
+                for screen in (s for s in DIALOGS if s in screens):
                     try:
                         capture_dialog(screen, skin, theme, contrast)
                     except Exception as exc:  # noqa: BLE001
@@ -265,7 +284,7 @@ def render_index(report: dict, images: dict) -> str:
             rows.append(f'<tr><td>{html.escape(key)}</td>'
                         f'<td colspan="{span}">ERROR: {html.escape(entry["error"])}</td></tr>')
             continue
-        counts ="".join(f"<td>{len(entry[n])}</td>" for n in _LISTS)
+        counts = "".join(f"<td>{len(entry[n])}</td>" for n in _LISTS)
         rows.append(f"<tr><td>{html.escape(key)}</td>"
                     f"<td>{entry['min_size'][0]}x{entry['min_size'][1]}</td>{counts}</tr>")
     cards = []
@@ -290,6 +309,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--skins", default=DEFAULT_SKINS)
     ap.add_argument("--themes", default=DEFAULT_THEMES)
     ap.add_argument("--sizes", default=DEFAULT_SIZES)
+    ap.add_argument("--screens", default=None,
+                    help="comma-separated subset of: main," + ",".join(DIALOGS))
     ap.add_argument("--user-looks", default=None,
                     help="directory of user looks (ignored until the Look loader lands)")
     ap.add_argument("--strict", action="store_true",
@@ -309,7 +330,8 @@ def main(argv: list[str] | None = None) -> int:
     code = 1
     try:
         report = run_gallery(out, args.skins.split(","), args.themes.split(","),
-                             parse_sizes(args.sizes))
+                             parse_sizes(args.sizes),
+                             args.screens.split(",") if args.screens else None)
         problems = {n: sum(len(e.get(n, [])) for e in report.values()) for n in _LISTS}
         problems["errors"] = sum(1 for e in report.values() if "error" in e)
         print(f"{len(report)} screens in {time.perf_counter() - started:.1f}s -> {out}")

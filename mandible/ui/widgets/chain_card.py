@@ -6,6 +6,7 @@ from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout
 
 from ...config import Chain
 from .base import set_style_property
+from .labels import ElidedLabel
 from .lamps import PilotLamp
 
 
@@ -30,7 +31,7 @@ class ChainCardWidget(QFrame):
         self.lamp = PilotLamp(active=is_active, size=10)
         row1.addWidget(self.lamp)
 
-        self.name_lbl = QLabel(chain.name.upper())
+        self.name_lbl = ElidedLabel(chain.name.upper(), min_chars=6)
         self.name_lbl.setObjectName("chainName")
         f = self.name_lbl.font()
         f.setBold(True)
@@ -51,7 +52,7 @@ class ChainCardWidget(QFrame):
         row2 = QHBoxLayout()
         row2.setSpacing(6)
         row2.setAlignment(Qt.AlignmentFlag.AlignVCenter)
-        self.sub_lbl = QLabel()
+        self.sub_lbl = ElidedLabel(min_chars=8)
         self.sub_lbl.setObjectName("chainSub")
         row2.addWidget(self.sub_lbl, 1)
 

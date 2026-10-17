@@ -81,29 +81,6 @@ def build_qss(look: "Look") -> str:
     raised_bg = alt if flat else f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {alt}, stop:1 {card})"
     toggle_bg = f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {alt}, stop:1 {inset})"
 
-    # Task 8c: the old inline sheets on the inspector box, the console frame and the condensed
-    # strips were plain declarations, so they cascaded onto every descendant widget and beat
-    # the app-level rules for the same properties. Reproduced here so layout and minimum
-    # sizes stay identical; Stage 3 (layout and bugs) deletes this block.
-    legacy_cascade = f"""
-QFrame#inspectorBox QWidget {{
-    background: {inset};
-    border: {bw} solid {line};
-    border-radius: {r_pnl};
-    padding: 4px 8px;
-}}
-QFrame#consoleFrame QWidget {{
-    background: {inset};
-    border-top: {bw} solid {line};
-}}
-QFrame#condensedStrip QWidget {{
-    background: {inset};
-    border: {bw} solid {line};
-    border-radius: {r_sm};
-    padding: 4px 8px;
-}}
-"""
-
     return f"""
 QWidget {{
     font-family: "Segoe UI", -apple-system, system-ui, Roboto, sans-serif;
@@ -287,6 +264,48 @@ QPushButton#flowBtn[active="true"] {{
     background-color: {ok_bg};
     border: {bw} solid {ok};
     color: {ok};
+}}
+QLabel#flowPill[compact="true"], QPushButton#flowBtn[compact="true"] {{
+    padding: 2px 6px;
+}}
+QFrame#signalFlowStrip[mode="hidden"] {{
+    background: transparent;
+    border: none;
+}}
+QSplitter#bodySplitter::handle {{
+    background: transparent;
+}}
+QComboBox#idleCombo {{
+    font-size: {f_small};
+    padding: 2px 6px;
+}}
+QToolButton#hotkeysToggle {{
+    background: {card};
+    border: {bw} solid {line};
+    border-radius: {r_sm};
+    color: {muted};
+    font-size: {f_small};
+    font-weight: bold;
+    padding: 2px 6px;
+    padding-right: 16px;
+}}
+QToolButton#hotkeysToggle:hover {{
+    border-color: {strong};
+    color: {text};
+}}
+QToolButton#hotkeysToggle:checked {{
+    background: {ok_bg};
+    border-color: {ok};
+    color: {ok};
+}}
+QToolButton#hotkeysToggle::menu-button {{
+    border-left: {bw} solid {line};
+    width: 14px;
+}}
+QLabel#rackPluginName {{
+    font-weight: bold;
+    font-size: {f_body};
+    color: {text};
 }}
 
 QListWidget#chainList {{
@@ -1398,4 +1417,4 @@ QScrollBar::handle:vertical:hover {{
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
     height: 0px;
 }}
-{legacy_cascade}"""
+"""

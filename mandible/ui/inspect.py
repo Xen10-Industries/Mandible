@@ -27,19 +27,21 @@ class Overflow:
     parent_right: int
 
 
-def _in_scroll_viewport(w: QWidget) -> bool:
-    """True when ``w`` lives inside a scroll area's or item view's viewport."""
-    node = w.parentWidget()
-    child = w
-    while node is not None:
-        if isinstance(node, QAbstractScrollArea) and node.viewport() is child:
-            return True
-        child, node = node, node.parentWidget()
-    return False
-
-
 def _scrollable_content(w: QWidget) -> bool:
-    return _in_scroll_viewport(w) or isinstance(w.parentWidget(), (QAbstractItemView,))
+    """True when ``w`` is the content of a scroll area or item view: a direct child of its
+    viewport (scroll-area content, item widgets) or of the view itself.
+
+    Only that content root may extend past its parent; the widgets inside it are still
+    checked against the content root, so a squeezed item widget whose children spill out
+    of it is reported.
+    """
+    parent = w.parentWidget()
+    if parent is None:
+        return False
+    if isinstance(parent, QAbstractItemView):
+        return True
+    view = parent.parentWidget()
+    return isinstance(view, QAbstractScrollArea) and view.viewport() is parent
 
 
 def _describe(w: QWidget) -> str:
@@ -64,8 +66,9 @@ def _visible_widgets(root: QWidget):
 def find_overflow(root: QWidget) -> list[Overflow]:
     """Visible children whose geometry extends past their parent's rect by more than 1 px.
 
-    Children inside scroll-area and item-view viewports are skipped (their content
-    legitimately exceeds the visible rect), as are zero-size widgets.
+    The content roots of scroll areas and item views (direct children of a viewport) are
+    skipped, since they legitimately exceed the visible rect; their own children are not.
+    Zero-size widgets are skipped.
     """
     found: list[Overflow] = []
     for w in _visible_widgets(root):

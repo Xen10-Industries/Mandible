@@ -3,9 +3,11 @@ from __future__ import annotations
 
 from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QPainter
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QVBoxLayout, QWidget
 
+from ..look import space
 from .base import _follow_look, look_color
+from .labels import ElidedLabel
 from .meters import LevelMeter
 from .sliders import GainSlider
 
@@ -39,14 +41,14 @@ class ChannelStripCard(QFrame):
         super().__init__(parent)
         self.setObjectName("channelStripCard")
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(10, 8, 10, 8)
-        lay.setSpacing(6)
+        lay.setContentsMargins(space(3), space(2), space(3), space(2))
+        lay.setSpacing(space(2))
 
         head = QHBoxLayout()
-        head.setSpacing(6)
+        head.setSpacing(space(2))
         head.addWidget(ChannelDot(dot_token))
 
-        t_lbl = QLabel(title)
+        t_lbl = ElidedLabel(title, min_chars=8)
         t_lbl.setObjectName("channelTitle")
         head.addWidget(t_lbl, 1)
         lay.addLayout(head)

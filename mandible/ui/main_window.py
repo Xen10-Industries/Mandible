@@ -7,12 +7,12 @@ import time
 from functools import partial
 
 import numpy as np
-from PySide6.QtCore import QPointF, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFileDialog, QFrame,
-                               QHBoxLayout, QInputDialog, QLabel, QLineEdit, QListWidget,
-                               QListWidgetItem, QMainWindow, QMenu, QMessageBox,
-                               QPushButton, QSystemTrayIcon, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout,
+                               QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem,
+                               QMainWindow, QMenu, QMessageBox, QPushButton, QSplitter,
+                               QSystemTrayIcon, QVBoxLayout, QWidget)
 
 from .. import branding
 from .. import devices as D
@@ -28,19 +28,22 @@ from .dialogs.prefx import PreFXDialog
 from .dialogs.settings import SettingsDialog
 from .dialogs.setup_assistant import SetupAssistantDialog
 from .dialogs.soundboard import SoundboardDialog
-from .look import look_bus
-from .widgets.base import set_style_property
+from .look import look_bus, space
+from .widgets.base import SpacedLayouts, _follow_look, reserve_text_width, set_style_property
 from .widgets.buttons import RackToolButton
 from .widgets.chain_card import ChainCardWidget
 from .widgets.channel_strip import ChannelDot, ChannelStripCard
 from .widgets.chassis import ChassisWrapperFrame, RackScrew
-from .widgets.flow_strip import SignalFlowStrip
+from .widgets.header import AUDITION_IDLE_TEXT, STRIPS_COLLAPSE_BELOW_H, HeaderBar
 from .widgets.knobs import HardwareKnob
-from .widgets.lamps import PilotLamp
+from .widgets.labels import ElidedLabel
 from .widgets.meters import LevelMeter, ThinLevelMeter
 from .widgets.plugin_card import PluginRackCard
 from .widgets.sliders import GainSlider
 from .widgets.switches import HardwareSwitch
+
+LEFT_PANEL_MIN = 240
+LEFT_PANEL_MAX = 420
 
 
 # =============================================================== chain editor
@@ -52,20 +55,16 @@ class ChainEditor(QWidget):
         super().__init__()
         self.core = core
         self.chain: Chain | None = None
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(8)
+        self._spaced = SpacedLayouts()
+        lay = self._spaced.add(QVBoxLayout(self), spacing=2, margins=0)
 
         # Rack Bay Outer Container
         rack_bay = QFrame()
         rack_bay.setObjectName("modularBay")
-        rb_lay = QVBoxLayout(rack_bay)
-        rb_lay.setContentsMargins(12, 10, 12, 10)
-        rb_lay.setSpacing(8)
+        rb_lay = self._spaced.add(QVBoxLayout(rack_bay), spacing=2, margins=(3, 2, 3, 2))
 
         # Rack Bay Header
-        rb_hdr = QHBoxLayout()
-        rb_hdr.setSpacing(8)
+        rb_hdr = self._spaced.add(QHBoxLayout(), spacing=2, margins=0)
         rb_hdr.addWidget(RackScrew(14))
         self.hdr_static = QLabel("EFFECTS RACK  //  BUS:")
         self.hdr_static.setObjectName("rackBusLabel")
@@ -75,11 +74,11 @@ class ChainEditor(QWidget):
         self.name_edit.setObjectName("rackBusNameEdit")
         self.name_edit.setPlaceholderText("PRESET NAME")
         self.name_edit.setToolTip("Click to rename this voice preset bus")
-        self.name_edit.setMinimumWidth(140)
+        self.name_edit.setMinimumWidth(120)
         self.name_edit.setMaximumWidth(280)
 
         self.name = self.name_edit  # backward compatibility alias
-        rb_hdr.addWidget(self.name_edit)
+        rb_hdr.addWidget(self.name_edit, 1)
         rb_hdr.addStretch()
 
         self.add_btn = QPushButton("+ INSERT PLUGIN")
@@ -88,37 +87,33 @@ class ChainEditor(QWidget):
         rb_hdr.addWidget(RackScrew(14))
         rb_lay.addLayout(rb_hdr)
 
-        # Streamlined 1-Row Hardware Inspector with Rotary Knobs
+        # One-row inspector: each caption sits above its control so the row stays narrow.
         insp_box = QFrame()
         insp_box.setObjectName("inspectorBox")
-        insp_lay = QHBoxLayout(insp_box)
-        insp_lay.setContentsMargins(6, 4, 6, 4)
-        insp_lay.setSpacing(12)
+        insp_lay = self._spaced.add(QHBoxLayout(insp_box), spacing=2, margins=(2, 1, 2, 1))
+
+        def captioned(caption: str, widget: QWidget) -> QVBoxLayout:
+            col = self._spaced.add(QVBoxLayout(), spacing=1, margins=0)
+            lbl = QLabel(caption)
+            lbl.setObjectName("rackInspLabel")
+            col.addStretch()
+            col.addWidget(lbl)
+            col.addWidget(widget)
+            col.addStretch()
+            return col
 
         # Hotkey section
-        hk_box = QHBoxLayout()
-        hk_box.setSpacing(6)
-        lbl_hk = QLabel("HOTKEY:")
-        lbl_hk.setObjectName("rackInspLabel")
-        hk_box.addWidget(lbl_hk)
         self.hk_btn = QPushButton("SET KEY")
         self.hk_btn.setObjectName("rackHotkeyBtn")
         self.hk_label = QLabel("—")
         self.hk_label.setVisible(False)
-        hk_box.addWidget(self.hk_btn)
-        insp_lay.addLayout(hk_box)
+        insp_lay.addLayout(captioned("HOTKEY", self.hk_btn))
 
         # Mode section
-        mode_box = QHBoxLayout()
-        mode_box.setSpacing(6)
-        lbl_mode = QLabel("TRIGGER:")
-        lbl_mode.setObjectName("rackInspLabel")
-        mode_box.addWidget(lbl_mode)
         self.mode = QComboBox()
         self.mode.addItem("Toggle", "toggle")
         self.mode.addItem("Hold", "hold")
-        mode_box.addWidget(self.mode)
-        insp_lay.addLayout(mode_box)
+        insp_lay.addLayout(captioned("TRIGGER", self.mode))
 
         sep1 = QFrame()
         sep1.setFrameShape(QFrame.VLine)
@@ -153,10 +148,10 @@ class ChainEditor(QWidget):
         insp_lay.addWidget(sep2)
 
         # DSP Latency chip
-        self.lat_lbl = QLabel("LATENCY: 0.0 ms")
+        self.lat_lbl = ElidedLabel("0.0 ms (0 smp)", min_chars=6)
         self.lat_lbl.setObjectName("rackLatency")
-        insp_lay.addWidget(self.lat_lbl)
-        insp_lay.addStretch()
+        self.lat_lbl.setBaseToolTip("Total plugin latency of this chain")
+        insp_lay.addLayout(captioned("LATENCY", self.lat_lbl), 1)
 
         # Live on Mic Toggle Button
         self.live_btn = QPushButton("SET LIVE ON MIC")
@@ -171,9 +166,12 @@ class ChainEditor(QWidget):
         # The 1U Modular Effects Rack List
         self.plugins = QListWidget()
         self.plugins.setObjectName("rackList")
+        self.plugins.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         rb_lay.addWidget(self.plugins, 1)
 
         lay.addWidget(rack_bay, 1)
+        reserve_text_width(self.live_btn, "SET LIVE ON MIC", "● LIVE ON MIC", "STANDBY")
+        _follow_look(self)
 
         self.name_edit.editingFinished.connect(self._rename)
         self.hk_btn.clicked.connect(self._set_hotkey)
@@ -183,6 +181,25 @@ class ChainEditor(QWidget):
         self.knob_tail.valueChanged.connect(self._params)
         self.add_btn.clicked.connect(self._add)
         self.live_btn.clicked.connect(self._toggle_live)
+
+    def _on_look_changed(self):
+        self._spaced.apply()
+        self._fit_rack_width()
+
+    def _fit_rack_width(self):
+        """The rack list is as wide as its widest card needs, so the splitter squeezes the
+        preset panel (down to its minimum) before it squeezes the cards."""
+        need = 0
+        for i in range(self.plugins.count()):
+            card = self.plugins.itemWidget(self.plugins.item(i))
+            if card is not None:
+                card.ensurePolished()
+                need = max(need, card.minimumSizeHint().width())
+        if need:
+            # frame + scroll bar + the list's and items' stylesheet padding (4 px and 2 px a side)
+            need += (2 * self.plugins.frameWidth() + self.plugins.verticalScrollBar().sizeHint().width()
+                     + 2 * (4 + 2))
+        self.plugins.setMinimumWidth(need)
 
     def _toggle_live(self):
         if self.chain:
@@ -195,7 +212,7 @@ class ChainEditor(QWidget):
             self.name_edit.setText("")
             self.hk_btn.setText("SET KEY")
             self.plugins.clear()
-            self.lat_lbl.setText("LATENCY: 0.0 ms")
+            self.lat_lbl.setText("0.0 ms (0 smp)")
             self.live_btn.setText("STANDBY")
             return
         self.name_edit.setText(chain.name)
@@ -228,11 +245,12 @@ class ChainEditor(QWidget):
 
                 it = QListWidgetItem()
                 card_h = 132 if card.has_knobs() else 58
-                it.setSizeHint(QSize(280, card_h))
+                it.setSizeHint(QSize(1, card_h))
                 self.plugins.addItem(it)
                 self.plugins.setItemWidget(it, card)
 
         self.plugins.blockSignals(False)
+        self._fit_rack_width()
         if select_row is not None and self.chain and 0 <= select_row < len(self.chain.plugins):
             self.plugins.setCurrentRow(select_row)
 
@@ -438,12 +456,11 @@ class MainWindow(QMainWindow):
         self._quitting = False
         self.setWindowTitle("Mandible")
         self.setWindowIcon(branding.app_icon())
-        self.resize(1020, 660)
+        self.resize(1280, 820)
+        self._spaced = SpacedLayouts()
 
         central = QWidget()
-        root = QVBoxLayout(central)
-        root.setContentsMargins(12, 12, 12, 12)
-        root.setSpacing(8)
+        root = self._spaced.add(QVBoxLayout(central), spacing=0, margins=2)
         self.setCentralWidget(central)
 
         # Outer 19" Rack Chassis
@@ -454,91 +471,27 @@ class MainWindow(QMainWindow):
         ch_lay.setSpacing(0)
         root.addWidget(self.chassis, 1)
 
-        # ---- Top Master Hardware Head Strip (Zero Emojis)
-        master_strip = QFrame()
-        master_strip.setObjectName("masterHeadStrip")
-        top = QHBoxLayout(master_strip)
-        top.setContentsMargins(14, 10, 14, 10)
-        top.setSpacing(14)
-
-        # Left: Rack screw + Pilot Lamp + Master Power toggle
-        mb_left = QHBoxLayout()
-        mb_left.setSpacing(10)
-        mb_left.addWidget(RackScrew(16))
-
-        self.pilot_lamp = PilotLamp(active=False, size=18)
-        mb_left.addWidget(self.pilot_lamp)
-
-        self.power = QPushButton("MASTER POWER")
-        self.power.setCheckable(True)
-        self.power.setObjectName("hardwareMasterToggle")
-        mb_left.addWidget(self.power)
-        top.addLayout(mb_left)
-
-        # Center-Left: Smoked-glass Digital Telemetry VFD
-        self.vfd_box = QFrame()
-        self.vfd_box.setObjectName("telemetryDisplay")
-        vfd_lay = QHBoxLayout(self.vfd_box)
-        vfd_lay.setContentsMargins(10, 5, 10, 5)
-        vfd_lay.setSpacing(10)
-
-        self.vfd_stat = QLabel("DSP: STOPPED")
-        self.vfd_stat.setObjectName("vfdStat")
-        self.vfd_sr = QLabel("48.0 kHz")
-        self.vfd_sr.setObjectName("vfdValue")
-        self.vfd_buf = QLabel("128 SMP")
-        self.vfd_buf.setObjectName("vfdValue")
-        self.vfd_lat = QLabel("2.7 ms")
-        self.vfd_lat.setObjectName("vfdLatency")
-        self.vfd_drv = QLabel("ASIO")
-        self.vfd_drv.setObjectName("vfdDriver")
-
-        for w in [self.vfd_stat, self.vfd_sr, self.vfd_buf, self.vfd_lat, self.vfd_drv]:
-            vfd_lay.addWidget(w)
-        top.addWidget(self.vfd_box)
-
-        # Center: Illuminated routing bus
-        self.flow_strip = SignalFlowStrip(core, self)
-        top.addWidget(self.flow_strip, 1)
-
-        # Right: Mic Audition Loop, Phones Monitor, Panic Cut, Config & Right Rack Screw
-        mb_right = QHBoxLayout()
-        mb_right.setSpacing(8)
-
-        self.audition_btn = QPushButton("TEST MIC (5s)")
-        self.audition_btn.setObjectName("hardwareAuditionBtn")
-        self.audition_btn.setToolTip("Record 5 seconds of your dry voice and loop it continuously through active rack so you can audition knobs and pitch without speaking")
+        # ---- Header: left (power, logo, status) | middle (signal flow) | right (actions)
+        self.header = HeaderBar(core, self)
+        ch_lay.addWidget(self.header)
+        h = self.header
+        self.pilot_lamp = h.pilot_lamp
+        self.power = h.power
+        self.vfd_box = h.vfd_box
+        self.vfd_stat, self.vfd_sr, self.vfd_buf = h.vfd_stat, h.vfd_sr, h.vfd_buf
+        self.vfd_lat, self.vfd_drv = h.vfd_lat, h.vfd_drv
+        self.flow_strip = h.flow_strip
+        self.audition_btn = h.audition_btn
         self.audition_btn.clicked.connect(self._toggle_mic_audition)
-        mb_right.addWidget(self.audition_btn)
-
-        self.monitor = QPushButton("PHONES MONITOR")
-        self.monitor.setCheckable(True)
-        self.monitor.setChecked(self.cfg.monitor_enabled)
-        self.monitor.setObjectName("hardwareMonitorToggle")
-        self.monitor.setToolTip("Listen to your output in your headphones")
-        mb_right.addWidget(self.monitor)
-
-        self.panic_top_btn = QPushButton("PANIC CUT")
-        self.panic_top_btn.setObjectName("hardwarePanicCut")
-        self.panic_top_btn.setToolTip("Hotkey F12 / Panic: Turn all effect chains off immediately")
-        mb_right.addWidget(self.panic_top_btn)
-
-        settings_btn = QPushButton("CONFIG")
-        settings_btn.setObjectName("hardwareConfigBtn")
-        mb_right.addWidget(settings_btn)
-
-        help_btn = QPushButton("HELP")
-        help_btn.setObjectName("hardwareConfigBtn")
-        help_menu = QMenu(help_btn)
-        help_menu.addAction("About Mandible…").triggered.connect(lambda: self._open_about(0))
-        help_menu.addAction("Licenses…").triggered.connect(lambda: self._open_about(1))
-        help_btn.setMenu(help_menu)
-        mb_right.addWidget(help_btn)
-
-        mb_right.addWidget(RackScrew(16))
-        top.addLayout(mb_right)
-
-        ch_lay.addWidget(master_strip)
+        self.monitor = h.monitor
+        self.panic_top_btn = h.panic_btn
+        settings_btn = h.settings_btn
+        h.help_menu.addAction("About Mandible…").triggered.connect(lambda: self._open_about(0))
+        h.help_menu.addAction("Licenses…").triggered.connect(lambda: self._open_about(1))
+        # The old bottom row (idle mode, hotkeys, all-off key) lives in the status zone.
+        self.idle = h.idle_combo
+        self.hk_enabled = h.hotkeys_toggle
+        self.panic_key_action = h.panic_key_action
 
         # Retain aliases for backward compatibility
         self.clean_mic_btn = self.flow_strip.prefx_btn
@@ -548,30 +501,32 @@ class MainWindow(QMainWindow):
         self.active_lbl = QLabel()
         self.active_lbl.setVisible(False)
 
-        # ---- Body: Voice Presets Bank (left) | 1U Effects Rack (right)
+        # ---- Body: Voice Presets Bank (left) | Effects Rack (right), split by a handle
         body_widget = QWidget()
-        body_lay = QHBoxLayout(body_widget)
-        body_lay.setContentsMargins(12, 12, 12, 12)
-        body_lay.setSpacing(12)
+        body_lay = self._spaced.add(QHBoxLayout(body_widget), spacing=0, margins=3)
+
+        self.splitter = QSplitter(Qt.Horizontal)
+        self.splitter.setObjectName("bodySplitter")
+        self.splitter.setChildrenCollapsible(False)
+        self.splitter.setHandleWidth(space(3))
+        body_lay.addWidget(self.splitter)
 
         left = QFrame()
         left.setObjectName("sideRackBay")
-        left.setFixedWidth(310)
-        ll = QVBoxLayout(left)
-        ll.setContentsMargins(0, 0, 0, 0)
-        ll.setSpacing(8)
+        left.setMinimumWidth(LEFT_PANEL_MIN)
+        left.setMaximumWidth(LEFT_PANEL_MAX)
+        self.left_panel = left
+        ll = self._spaced.add(QVBoxLayout(left), spacing=2, margins=0)
 
         # 1. Top: PRE-FX NOISE GATE Hardware Unit
         self.prefx_strip = QFrame()
         self.prefx_strip.setObjectName("prefxModule")
         self.prefx_strip.setCursor(Qt.CursorShape.PointingHandCursor)
         self.prefx_strip.setFixedHeight(36)
-        pfx_lay = QHBoxLayout(self.prefx_strip)
-        pfx_lay.setContentsMargins(12, 0, 10, 0)
-        pfx_lay.setSpacing(8)
+        pfx_lay = self._spaced.add(QHBoxLayout(self.prefx_strip), spacing=2, margins=(3, 0, 2, 0))
 
         # Name label (redundant left lamp removed; switch has its own jewel pilot light)
-        pfx_lbl = QLabel("PRE-FX NOISE GATE")
+        pfx_lbl = ElidedLabel("PRE-FX NOISE GATE", min_chars=6)
         pfx_lbl.setObjectName("moduleTitle")
         pfx_lay.addWidget(pfx_lbl)
 
@@ -594,48 +549,43 @@ class MainWindow(QMainWindow):
         # 2. Middle: VOICE PRESET BANK (Recessed / Inset 500-Series Modular Bay)
         self.preset_bay = QFrame()
         self.preset_bay.setObjectName("presetModularBay")
-        pb_lay = QVBoxLayout(self.preset_bay)
-        pb_lay.setContentsMargins(10, 10, 10, 10)
-        pb_lay.setSpacing(8)
+        pb_lay = self._spaced.add(QVBoxLayout(self.preset_bay), spacing=2, margins=2)
 
-        # Inset Preset Bay Header
-        chain_head = QHBoxLayout()
-        chain_head.setSpacing(6)
+        # Title on its own row; factory / import / export share one menu button below it.
+        chain_head = self._spaced.add(QHBoxLayout(), spacing=2, margins=0)
         chain_head.addWidget(RackScrew(12))
-        chain_title = QLabel("VOICE PRESET BANK")
+        chain_title = ElidedLabel("VOICE PRESET BANK", min_chars=6)
         chain_title.setObjectName("bankTitle")
-        chain_head.addWidget(chain_title)
-        chain_head.addStretch()
-
-        factory_c = QPushButton("FACTORY")
-        factory_c.setToolTip("Browse and load factory voice presets (Built-in effects)")
-        factory_c.setCursor(Qt.CursorShape.PointingHandCursor)
-        factory_c.setObjectName("presetFactoryBtn")
-        factory_c.clicked.connect(self._show_factory_presets_menu)
-
-        imp_c = QPushButton("IMPORT")
-        imp_c.setToolTip("Import a Mandible preset file (.mandible or legacy .vfxpreset)")
-        imp_c.setCursor(Qt.CursorShape.PointingHandCursor)
-        imp_c.setObjectName("presetBankBtn")
-        exp_c = QPushButton("EXPORT")
-        exp_c.setToolTip("Export selected voice preset (.mandible)")
-        exp_c.setCursor(Qt.CursorShape.PointingHandCursor)
-        exp_c.setObjectName("presetBankBtn")
-        chain_head.addWidget(factory_c)
-        chain_head.addWidget(imp_c)
-        chain_head.addWidget(exp_c)
+        chain_head.addWidget(chain_title, 1)
         chain_head.addWidget(RackScrew(12))
         pb_lay.addLayout(chain_head)
 
+        self.library_btn = QPushButton("LIBRARY")
+        self.library_btn.setObjectName("presetBankBtn")
+        self.library_btn.setToolTip("Factory presets, import and export")
+        self.library_menu = QMenu(self.library_btn)
+        self.factory_menu = self.library_menu.addMenu("Factory presets (built-in effects)")
+        for p_def in get_factory_presets():
+            a = self.factory_menu.addAction(f"{p_def['name']}  ·  {p_def['desc']}")
+            a.triggered.connect(partial(self._load_factory_preset, p_def))
+        self.library_menu.addSeparator()
+        act_imp = self.library_menu.addAction("Import preset (.mandible)…")
+        act_exp = self.library_menu.addAction("Export selected preset (.mandible)…")
+        self.library_btn.setMenu(self.library_menu)
+        lib_row = self._spaced.add(QHBoxLayout(), spacing=2, margins=0)
+        lib_row.addWidget(self.library_btn)
+        lib_row.addStretch()
+        pb_lay.addLayout(lib_row)
+
         self.chain_list = QListWidget()
         self.chain_list.setObjectName("chainList")
+        self.chain_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.chain_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.chain_list.customContextMenuRequested.connect(self._chain_context_menu)
         pb_lay.addWidget(self.chain_list, 1)
 
-        # Presets Toolbar: [ + ] [ DUPLICATE ] [ DELETE ] [ ▲ ] [ ▼ ]
-        cb = QHBoxLayout()
-        cb.setSpacing(5)
+        # Presets Toolbar: [ + ] [ DUPLICATE ] [ DELETE ] [ up ] [ down ]
+        cb = self._spaced.add(QHBoxLayout(), spacing=1, margins=0)
         add_c = RackToolButton("plus", "Add new voice preset (+)")
         dup_c = QPushButton("DUPLICATE")
         dup_c.setObjectName("presetActionBtn")
@@ -645,6 +595,7 @@ class MainWindow(QMainWindow):
         dn_c = RackToolButton("down", "Move preset later in bank")
         for b in (add_c, dup_c, del_c, up_c, dn_c):
             cb.addWidget(b)
+        cb.addStretch()
         pb_lay.addLayout(cb)
         ll.addWidget(self.preset_bay, 1)
 
@@ -653,12 +604,10 @@ class MainWindow(QMainWindow):
         self.limiter_strip.setObjectName("limiterModule")
         self.limiter_strip.setCursor(Qt.CursorShape.PointingHandCursor)
         self.limiter_strip.setFixedHeight(36)
-        lim_lay = QHBoxLayout(self.limiter_strip)
-        lim_lay.setContentsMargins(12, 0, 10, 0)
-        lim_lay.setSpacing(8)
+        lim_lay = self._spaced.add(QHBoxLayout(self.limiter_strip), spacing=2, margins=(3, 0, 2, 0))
 
         # Name label (redundant left lamp removed; switch has its own jewel pilot light)
-        lim_lbl = QLabel("MASTER SAFETY LIMITER")
+        lim_lbl = ElidedLabel("MASTER SAFETY LIMITER", min_chars=6)
         lim_lbl.setObjectName("moduleTitle")
         lim_lay.addWidget(lim_lbl)
 
@@ -682,27 +631,31 @@ class MainWindow(QMainWindow):
         self.limiter_strip.setToolTip("Click to toggle Master Safety Limiter  ·  Right-click for Ceiling Settings")
         ll.addWidget(self.limiter_strip)
 
-        body_lay.addWidget(left)
-
+        self.splitter.addWidget(left)
         self.editor = ChainEditor(core)
-        body_lay.addWidget(self.editor, 1)
+        self.splitter.addWidget(self.editor)
+        self.splitter.setStretchFactor(0, 0)
+        self.splitter.setStretchFactor(1, 1)
+        self._splitter_save = QTimer(self)
+        self._splitter_save.setSingleShot(True)
+        self._splitter_save.setInterval(500)
+        self._splitter_save.timeout.connect(self.core.save)
+        self.splitter.splitterMoved.connect(self._on_splitter_moved)
+        self._restore_left_panel_width()
         ch_lay.addWidget(body_widget, 1)
 
-        # ---- bottom calibrated meters & gain sliders (collapsible)
+        # ---- bottom calibrated meters & gain sliders (collapse to thin meters below 800 px tall)
         self.console_frame = QFrame()
         self.console_frame.setObjectName("consoleFrame")
-        cf_lay = QVBoxLayout(self.console_frame)
-        cf_lay.setContentsMargins(12, 6, 12, 6)
-        cf_lay.setSpacing(6)
+        cf_lay = self._spaced.add(QVBoxLayout(self.console_frame), spacing=2, margins=(3, 1, 3, 2))
 
-        cf_head = QHBoxLayout()
-        cf_head.setContentsMargins(0, 0, 0, 0)
-        c_title = QLabel("HARDWARE I/O CHANNEL STRIPS")
+        cf_head = self._spaced.add(QHBoxLayout(), spacing=2, margins=0)
+        c_title = ElidedLabel("HARDWARE I/O CHANNEL STRIPS", min_chars=8)
         c_title.setObjectName("moduleTitle")
-        cf_head.addWidget(c_title)
-        cf_head.addStretch()
+        cf_head.addWidget(c_title, 1)
 
         self.faders_collapsed = False
+        self._faders_override: bool | None = None   # the user's choice beats the height rule
         self.collapse_faders_btn = QPushButton("▼ COLLAPSE FADERS")
         self.collapse_faders_btn.setObjectName("collapseFadersBtn")
 
@@ -712,9 +665,7 @@ class MainWindow(QMainWindow):
 
         # 1. Full Faders View (Meters + Faders)
         self.full_faders_widget = QWidget()
-        meters = QHBoxLayout(self.full_faders_widget)
-        meters.setContentsMargins(0, 0, 0, 0)
-        meters.setSpacing(8)
+        meters = self._spaced.add(QHBoxLayout(self.full_faders_widget), spacing=2, margins=0)
 
         self.m_in = LevelMeter("CH 01  PRE-FX MIC IN")
         self.m_out = LevelMeter("CH 02  POST-FX BROADCAST")
@@ -737,20 +688,16 @@ class MainWindow(QMainWindow):
         # 2. Condensed Meter View (Thin level meters)
         self.condensed_faders_widget = QWidget()
         self.condensed_faders_widget.setVisible(False)
-        cond_lay = QHBoxLayout(self.condensed_faders_widget)
-        cond_lay.setContentsMargins(4, 2, 4, 2)
-        cond_lay.setSpacing(12)
+        cond_lay = self._spaced.add(QHBoxLayout(self.condensed_faders_widget), spacing=3, margins=0)
 
         def _make_condensed_strip(name: str, dot_token: str):
             box = QFrame()
             box.setObjectName("condensedStrip")
-            b_lay = QHBoxLayout(box)
-            b_lay.setContentsMargins(6, 3, 6, 3)
-            b_lay.setSpacing(8)
+            b_lay = self._spaced.add(QHBoxLayout(box), spacing=2, margins=(2, 1, 2, 1))
 
             b_lay.addWidget(ChannelDot(dot_token, diameter=6))
 
-            lbl = QLabel(name)
+            lbl = ElidedLabel(name, min_chars=6)
             lbl.setObjectName("condensedLabel")
             b_lay.addWidget(lbl)
 
@@ -768,26 +715,6 @@ class MainWindow(QMainWindow):
         cf_lay.addWidget(self.condensed_faders_widget)
 
         ch_lay.addWidget(self.console_frame)
-
-        # ---- footer
-        bottom = QHBoxLayout()
-        bottom.setSpacing(10)
-        bottom.addWidget(QLabel("When inactive:"))
-        self.idle = QComboBox()
-        bottom.addWidget(self.idle)
-        bottom.addSpacing(10)
-        self.hk_enabled = QCheckBox("Hotkeys enabled")
-        self.hk_enabled.setChecked(self.cfg.hotkeys_enabled)
-        bottom.addWidget(self.hk_enabled)
-        bottom.addSpacing(10)
-        self.panic_btn = QPushButton("Panic Hotkey…")
-        self.panic_btn.setToolTip("Set global hotkey that turns every chain off")
-        bottom.addWidget(self.panic_btn)
-        bottom.addStretch()
-        self.diag = QLabel()
-        self.diag.setObjectName("diagLabel")
-        bottom.addWidget(self.diag)
-        root.addLayout(bottom)
 
         # ---- tray
         self._tray_on = False
@@ -837,8 +764,8 @@ class MainWindow(QMainWindow):
         del_c.clicked.connect(self._del_chain)
         up_c.clicked.connect(lambda: self._move_chain(-1))
         dn_c.clicked.connect(lambda: self._move_chain(1))
-        imp_c.clicked.connect(self._import_chain)
-        exp_c.clicked.connect(self._export_chain)
+        act_imp.triggered.connect(self._import_chain)
+        act_exp.triggered.connect(self._export_chain)
         self.chain_list.currentRowChanged.connect(self._select_chain)
         self.chain_list.itemDoubleClicked.connect(self._chain_double_clicked)
         self.editor.chainEdited.connect(self.refresh_chains)
@@ -848,7 +775,7 @@ class MainWindow(QMainWindow):
         self.g_mon.changed.connect(core.set_monitor_gain)
         self.idle.currentIndexChanged.connect(self._idle_changed)
         self.hk_enabled.toggled.connect(self._hk_toggled)
-        self.panic_btn.clicked.connect(self._set_panic)
+        self.panic_key_action.triggered.connect(self._set_panic)
         core.activeChanged.connect(self.refresh_active)
         core.pluginBypassChanged.connect(self._on_plugin_bypass_changed)
         core.gainsChanged.connect(self._on_gains_changed)
@@ -863,17 +790,61 @@ class MainWindow(QMainWindow):
         self.status_timer.start(500)
 
         self._update_panic_label()
+        self._apply_breakpoints()
         self._update_prefx_button_style()
         self.refresh_chains()
         self._update_limiter_ui()
         if self.cfg.chains:
             self.chain_list.setCurrentRow(0)
 
+    # ------------------------------------------------------------ responsive layout
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        self._apply_breakpoints()
+
+    def _apply_breakpoints(self):
+        """Header zones follow the window width, the channel strips its height (spec 7.6)."""
+        self.header.apply_window_width(self.width())
+        self._apply_strip_collapse()
+        self._restore_left_panel_width()
+
+    def _apply_strip_collapse(self):
+        if self._faders_override is not None:
+            collapsed = self._faders_override
+        else:
+            collapsed = self.height() < STRIPS_COLLAPSE_BELOW_H
+        if collapsed == self.faders_collapsed and self.condensed_faders_widget.isHidden() != collapsed:
+            return
+        self.faders_collapsed = collapsed
+        self.full_faders_widget.setVisible(not collapsed)
+        self.condensed_faders_widget.setVisible(collapsed)
+        self.collapse_faders_btn.setText("▲ EXPAND FADERS" if collapsed else "▼ COLLAPSE FADERS")
+
     def _toggle_faders_collapse(self):
-        self.faders_collapsed = not self.faders_collapsed
-        self.full_faders_widget.setVisible(not self.faders_collapsed)
-        self.condensed_faders_widget.setVisible(self.faders_collapsed)
-        self.collapse_faders_btn.setText("▲ EXPAND FADERS" if self.faders_collapsed else "▼ COLLAPSE FADERS")
+        self._faders_override = not self.faders_collapsed
+        self._apply_strip_collapse()
+
+    def _left_panel_target(self) -> int:
+        return max(LEFT_PANEL_MIN, min(LEFT_PANEL_MAX, int(self.cfg.left_panel_width or 0)))
+
+    def _restore_left_panel_width(self):
+        """Give the preset panel its remembered width (the splitter may have had to squeeze it
+        while the window was narrow)."""
+        want = self._left_panel_target()
+        sizes = self.splitter.sizes()
+        if len(sizes) == 2 and sizes[0] != want:
+            total = sum(sizes) if sum(sizes) > 0 else want + 1000
+            self.splitter.setSizes([want, max(1, total - want)])
+
+    def _on_splitter_moved(self, _pos: int, _index: int):
+        self.cfg.left_panel_width = max(LEFT_PANEL_MIN, min(LEFT_PANEL_MAX, self.splitter.sizes()[0]))
+        self._splitter_save.start()
+
+    def flush_pending_save(self):
+        """Write a pending splitter-width save now (also done on quit)."""
+        if self._splitter_save.isActive():
+            self._splitter_save.stop()
+            self.core.save()
 
     def _toggle_limiter_quick(self, target_state: bool | None = None):
         if target_state is not None:
@@ -893,6 +864,7 @@ class MainWindow(QMainWindow):
             if self.core.engine.running or self.cfg.autostart_audio:
                 self.start_audio()
             self._update_limiter_ui()
+            self.sync_status_controls()
 
     def _update_limiter_ui(self):
         l_on = bool(self.cfg.limiter.enabled)
@@ -917,7 +889,7 @@ class MainWindow(QMainWindow):
         for c in self.cfg.chains:
             is_active = (c.id == target)
             it = QListWidgetItem()
-            it.setSizeHint(QSize(260, 68))
+            it.setSizeHint(QSize(1, 68))
             self.chain_list.addItem(it)
             card = ChainCardWidget(c, is_active, self)
             self.chain_list.setItemWidget(it, card)
@@ -991,7 +963,6 @@ class MainWindow(QMainWindow):
 
         if hasattr(self, "monitor"):
             self.monitor.setChecked(self.core.engine.monitor_enabled)
-            self.monitor.setText("PHONES MONITOR: ON" if self.core.engine.monitor_enabled else "PHONES MONITOR")
 
 
     def _current_chain(self) -> Chain | None:
@@ -1107,13 +1078,6 @@ class MainWindow(QMainWindow):
         act_new.triggered.connect(self._add_chain)
         menu.exec(self.chain_list.viewport().mapToGlobal(pos))
 
-    def _show_factory_presets_menu(self):
-        menu = QMenu(self)
-        for p_def in get_factory_presets():
-            a = menu.addAction(f"{p_def['name']}  ·  {p_def['desc']}")
-            a.triggered.connect(partial(self._load_factory_preset, p_def))
-        menu.exec(self.chain_list.mapToGlobal(QPointF(20, 20).toPoint()))
-
     def _load_factory_preset(self, preset_dict: dict):
         chain = instantiate_factory_preset(preset_dict)
         self.cfg.chains.append(chain)
@@ -1130,7 +1094,7 @@ class MainWindow(QMainWindow):
         state, _, _ = self.core.get_audition_status()
         if state in ("recording", "looping"):
             self.core.stop_mic_audition()
-            self.audition_btn.setText("TEST MIC (5s)")
+            self.audition_btn.setText(AUDITION_IDLE_TEXT)
             self._set_audition_style("")
         else:
             if not self.core.engine.running:
@@ -1140,7 +1104,7 @@ class MainWindow(QMainWindow):
                     QMessageBox.warning(self, "Audio Error", f"Could not start audio engine: {exc}")
                     return
             self.core.start_mic_audition(5.0)
-            self.audition_btn.setText("REC (0.0s / 5.0s)")
+            self.audition_btn.setText("REC 0.0s")
             self._set_audition_style("rec")
             if not self.cfg.monitor_enabled:
                 self.monitor.setChecked(True)
@@ -1153,13 +1117,13 @@ class MainWindow(QMainWindow):
 
     def _on_audition_progress(self, state: str, cur_s: float, tot_s: float):
         if state == "recording":
-            self.audition_btn.setText(f"REC ({cur_s:.1f}s / {tot_s:.1f}s)")
+            self.audition_btn.setText(f"REC {cur_s:.1f}s")
             self._set_audition_style("rec")
         elif state == "looping":
             self.audition_btn.setText("STOP LOOP")
             self._set_audition_style("loop")
         elif state == "idle":
-            self.audition_btn.setText("TEST MIC (5s)")
+            self.audition_btn.setText(AUDITION_IDLE_TEXT)
             self._set_audition_style("")
 
     def _on_plugin_bypass_changed(self):
@@ -1254,9 +1218,6 @@ class MainWindow(QMainWindow):
             self.prefx_switch.set_active(active)
         if hasattr(self, "prefx_strip"):
             set_style_property(self.prefx_strip, "active", "true" if active else "false")
-        if hasattr(self, "clean_mic_btn"):
-            self.clean_mic_btn.setText("MIC PRE-FX [ON]" if active else "MIC PRE-FX")
-            set_style_property(self.clean_mic_btn, "active", active)
         if hasattr(self, "flow_strip"):
             target = self.core.target()
             active_text = self.active_lbl.text() if hasattr(self, "active_lbl") else ""
@@ -1309,7 +1270,10 @@ class MainWindow(QMainWindow):
         self._update_status()
 
     def _on_look_changed(self):
-        """Look switched: the tray follows the accent (widgets repaint themselves)."""
+        """Look switched: the tray follows the accent (widgets repaint themselves) and the
+        spacing follows the skin's density."""
+        self._spaced.apply()
+        self.splitter.setHandleWidth(space(3))
         if hasattr(self, "tray"):
             self.tray.setIcon(branding.tray_icon(self._tray_on))
 
@@ -1322,6 +1286,7 @@ class MainWindow(QMainWindow):
             if self.core.engine.running or self.cfg.autostart_audio:
                 self.start_audio()
             self._update_limiter_ui()
+            self.sync_status_controls()
 
     def _update_status(self):
         e = self.core.engine
@@ -1370,7 +1335,10 @@ class MainWindow(QMainWindow):
         if state_changed:
             self.status.style().unpolish(self.status)
             self.status.style().polish(self.status)
-        self.diag.setText(f"DSP {e.load * 100:4.0f}%   dropouts {e.xruns}" if e.running else "DSP OFFLINE")
+        tip = (f"{self.status.text()}\nDSP load {e.load * 100:.0f}%, dropouts {e.xruns}"
+               if e.running else f"Audio engine: {self.status.text()}")
+        if self.vfd_box.toolTip() != tip:
+            self.vfd_box.setToolTip(tip)
         if e.last_error:
             print("[Mandible] audio error:", e.last_error)
             e.last_error = ""
@@ -1416,14 +1384,24 @@ class MainWindow(QMainWindow):
 
     def _update_panic_label(self):
         hk = self.cfg.panic_hotkey
-        self.panic_btn.setText(f"All-off key: {hk.label if hk.is_set() else 'not set'}")
+        self.panic_key_action.setText(f"All-off key: {hk.label if hk.is_set() else 'not set'}…")
+        self.panic_top_btn.setToolTip("Turn all effect chains off immediately"
+                                      + (f" (all-off key: {hk.label})" if hk.is_set() else ""))
+
+    def sync_status_controls(self):
+        """Re-read idle mode, hotkeys and the all-off key from the config (after Settings)."""
+        self._fill_idle()
+        self.hk_enabled.blockSignals(True)
+        self.hk_enabled.setChecked(bool(self.cfg.hotkeys_enabled))
+        self.hk_enabled.blockSignals(False)
+        self._update_panic_label()
 
     def _set_panic(self):
         dlg = HotkeyDialog(self.core, self, "All-off hotkey")
         if dlg.exec() and dlg.result_hotkey is not None:
             hk = dlg.result_hotkey
             if hk.is_set():
-                clash = self.core.find_hotkey_conflict(hk)
+                clash = self.core.find_hotkey_conflict(hk, exclude=self.cfg.panic_hotkey)
                 if clash:
                     QMessageBox.warning(self, "Hotkey in use", f"{hk.label} is already used by {clash}.")
                     return
@@ -1433,7 +1411,7 @@ class MainWindow(QMainWindow):
             self._update_panic_label()
 
     def _open_about(self, start_tab: int = 0):
-        from .ui.dialogs.about import AboutDialog
+        from .dialogs.about import AboutDialog
         AboutDialog(self, start_tab).exec()
 
     def _open_setup_assistant(self):
@@ -1503,6 +1481,7 @@ class MainWindow(QMainWindow):
             return
         self.meter_timer.stop()
         self.status_timer.stop()
+        self.flush_pending_save()
         self.core.shutdown()
         self.tray.hide()
         QApplication.quit()

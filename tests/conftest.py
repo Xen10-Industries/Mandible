@@ -6,6 +6,7 @@ user profile. Nothing here may touch the real desktop or the startup registry ke
 """
 from __future__ import annotations
 
+import gc
 import os
 import pathlib
 import shutil
@@ -16,6 +17,19 @@ import pytest
 _APPDATA_DIR = pathlib.Path(tempfile.mkdtemp(prefix="mandible-test-appdata-"))
 os.environ["APPDATA"] = str(_APPDATA_DIR)
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
+
+
+@pytest.fixture(autouse=True)
+def _collect_garbage_on_gui_thread():
+    """Collect reference cycles left by a test on the main (GUI) thread.
+
+    A Qt widget whose Python wrapper sits in a reference cycle (lambdas connected to its
+    own signals) is only freed by the cyclic garbage collector, which runs in whichever
+    thread happens to allocate next: e.g. the reader threads ``subprocess.run`` starts.
+    Destroying a widget there corrupts Qt's state and crashes a later test.
+    """
+    yield
+    gc.collect()
 
 
 @pytest.fixture(scope="session")

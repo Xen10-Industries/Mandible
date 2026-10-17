@@ -28,12 +28,13 @@ def test_gallery_reports_main_window_minimum_width(tmp_path):
     assert key in report
     entry = report[key]
     assert set(entry) == {"min_size", "overflow", "clipped_text", "untiered_buttons", "contrast"}
-    # Pins today's bug (the main window cannot shrink below 2033 px wide); Task 9 flips this
-    # assertion to <= 1024.
+    # The main window shrinks to the 1024 x 640 minimum (spec 7.6; it used to need 2033 px).
+    # Offscreen substitutes wider fonts, so only a looser bound holds there.
     if sys.platform == "win32":
-        assert entry["min_size"][0] == 2033
+        assert entry["min_size"][0] <= 1024
+        assert entry["min_size"][1] <= 640
     else:
-        assert entry["min_size"][0] > 1024
+        assert entry["min_size"][0] <= 1536
 
     for screen in ("settings", "prefx", "soundboard", "hotkey", "add_plugin", "param_map",
                    "setup_assistant", "about"):
@@ -42,6 +43,41 @@ def test_gallery_reports_main_window_minimum_width(tmp_path):
     for png in out.glob("*.png"):
         assert png.stat().st_size > 0
     assert any(out.glob("main__*.png"))
+
+
+def _gallery_main_entry(out: pathlib.Path) -> dict:
+    env = dict(os.environ)
+    env["QT_QPA_PLATFORM"] = "windows" if sys.platform == "win32" else "offscreen"
+    proc = subprocess.run(
+        [sys.executable, str(ROOT / "tools" / "ui_gallery.py"), "--out", str(out),
+         "--screens", "main", "--skins", "skeuomorphic", "--themes", "scarlet",
+         "--sizes", "1024x640,1920x1080"],
+        capture_output=True, text=True, env=env, timeout=240)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    report = json.loads((out / "report.json").read_text(encoding="utf-8"))
+    assert set(report) == {"main|skeuomorphic|scarlet|1024x640",
+                           "main|skeuomorphic|scarlet|1920x1080"}
+    return report
+
+
+def test_gallery_main_window_report_is_deterministic(tmp_path):
+    """Timers are stopped and the status readout driven once before capture, so two runs
+    report the same thing (a first-render status race once made clipped_text flake)."""
+    first = _gallery_main_entry(tmp_path / "a")
+    second = _gallery_main_entry(tmp_path / "b")
+    assert first == second
+
+
+def test_gallery_freezes_status_before_capture(sample_core):
+    gallery = _load_gallery()
+    sample_core.cfg.close_to_tray = False
+    win = gallery.build_main_window(sample_core)
+    try:
+        assert not win.meter_timer.isActive() and not win.status_timer.isActive()
+        assert win.status.text() == "STOPPED"
+        assert win.vfd_stat.text() == "DSP: OFF"
+    finally:
+        gallery.dispose_main_window(win)
 
 
 def _load_gallery():

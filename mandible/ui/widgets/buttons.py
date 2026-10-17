@@ -83,6 +83,32 @@ class RackToolButton(QPushButton):
             d = 3.6
             p.drawLine(QPointF(cx - d, cy - d), QPointF(cx + d, cy + d))
             p.drawLine(QPointF(cx + d, cy - d), QPointF(cx - d, cy + d))
+        elif self.kind in ("expand", "collapse"):
+            # Chevron: down = expand (show more), up = collapse.
+            pen = QPen(icon_color, 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+            p.setPen(pen)
+            p.setBrush(Qt.NoBrush)
+            d = 1.0 if self.kind == "expand" else -1.0
+            path = QPainterPath()
+            path.moveTo(cx - 4.0, cy - 2.0 * d)
+            path.lineTo(cx, cy + 2.0 * d)
+            path.lineTo(cx + 4.0, cy - 2.0 * d)
+            p.drawPath(path)
+        elif self.kind == "open":
+            # Open-window: a frame with an arrow leaving its top-right corner.
+            pen = QPen(icon_color, 1.4, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+            p.setPen(pen)
+            p.setBrush(Qt.NoBrush)
+            frame = QPainterPath()
+            frame.moveTo(cx + 4.5, cy + 1.0)
+            frame.lineTo(cx + 4.5, cy + 5.0)
+            frame.lineTo(cx - 5.0, cy + 5.0)
+            frame.lineTo(cx - 5.0, cy - 4.5)
+            frame.lineTo(cx - 1.0, cy - 4.5)
+            p.drawPath(frame)
+            p.drawLine(QPointF(cx - 0.5, cy + 0.5), QPointF(cx + 5.0, cy - 5.0))
+            p.drawLine(QPointF(cx + 1.5, cy - 5.0), QPointF(cx + 5.0, cy - 5.0))
+            p.drawLine(QPointF(cx + 5.0, cy - 5.0), QPointF(cx + 5.0, cy - 1.5))
         elif self.kind == "plus":
             pen = QPen(icon_color, 1.6, Qt.SolidLine, Qt.RoundCap)
             p.setPen(pen)

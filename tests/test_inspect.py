@@ -46,6 +46,29 @@ def test_find_overflow_skips_scroll_area_content(qapp):
     assert ins.find_overflow(root) == []
 
 
+def test_find_overflow_checks_inside_list_item_widgets(qapp):
+    """An item widget may extend past the view, but its children must fit inside it (a
+    squeezed card whose buttons spill past its right edge is a real overflow)."""
+    from PySide6.QtCore import QSize
+    from PySide6.QtWidgets import QListWidget, QListWidgetItem
+
+    root = QWidget()
+    view = QListWidget(root)
+    view.setGeometry(0, 0, 200, 100)
+    item = QListWidgetItem()
+    item.setSizeHint(QSize(1, 40))
+    view.addItem(item)
+    card = QWidget()
+    card.setObjectName("card")
+    spill = QPushButton("spill", card)
+    spill.setObjectName("spill")
+    view.setItemWidget(item, card)
+    _shown(qapp, root)
+    spill.setGeometry(card.width() - 10, 0, 60, 20)
+    found = ins.find_overflow(root)
+    assert [(o.widget, o.object_name) for o in found] == [("QPushButton", "spill")]
+
+
 def test_find_clipped_text_flags_narrow_label_and_honours_tooltip(qapp):
     root = QWidget()
     narrow = QLabel("A rather long caption", root)

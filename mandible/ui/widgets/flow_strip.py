@@ -1,4 +1,10 @@
-"""Signal flow strip."""
+"""Signal flow strip: mic -> pre-FX -> plugin rack -> soundboard -> limiter -> outputs.
+
+Three modes (spec 7.6): ``full`` (every step spelled out, arrows between them), ``icons``
+(a short tag per step, full text in the tooltip) and ``hidden``. The header requests a mode
+from the window width; the strip then falls back to the richest mode that actually fits the
+width it was given, so it never overflows whatever the fonts, skin or scale.
+"""
 from __future__ import annotations
 
 from PySide6.QtCore import Signal
@@ -6,11 +12,25 @@ from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton
 
 from ...audio_engine import DRY_ID
 from ...core import Core
-from .base import set_style_property
+from .base import SpacedLayouts, _follow_look, set_style_property
+from .labels import ElidedLabel
+
+MODES = ("full", "icons", "hidden")
+
+# step key -> (short tag shown in icons mode, what the step is)
+_STEPS = {
+    "mic": ("MIC", "Microphone input"),
+    "prefx": ("NR", "Pre-FX noise suppression"),
+    "rack": ("FX", "Active plugin rack"),
+    "sb": ("SB", "Soundboard"),
+    "lim": ("LIM", "Output limiter"),
+    "out": ("OUT", "Outputs"),
+}
 
 
 class SignalFlowStrip(QFrame):
-    """Illuminated hardware signal routing bus (zero emojis)."""
+    """Status of each stage of the signal path; the pre-FX, soundboard and limiter steps are
+    buttons."""
     prefxClicked = Signal()
     soundboardClicked = Signal()
     limiterClicked = Signal()
@@ -19,90 +39,150 @@ class SignalFlowStrip(QFrame):
         super().__init__(parent)
         self.core = core
         self.setObjectName("signalFlowStrip")
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(12, 6, 12, 6)
-        lay.setSpacing(8)
+        self._requested = "full"
+        self._mode = ""
+        self._spaced = SpacedLayouts()
+        lay = self._spaced.add(QHBoxLayout(self), spacing=1, margins=(2, 1, 2, 1))
+        # Never let the strip's contents set the header's minimum width; the mode logic
+        # keeps the contents inside whatever width the strip gets.
+        self.setMinimumWidth(1)
 
-        lbl = QLabel("BUS:")
-        lbl.setObjectName("flowBusLabel")
-        lay.addWidget(lbl)
+        self._full: dict[str, QLabel | QPushButton] = {}
+        self._icons: dict[str, QLabel | QPushButton] = {}
+        self._arrows: list[QLabel] = []
 
-        # Stage 1: Mic In
-        in_name = core.cfg.audio.input_device or "MIC IN"
-        if len(in_name) > 18:
-            in_name = in_name[:16] + "…"
-        self.mic_pill = QLabel(f"{in_name.upper()} (CH {core.cfg.audio.input_channel + 1})")
-        self.mic_pill.setObjectName("flowPill")
-        lay.addWidget(self.mic_pill)
-
-        lay.addWidget(self._arrow())
-
-        # Stage 2: Pre-FX
-        self.prefx_btn = QPushButton("RNNOISE")
-        self.prefx_btn.setObjectName("flowBtn")
-        self.prefx_btn.setToolTip("Click to configure Pre-FX RNNoise suppression and gate")
-        self.prefx_btn.clicked.connect(self.prefxClicked.emit)
-        lay.addWidget(self.prefx_btn)
-
-        lay.addWidget(self._arrow())
-
-        # Stage 3: Active Chain
-        self.chain_pill = QLabel("PLUGIN RACK: CLEAN")
-        self.chain_pill.setObjectName("flowPill")
-        lay.addWidget(self.chain_pill)
-
-        lay.addWidget(self._arrow())
-
-        # Stage 4: Soundboard
-        self.sb_btn = QPushButton("SOUNDBOARD")
-        self.sb_btn.setObjectName("flowBtn")
-        self.sb_btn.setToolTip("Soundboard audio playback clips")
-        self.sb_btn.clicked.connect(self.soundboardClicked.emit)
-        lay.addWidget(self.sb_btn)
-
-        lay.addWidget(self._arrow())
-
-        # Stage 5: Limiter
-        self.lim_btn = QPushButton("LIMITER: ON")
-        self.lim_btn.setObjectName("flowBtn")
-        self.lim_btn.setToolTip("Click to toggle Master Safety Limiter")
-        self.lim_btn.clicked.connect(self.limiterClicked.emit)
-        lay.addWidget(self.lim_btn)
-
-        lay.addWidget(self._arrow())
-
-        # Stage 6: Outputs
-        out_ch = core.cfg.audio.output_channels
-        ch_str = f"CH {out_ch[0]+1}-{out_ch[1]+1}" if len(out_ch) >= 2 else "CH 3-4"
-        self.out_pill = QLabel(f"V-MIC ({ch_str}) + PHONES")
-        self.out_pill.setObjectName("flowPill")
-        lay.addWidget(self.out_pill)
-
+        clicks = {"prefx": self.prefxClicked, "sb": self.soundboardClicked,
+                  "lim": self.limiterClicked}
+        tips = {"prefx": "Click to configure Pre-FX RNNoise suppression and gate",
+                "sb": "Soundboard audio playback clips",
+                "lim": "Click to toggle Master Safety Limiter"}
+        for i, key in enumerate(_STEPS):
+            if i:
+                arrow = QLabel("→")
+                arrow.setObjectName("flowArrow")
+                self._arrows.append(arrow)
+                lay.addWidget(arrow)
+            short, what = _STEPS[key]
+            if key in clicks:
+                full = QPushButton()
+                full.setObjectName("flowBtn")
+                full.setToolTip(tips[key])
+                full.clicked.connect(clicks[key].emit)
+                icon = QPushButton(short)
+                icon.setObjectName("flowBtn")
+                icon.clicked.connect(clicks[key].emit)
+            else:
+                full = ElidedLabel(min_chars=10)
+                full.setObjectName("flowPill")
+                full.setBaseToolTip(what)
+                icon = QLabel(short)
+                icon.setObjectName("flowPill")
+            icon.setProperty("compact", "true")
+            self._full[key], self._icons[key] = full, icon
+            lay.addWidget(full)
+            lay.addWidget(icon)
         lay.addStretch()
 
-    def _arrow(self):
-        a = QLabel("→")
-        a.setObjectName("flowArrow")
-        return a
+        # Backward-compatible names (the main window aliases some of them).
+        self.mic_pill = self._full["mic"]
+        self.prefx_btn = self._full["prefx"]
+        self.chain_pill = self._full["rack"]
+        self.sb_btn = self._full["sb"]
+        self.lim_btn = self._full["lim"]
+        self.out_pill = self._full["out"]
+
+        self._set_texts(None, "CLEAN VOICE")
+        self._show_mode("hidden")
+        # width_for() measures hidden steps; polish them now, never from an event handler.
+        for w in [*self._full.values(), *self._icons.values(), *self._arrows]:
+            w.ensurePolished()
+        _follow_look(self)
+
+    # ------------------------------------------------------------------ modes
+    def mode(self) -> str:
+        return self._mode
+
+    def requested_mode(self) -> str:
+        return self._requested
+
+    def set_requested_mode(self, mode: str) -> None:
+        if mode not in MODES:
+            raise ValueError(f"unknown flow strip mode {mode!r}")
+        if mode != self._requested:
+            self._requested = mode
+            self._fit()
+
+    def width_for(self, mode: str) -> int:
+        """The narrowest width at which ``mode`` shows without clipping (0 for hidden)."""
+        if mode == "hidden":
+            return 0
+        widgets = list(self._full.values()) + self._arrows if mode == "full" else list(self._icons.values())
+        lay = self.layout()
+        m = lay.contentsMargins()
+        fw = self.frameWidth() * 2
+        total = m.left() + m.right() + fw + lay.spacing() * (len(widgets) - 1)
+        for w in widgets:
+            total += w.minimumSizeHint().width() if isinstance(w, ElidedLabel) else w.sizeHint().width()
+        return total
+
+    def _fit(self) -> None:
+        avail = self.width()
+        order = MODES[MODES.index(self._requested):]
+        chosen = next((m for m in order if self.width_for(m) <= avail), "hidden")
+        self._show_mode(chosen)
+
+    def _show_mode(self, mode: str) -> None:
+        if mode == self._mode:
+            return
+        self._mode = mode
+        for w in self._full.values():
+            w.setVisible(mode == "full")
+        for w in self._arrows:
+            w.setVisible(mode == "full")
+        for w in self._icons.values():
+            w.setVisible(mode == "icons")
+        set_style_property(self, "mode", mode)
+
+    def resizeEvent(self, ev) -> None:  # noqa: N802
+        super().resizeEvent(ev)
+        self._fit()
+
+    def _on_look_changed(self) -> None:
+        self._spaced.apply()
+        self._fit()
+
+    # ------------------------------------------------------------------ state
+    def _set_texts(self, target_id: str | None, active_chain_name: str) -> None:
+        cfg = self.core.cfg
+        in_name = cfg.audio.input_device or "MIC IN"
+        texts = {"mic": f"{in_name.upper()} (CH {cfg.audio.input_channel + 1})"}
+        p = cfg.prefx
+        p_on = bool(p.highpass_enabled or p.rnnoise_enabled or p.noise_gate_enabled)
+        texts["prefx"] = f"RNNOISE: {'ON' if p_on else 'OFF'}"
+        clean_name = active_chain_name.replace("●", "").strip().upper()
+        texts["rack"] = f"PLUGIN RACK: {clean_name}"
+        texts["sb"] = f"SOUNDBOARD ({len(cfg.soundboard)})"
+        l_on = bool(cfg.limiter.enabled)
+        texts["lim"] = f"LIMITER: {'ON' if l_on else 'OFF'}"
+        out_ch = cfg.audio.output_channels
+        ch_str = f"CH {out_ch[0] + 1}-{out_ch[1] + 1}" if len(out_ch) >= 2 else "CH 3-4"
+        texts["out"] = f"V-MIC ({ch_str}) + PHONES"
+
+        is_fx = target_id is not None and target_id != DRY_ID
+        active = {"prefx": p_on, "rack": is_fx, "lim": l_on}
+        for key, text in texts.items():
+            full, icon = self._full[key], self._icons[key]
+            full.setText(text)
+            short, what = _STEPS[key]
+            extra = f"\n{full.toolTip()}" if isinstance(full, QPushButton) and full.toolTip() else ""
+            icon.setToolTip(f"{what}: {text}{extra}")
+            if key in active:
+                value = "true" if active[key] else "false"
+                if full.property("active") != value:
+                    set_style_property(full, "active", value)
+                    set_style_property(icon, "active", value)
 
     def refresh(self, target_id: str | None, active_chain_name: str):
-        # 1. Update Pre-FX state
-        p = self.core.cfg.prefx
-        p_on = p.highpass_enabled or p.rnnoise_enabled or p.noise_gate_enabled
-        self.prefx_btn.setText(f"RNNOISE: {'ON' if p_on else 'OFF'}")
-        set_style_property(self.prefx_btn, "active", "true" if p_on else "false")
-
-        # 2. Update Active Chain state
-        is_fx = target_id is not None and target_id != DRY_ID
-        clean_name = active_chain_name.replace("●", "").strip().upper()
-        self.chain_pill.setText(f"PLUGIN RACK: {clean_name}")
-        set_style_property(self.chain_pill, "active", "true" if is_fx else "false")
-
-        # 3. Update Soundboard state
-        n_clips = len(self.core.cfg.soundboard)
-        self.sb_btn.setText(f"SOUNDBOARD ({n_clips})")
-
-        # 4. Update Limiter state
-        l_on = self.core.cfg.limiter.enabled
-        self.lim_btn.setText(f"LIMITER: {'ON' if l_on else 'OFF'}")
-        set_style_property(self.lim_btn, "active", "true" if l_on else "false")
+        self._set_texts(target_id, active_chain_name)
+        if self._mode != "hidden" or self._requested != "hidden":
+            self._fit()
