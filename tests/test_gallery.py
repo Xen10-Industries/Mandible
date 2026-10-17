@@ -160,3 +160,46 @@ def test_gui_shim_only_exposes_main():
 
     assert gui.main is main
     assert [n for n in vars(gui) if not n.startswith("_") and n != "main"] == []
+
+
+def test_gallery_looks_set_the_config_the_appearance_section_reads(qapp, sample_core):
+    from mandible.ui.dialogs.settings import SettingsDialog
+    from mandible.ui.look import current_look, set_look
+
+    before = current_look()
+    gallery = _load_gallery()
+    try:
+        gallery._apply(qapp, "minimal", "amber", sample_core)
+        assert (sample_core.cfg.ui_skin, sample_core.cfg.theme) == ("minimal", "amber")
+        dlg = SettingsDialog(sample_core, False, None)
+        try:
+            assert dlg.skin_combo.currentData() == "minimal"
+            assert dlg.theme_combo.currentData() == "amber"
+        finally:
+            dlg.deleteLater()
+    finally:
+        set_look(before)
+
+
+def test_gallery_states_visit_every_settings_section_and_wizard_step(sample_core):
+    from mandible.ui.dialogs.settings import SettingsDialog
+    from mandible.ui.dialogs.setup_assistant import SetupAssistantDialog
+
+    gallery = _load_gallery()
+    dlg = SettingsDialog(sample_core, False, None)
+    try:
+        seen = [(dlg.current_section(), label) for _suffix, label in gallery._states(dlg)]
+        assert [s for s, _ in seen] == dlg.section_ids()
+        assert [label for _, label in seen][1:] == [
+            dlg.sections.item(i).text() for i in range(1, dlg.sections.count())]
+    finally:
+        dlg.deleteLater()
+
+    wiz = SetupAssistantDialog(sample_core, None)
+    try:
+        for suffix, _label in gallery._states(wiz):
+            idx = wiz.pages.currentIndex()
+            assert wiz.step_lbl.text() == f"STEP {idx + 1} OF 4", suffix
+    finally:
+        wiz._meter_timer.stop()
+        wiz.deleteLater()

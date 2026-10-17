@@ -236,7 +236,8 @@ INFO_TEXT_SELECTORS = ("QLabel#flowBusLabel", "QLabel#flowArrow", "QLabel#chainS
                        "QLabel#wizardCardDesc", "QLabel#wizardGuideText",
                        "QLabel#rackBusLabel", "QLabel#rackLatency", "QLabel#vfdValue",
                        "QLabel#moduleTitle", "QLabel#bankTitle", "QLabel#condensedLabel",
-                       "QLabel#waveformTiming", "QLabel#waveformHint", "QLabel#limiterThreshold")
+                       "QLabel#waveformTiming", "QLabel#waveformHint", "QLabel#limiterThreshold",
+                       "QLabel#settingsGroupLabel")
 
 
 @pytest.mark.parametrize("look", ALL_LOOKS)
@@ -280,6 +281,11 @@ SMALL_TEXT_ON_SURFACE = {
     'QLabel#statusPill[state="danger"]': "status.danger.subtle",
     "QLabel#waveformClipName": "bg.inset",
     "QLabel#builtinBadge": "bg.window",
+    # Settings section list (Task 15)
+    "QListWidget#settingsSections::item": "bg.window",
+    "QListWidget#settingsSections::item:hover": "bg.raised",
+    "QListWidget#settingsSections::item:selected": "accent.subtle",
+    "QLabel#hotkeyPrompt": "bg.window",
 }
 
 
@@ -295,3 +301,21 @@ def test_small_accent_text_meets_contrast_on_its_surface(look):
         assert colour, selector
         ratio = contrast_ratio(colour.group(1), pal.color(surface))
         assert ratio >= 4.5, (selector, surface, look.palette.id, round(ratio, 2))
+
+
+@pytest.mark.parametrize("look", ALL_LOOKS)
+def test_dialog_title_rules_use_the_title_size(look):
+    """Settings' section title and the hotkey prompt are the most prominent text in their dialogs."""
+    from mandible.ui.look import font_px
+
+    qss = build_qss(look)
+    for selector in ("QLabel#settingsSectionTitle", "QLabel#hotkeyPrompt"):
+        body = " ".join(rule_blocks(qss, selector))
+        assert f"font-size: {font_px('title')}px" in body, selector
+
+
+@pytest.mark.parametrize("look", ALL_LOOKS)
+def test_settings_section_list_has_a_selected_state(look):
+    qss = build_qss(look)
+    assert rule_blocks(qss, "QListWidget#settingsSections::item:selected")
+    assert rule_blocks(qss, "QListWidget#settingsSections::item:hover")

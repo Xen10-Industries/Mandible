@@ -879,7 +879,7 @@ class MainWindow(QMainWindow):
         self._update_limiter_ui()
 
     def _open_limiter_settings(self):
-        dlg = SettingsDialog(self.core, self.core.engine.running, self, initial_tab=2)
+        dlg = SettingsDialog(self.core, self.core.engine.running, self, initial_section="output_safety")
         if dlg.exec():
             dlg.apply_all()
             self.cfg.audio = dlg.result_settings()

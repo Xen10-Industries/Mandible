@@ -50,12 +50,15 @@ def parse_sizes(text: str) -> list[tuple[int, int]]:
     return sizes
 
 
-def _apply(app, skin_id: str, theme_id: str) -> None:
+def _apply(app, skin_id: str, theme_id: str, core=None) -> None:
     """Select a skin and theme: ``set_look`` (via ``apply_theme``, which also sets the app's
-    Fusion style as ``main()`` does)."""
+    Fusion style as ``main()`` does). With ``core``, its config follows (skin, theme, automatic
+    frame), so Settings > Appearance shows the look that is actually being rendered."""
     from mandible.ui.app import apply_theme
     from mandible.ui.look import BUILTIN_PALETTES, BUILTIN_SKINS, Look
 
+    if core is not None:
+        core.cfg.ui_skin, core.cfg.theme, core.cfg.chassis_frame = skin_id, theme_id, "auto"
     apply_theme(app, Look(BUILTIN_PALETTES[theme_id], BUILTIN_SKINS[skin_id]))
 
 
@@ -88,23 +91,38 @@ def _merge(into: dict, more: dict) -> None:
 
 
 def _states(dialog):
-    """Yield ``(suffix, label)`` after switching the dialog to each tab / wizard page."""
-    from PySide6.QtWidgets import QStackedWidget, QTabWidget
+    """Yield ``(suffix, label)`` after switching the dialog to each section / tab / wizard
+    page, starting from the first. Wizard pages are reached through the wizard's own
+    navigation, so its step header is right."""
+    from PySide6.QtWidgets import QTabWidget
 
-    yield "", ""
+    sections = getattr(dialog, "sections", None)
+    if sections is not None and hasattr(dialog, "show_section"):
+        ids = dialog.section_ids()
+        dialog.show_section(ids[0])
+        yield "", ""
+        for i, sid in enumerate(ids[1:], 1):
+            dialog.show_section(sid)
+            yield f"_{sid}", sections.item(i).text()
+        return
+    if hasattr(dialog, "_go_to_step"):
+        pages = getattr(dialog, "pages", None)
+        dialog._go_to_step(0)
+        yield "", ""
+        for i in range(1, pages.count() if pages is not None else 1):
+            dialog._go_to_step(i)
+            yield f"_page{i}", f"step {i + 1}"
+        return
     tabs = dialog.findChildren(QTabWidget)
     if tabs:
         tw = tabs[0]
+        tw.setCurrentIndex(0)
+        yield "", ""
         for i in range(1, tw.count()):
             tw.setCurrentIndex(i)
             yield f"_tab{i}", tw.tabText(i)
-    elif type(dialog).__name__ == "SetupAssistantDialog":
-        for sw in dialog.findChildren(QStackedWidget):
-            if sw.count() > 1:
-                for i in range(1, sw.count()):
-                    sw.setCurrentIndex(i)
-                    yield f"_page{i}", f"page {i}"
-                break
+        return
+    yield "", ""
 
 
 def dialog_builders(core) -> dict:
@@ -268,7 +286,7 @@ def run_gallery(out: pathlib.Path, skins: list[str], themes: list[str],
         for skin in skins:
             for theme in themes:
                 try:
-                    _apply(app, skin, theme)
+                    _apply(app, skin, theme, core)
                     contrast = _contrast(theme)
                 except Exception as exc:  # noqa: BLE001 - report and keep going
                     report[f"main|{skin}|{theme}|all"] = _error_entry(exc)

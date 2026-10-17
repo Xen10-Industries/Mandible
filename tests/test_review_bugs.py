@@ -199,11 +199,9 @@ def test_settings_labels_render_ampersands_and_have_no_stray_underscores(sample_
 
     dlg = SettingsDialog(sample_core, False)
     try:
-        titles = [dlg.tabs.tabText(i) for i in range(dlg.tabs.count())]
-        shown = [t.replace("&&", "&") for t in titles]    # what Qt draws
-        assert "Limiter & Normalizer" in shown
-        assert not any(_lone_ampersand(t) for t in titles), titles
-        assert not any("_" in t for t in shown), shown
+        titles = [dlg.sections.item(i).text() for i in range(dlg.sections.count())]
+        assert "Limiter & Normalizer" in titles           # list items draw & literally
+        assert not any("_" in t for t in titles), titles
         buttons = [w.text() for w in dlg.findChildren(QAbstractButton)]
         assert not any(_lone_ampersand(t) for t in buttons), buttons
     finally:

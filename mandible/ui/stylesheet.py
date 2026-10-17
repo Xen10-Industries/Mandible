@@ -908,9 +908,42 @@ QLabel#paramMapBadge {{
     font-weight: bold;
     padding: 2px 8px;
 }}
-QFrame#settingsSeparator {{
-    color: {line};
-    margin: 8px 0;
+QLabel#hotkeyPrompt, QLabel#settingsSectionTitle {{
+    font-size: {f_title};
+    font-weight: bold;
+    color: {text};
+}}
+QLabel#settingsGroupLabel {{
+    color: {muted};
+    font-size: {f_small};
+    font-weight: 800;
+    letter-spacing: 1px;
+}}
+QListWidget#settingsSections {{
+    background-color: transparent;
+    border: {bw2} solid transparent;
+    border-radius: {r_pnl};
+    outline: none;
+    padding: 4px;
+}}
+QListWidget#settingsSections:focus {{
+    border: {bw2} solid {ring};
+}}
+QListWidget#settingsSections::item {{
+    color: {muted};
+    padding: 8px 12px;
+    margin-bottom: 2px;
+    border: {bw} solid transparent;
+    border-radius: {r_ctl};
+}}
+QListWidget#settingsSections::item:hover {{
+    background-color: {alt};
+    color: {text};
+}}
+QListWidget#settingsSections::item:selected {{
+    background-color: {accent_subtle};
+    border: {bw} solid {accent};
+    color: {text};
 }}
 QFrame#duckStrip {{
     background-color: {inset};

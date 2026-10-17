@@ -19,11 +19,16 @@ class HotkeyDialog(QDialog):
         self.result_hotkey: Hotkey | None = None
         self.setWindowTitle(title)
         lay = QVBoxLayout(self)
-        lbl = QLabel("Press the key combination you want to use…\n\n"
-                     "Modifiers (Ctrl / Shift / Alt / Win) are allowed.\nEsc cancels.")
+        lbl = QLabel("Press the key combination you want to use…")
         lbl.setAlignment(Qt.AlignCenter)
+        lbl.setWordWrap(True)
         lbl.setObjectName("hotkeyPrompt")
         lay.addWidget(lbl)
+        hint = QLabel("Modifiers (Ctrl / Shift / Alt / Win) are allowed. Esc cancels.")
+        hint.setAlignment(Qt.AlignCenter)
+        hint.setWordWrap(True)
+        hint.setObjectName("dialogInfo")
+        lay.addWidget(hint)
         row = QHBoxLayout()
         clear = make_button("Remove hotkey", "danger")
         cancel = make_button("Cancel")
@@ -34,7 +39,7 @@ class HotkeyDialog(QDialog):
         clear.clicked.connect(self._clear)
         cancel.clicked.connect(self.reject)
         self.captured.connect(self._got)
-        self.setMinimumWidth(340)
+        self.setMinimumWidth(400)
         core.hotkeys.capture_next(lambda hk: self.captured.emit(hk))
 
     def _got(self, hk):

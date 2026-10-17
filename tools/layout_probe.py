@@ -37,7 +37,8 @@ its full text in the tooltip, or a window that could not shrink to the requested
 
 ``--mode standard`` measures one skin (the first of ``--skins``) against the spec's "same
 standard" checklist instead: for every theme in ``--themes``, the main window at every size
-and every dialog (each tab / wizard page), contrast, and the live switch into the skin::
+and every dialog (each section / tab / wizard page, at its default size and again at its
+minimum size), contrast, and the live switch into the skin::
 
     {"platform": ..., "skin": id, "themes": {"<theme>": {"contrast": [...],
         "screens": {"main|<WxH>" | "<dialog>": {"size", "min_size", "overflow",
@@ -216,7 +217,7 @@ def run(skins: list[str], theme: str, sizes: list[tuple[int, int]], scenario: st
         core.cfg.close_to_tray = False
         apply_scenario(core, scenario)
         for skin in skins:
-            gallery._apply(app, skin, theme)
+            gallery._apply(app, skin, theme, core)
             win = gallery.build_main_window(core)
             try:
                 if core.cfg.chains:
@@ -317,7 +318,7 @@ def run_standard(skin: str, themes: list[str], sizes: list[tuple[int, int]],
         core.cfg.close_to_tray = False
         apply_scenario(core, scenario)
         for theme in themes:
-            gallery._apply(app, skin, theme)
+            gallery._apply(app, skin, theme, core)
             entry: dict = {"contrast": gallery._contrast(theme), "screens": {}}
             win = gallery.build_main_window(core)
             try:
@@ -343,6 +344,11 @@ def run_standard(skin: str, themes: list[str], sizes: list[tuple[int, int]],
                     hint = dlg.minimumSizeHint().expandedTo(dlg.minimumSize())
                     m = {"size": [dlg.width(), dlg.height()],
                          "min_size": [hint.width(), hint.height()]}
+                    for _suffix, _label in gallery._states(dlg):
+                        app.processEvents()
+                        _merge_lists(m, _standard_lists(dlg, allowed))
+                    # Again at the smallest size the dialog allows: pages must scroll, not clip.
+                    dlg.resize(hint)
                     for _suffix, _label in gallery._states(dlg):
                         app.processEvents()
                         _merge_lists(m, _standard_lists(dlg, allowed))
