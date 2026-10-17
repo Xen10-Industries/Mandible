@@ -1,8 +1,8 @@
 """Element registry: slot -> variant id -> class.
 
-A skin picks one variant id per slot. Variants register themselves here, so a
-variant added for one skin is automatically offered to every skin. Task 6
-replaces the placeholder classes below with real painting under the same ids.
+A skin picks one variant id per slot. Variants register themselves here
+(importing ``mandible.ui.elements`` loads every variant module), so a variant
+added for one skin is automatically offered to every skin.
 """
 from __future__ import annotations
 
@@ -66,28 +66,14 @@ def resolve(elements: Mapping[str, str]) -> tuple[dict[str, str], list[str]]:
     return resolved, notices
 
 
-# ------------------------------------------------------- placeholder variants
+# ----------------------------------------------------------- density variants
 
-class PlaceholderElement:
-    """Stand-in for a variant until its real painting lands (Task 6)."""
+class DensityVariant:
+    """Density is not painted: it feeds ``look.space()``. Registered so skins can name it."""
 
-    slot = ""
+    slot = "density"
     variant = ""
 
 
-_PLACEHOLDERS: dict[str, tuple[str, ...]] = {
-    "frame": ("metal_rack", "wood_cheeks", "frameless"),
-    "switch": ("bat_toggle", "rocker", "pill"),
-    "knob": ("machined", "vintage_bakelite", "flat_ring"),
-    "meter": ("led_segments", "smooth_bar"),
-    "panel": ("brushed", "lacquer", "flat"),
-    "screws": ("corners_only", "none"),
-    "density": ("compact", "comfortable"),
-}
-
-for _slot, _ids in _PLACEHOLDERS.items():
-    for _id in _ids:
-        _name = "".join(part.title() for part in (_slot, *_id.split("_")))
-        register(_slot, _id,
-                 type(_name, (PlaceholderElement,), {"slot": _slot, "variant": _id}),
-                 _id.replace("_", " ").capitalize())
+for _id, _label in (("compact", "Compact"), ("comfortable", "Comfortable")):
+    register("density", _id, type(f"Density{_label}", (DensityVariant,), {"variant": _id}), _label)
