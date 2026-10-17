@@ -675,7 +675,7 @@ class MainWindow(QMainWindow):
         self.g_out = GainSlider("Master", self.cfg.output_gain_db)
         self.g_mon = GainSlider("Phones", self.cfg.monitor_gain_db)
 
-        in_name = self.cfg.audio.input_device or "Focusrite"
+        in_name = self.cfg.audio.input_device or "No input"
         strip_in = ChannelStripCard(f"CH 01  MIC IN ({in_name})", "status.ok", self.m_in, self.g_in)
         strip_out = ChannelStripCard("CH 02  MAIN OUT (DISCORD / LOOPBACK)", "status.danger", self.m_out, self.g_out)
         strip_mon = ChannelStripCard("CH 03  HEADPHONES (MONITOR)", "readout.text", self.m_mon, self.g_mon)

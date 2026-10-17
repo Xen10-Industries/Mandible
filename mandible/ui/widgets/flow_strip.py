@@ -20,7 +20,7 @@ MODES = ("full", "icons", "hidden")
 # step key -> (short tag shown in icons mode, what the step is)
 _STEPS = {
     "mic": ("MIC", "Microphone input"),
-    "prefx": ("NR", "Pre-FX noise suppression"),
+    "prefx": ("PRE", "Pre-FX (mic clean-up before the effects)"),
     "rack": ("FX", "Active plugin rack"),
     "sb": ("SB", "Soundboard"),
     "lim": ("LIM", "Output limiter"),
@@ -58,7 +58,7 @@ class SignalFlowStrip(QFrame):
 
         clicks = {"prefx": self.prefxClicked, "sb": self.soundboardClicked,
                   "lim": self.limiterClicked}
-        tips = {"prefx": "Click to configure Pre-FX RNNoise suppression and gate",
+        self._tips = tips = {"prefx": "Click to configure the pre-FX stages",
                 "sb": "Soundboard audio playback clips",
                 "lim": "Click to toggle Master Safety Limiter"}
         for i, key in enumerate(_STEPS):
@@ -169,8 +169,11 @@ class SignalFlowStrip(QFrame):
         in_name = cfg.audio.input_device or "MIC IN"
         texts = {"mic": f"{in_name.upper()} (CH {cfg.audio.input_channel + 1})"}
         p = cfg.prefx
-        p_on = bool(p.highpass_enabled or p.rnnoise_enabled or p.noise_gate_enabled)
-        texts["prefx"] = f"RNNOISE: {'ON' if p_on else 'OFF'}"
+        stages = [name for name, on in (("High-pass", p.highpass_enabled),
+                                        ("RNNoise", p.rnnoise_enabled),
+                                        ("Noise gate", p.noise_gate_enabled)) if on]
+        p_on = bool(stages)
+        texts["prefx"] = "PRE-FX"
         clean_name = active_chain_name.replace("●", "").strip().upper()
         texts["rack"] = f"PLUGIN RACK: {clean_name}"
         texts["sb"] = f"SOUNDBOARD ({len(cfg.soundboard)})"
@@ -186,13 +189,18 @@ class SignalFlowStrip(QFrame):
             full, icon = self._full[key], self._icons[key]
             full.setText(text)
             short, what = _STEPS[key]
-            extra = f"\n{full.toolTip()}" if isinstance(full, QPushButton) and full.toolTip() else ""
-            icon.setToolTip(f"{what}: {text}{extra}")
+            if key == "prefx":
+                stage_txt = ", ".join(stages) if stages else "all stages off"
+                full.setToolTip(f"Pre-FX: {stage_txt}\n{self._tips[key]}")
+                icon.setToolTip(f"{what}: {stage_txt}\n{self._tips[key]}")
+            else:
+                extra = f"\n{full.toolTip()}" if isinstance(full, QPushButton) and full.toolTip() else ""
+                icon.setToolTip(f"{what}: {text}{extra}")
             if key in active:
-                value = "true" if active[key] else "false"
-                if full.property("active") != value:
-                    set_style_property(full, "active", value)
-                    set_style_property(icon, "active", value)
+                value = "on" if active[key] else "off"
+                if full.property("state") != value:
+                    set_style_property(full, "state", value)
+                    set_style_property(icon, "state", value)
 
     def refresh(self, target_id: str | None, active_chain_name: str):
         self._set_texts(target_id, active_chain_name)

@@ -474,7 +474,7 @@ class SetupAssistantDialog(QDialog):
         ]
         self.main_title.setText(titles[idx])
         if idx == 3:
-            self.next_btn.setText("FINISH & APPLY ROUTING")
+            self.next_btn.setText("FINISH && APPLY ROUTING")   # && is one literal ampersand
             set_style_property(self.next_btn, "final", True)
         else:
             next_titles = ["OUTPUT ROUTING >", "HEADPHONE MONITOR >", "CONNECTION GUIDE >"]

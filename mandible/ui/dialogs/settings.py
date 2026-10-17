@@ -134,7 +134,7 @@ class SettingsDialog(QDialog):
         self.norm_target.setSuffix(" dBFS")
         lim_lay.addRow("", self.norm_en)
         lim_lay.addRow("Target Loudness", self.norm_target)
-        tabs.addTab(tab_lim, "Limiter & Normalizer")
+        tabs.addTab(tab_lim, "Limiter && Normalizer")   # && draws one literal ampersand
 
         # ---------------- MIDI Tab
         tab_midi = QWidget()
@@ -333,7 +333,7 @@ class SettingsDialog(QDialog):
         import webbrowser
         tab_api = QWidget()
         api_lay = QFormLayout(tab_api)
-        self.api_en = QCheckBox("Enable Local HTTP/REST API (for Stream Deck, OBS, & Webhooks)")
+        self.api_en = QCheckBox("Enable Local HTTP/REST API (for Stream Deck, OBS, && Webhooks)")
         self.api_en.setChecked(getattr(self.cfg, "api_enabled", False))
         self.api_port_spin = QSpinBox()
         self.api_port_spin.setRange(1024, 65535)

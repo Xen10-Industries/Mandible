@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLay
 from ... import plugins as P
 from ...config import Chain, PluginSlot
 from ...core import Core, inst, slot_error
+from ...internal_dsp import is_internal_plugin
 from .base import SpacedLayouts, _follow_look, reserve_text_width
 from .buttons import RackToolButton
 from .chassis import RackScrew
@@ -85,7 +86,12 @@ class PluginRackCard(QFrame):
             name_row.addWidget(b)
             return b
 
-        badge("VST3", "formatBadge", "VST3 plugin")
+        # Mandible's own effects are not VST3 plugins: they have no plugin window and say so.
+        self.is_builtin = is_internal_plugin(slot.path)
+        if self.is_builtin:
+            badge("Built-in", "builtinBadge", "Built into Mandible; not a VST3 plugin")
+        else:
+            badge("VST3", "formatBadge", "VST3 plugin")
         v_name = P.guess_vendor(slot.path) if hasattr(P, "guess_vendor") else ""
         if v_name:
             badge(v_name, "vendorBadge")
@@ -106,13 +112,12 @@ class PluginRackCard(QFrame):
 
         sub_row = self._spaced.add(QHBoxLayout(), spacing=2, margins=0)
 
-        # Latency chip (zero emojis)
-        inst_p = inst(slot)
-        lat_smp = getattr(inst_p, "latency_samples", 0) if inst_p else 0
+        # Latency chip: the plugin's own reported latency, in ms and samples.
+        lat_smp = P.get_slot_latency_samples(slot)
         sr = core.engine.samplerate or 48000
-        lat_ms = (lat_smp / sr) * 1000.0 if sr else 0.0
-        lat_chip = ElidedLabel(f"LAT {lat_ms:.1f} ms", min_chars=3)
-        lat_chip.setBaseToolTip(f"Plugin latency: {lat_ms:.1f} ms ({lat_smp} samples)")
+        lat_ms = lat_smp / sr * 1000.0
+        lat_chip = ElidedLabel(f"{lat_ms:.1f} ms ({lat_smp} smp)", min_chars=3)
+        lat_chip.setBaseToolTip(f"Plugin latency: {lat_ms:.1f} ms ({lat_smp} samples at {sr:g} Hz)")
         lat_chip.setObjectName("latencyChip")
         sub_row.addWidget(lat_chip)
 
@@ -163,6 +168,15 @@ class PluginRackCard(QFrame):
 
         self.ui_btn = RackToolButton("open", "Open the plugin window")
         self.ui_btn.clicked.connect(self.editClicked.emit)
+        # Built-in effects have no plugin window; the slot stays so every cluster lines up.
+        policy = self.ui_btn.sizePolicy()
+        policy.setRetainSizeWhenHidden(True)
+        self.ui_btn.setSizePolicy(policy)
+        if self.is_builtin:
+            self.ui_btn.setVisible(False)
+        elif inst(slot) is None:
+            self.ui_btn.setEnabled(False)
+            self.ui_btn.setToolTip("The plugin is not loaded, so it has no window to open")
         btn_row.addWidget(self.ui_btn)
 
         up_btn = RackToolButton("up", "Move earlier in signal chain")

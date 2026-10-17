@@ -195,7 +195,7 @@ class SoundboardWaveformWidget(QFrame):
 
         # Header info row
         head_row = QHBoxLayout()
-        self.clip_name_lbl = QLabel("NO CLIP SELECTED")
+        self.clip_name_lbl = QLabel("No clip selected")
         self.clip_name_lbl.setObjectName("waveformClipName")
         self.timing_lbl = QLabel("Start: 0.00s | End: 0.00s | Len: 0.00s")
         self.timing_lbl.setObjectName("waveformTiming")
@@ -244,7 +244,7 @@ class SoundboardWaveformWidget(QFrame):
     def set_clip(self, clip: SoundboardClipConfig | None):
         self.current_clip = clip
         if not clip or not clip.path or not os.path.isfile(clip.path):
-            self.clip_name_lbl.setText("NO CLIP SELECTED")
+            self.clip_name_lbl.setText("No clip selected")
             self._timing = None
             self.timing_lbl.setText("Start: 0.00s | End: 0.00s | Len: 0.00s")
             self.canvas.set_audio_data([], 0.0, 0.0, 0.0)

@@ -13,11 +13,14 @@ from PySide6.QtWidgets import (QCheckBox, QDialog, QFileDialog, QFrame, QHBoxLay
 from ...config import SoundboardClipConfig
 from ...core import Core
 from ...waveform_widget import SoundboardWaveformWidget
+from ..widgets.base import _follow_look
 from .hotkey import HotkeyDialog
 
 
 class SoundboardDialog(QDialog):
     """Soundboard management: add clips, assign hotkeys, adjust volumes, and trigger sounds."""
+    ROW_PAD = 8   # the table items' vertical padding (2 px a side in the stylesheet) plus grid
+
     def __init__(self, core: Core, parent=None):
         super().__init__(parent)
         self.core = core
@@ -26,6 +29,7 @@ class SoundboardDialog(QDialog):
         lay = QVBoxLayout(self)
 
         self.table = QTableWidget()
+        self.table.setObjectName("soundboardTable")
         self.table.setColumnCount(6)
         self.table.setHorizontalHeaderLabels(["Name", "Hotkey", "Volume", "Out", "Headphones", "Action"])
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
@@ -87,8 +91,28 @@ class SoundboardDialog(QDialog):
 
         self.resize(760, 520)
         self._refresh_rows()
+        _follow_look(self)
+
+    def _fit_row_height(self) -> None:
+        """Rows are as tall as their tallest cell widget needs plus the stylesheet's item
+        padding (the buttons keep their natural size; the rows follow them)."""
+        need = 0
+        for row in range(self.table.rowCount()):
+            for col in range(self.table.columnCount()):
+                w = self.table.cellWidget(row, col)
+                if w is not None:
+                    w.ensurePolished()
+                    need = max(need, w.sizeHint().height())
+        if need:
+            self.table.verticalHeader().setDefaultSectionSize(need + self.ROW_PAD)
+            for row in range(self.table.rowCount()):
+                self.table.setRowHeight(row, need + self.ROW_PAD)
+
+    def _on_look_changed(self) -> None:
+        self._fit_row_height()
 
     def _refresh_rows(self):
+        selected = self.table.currentRow() if self.table.selectionModel().hasSelection() else -1
         self.table.setRowCount(0)
         for row, clip in enumerate(self.core.cfg.soundboard):
             self.table.insertRow(row)
@@ -125,12 +149,14 @@ class SoundboardDialog(QDialog):
             action_btn.clicked.connect(partial(self._toggle_play, clip))
             self.table.setCellWidget(row, 5, action_btn)
 
-        if self.core.cfg.soundboard:
-            cur_r = self.table.currentRow()
-            r_sel = cur_r if 0 <= cur_r < len(self.core.cfg.soundboard) else 0
-            self.table.selectRow(r_sel)
-            self.waveform_widget.set_clip(self.core.cfg.soundboard[r_sel])
+        self._fit_row_height()
+        # Nothing is pre-selected: the detail panel says so until the user picks a clip, and
+        # a refresh keeps only a selection the user made.
+        if 0 <= selected < len(self.core.cfg.soundboard):
+            self.table.selectRow(selected)
+            self.waveform_widget.set_clip(self.core.cfg.soundboard[selected])
         else:
+            self.table.clearSelection()
             self.waveform_widget.set_clip(None)
 
     def _add_clip(self):
@@ -177,12 +203,11 @@ class SoundboardDialog(QDialog):
 
     def _on_table_selection_changed(self):
         rows = self.table.selectedIndexes()
-        if not rows:
-            return
-        row = rows[0].row()
+        row = rows[0].row() if rows else -1
         if 0 <= row < len(self.core.cfg.soundboard):
-            clip = self.core.cfg.soundboard[row]
-            self.waveform_widget.set_clip(clip)
+            self.waveform_widget.set_clip(self.core.cfg.soundboard[row])
+        else:
+            self.waveform_widget.set_clip(None)
 
     def _on_duck_toggled(self, checked: bool):
         db = float(self.duck_slider.value())

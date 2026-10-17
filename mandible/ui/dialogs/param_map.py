@@ -1,4 +1,4 @@
-"""Map VST3 parameters to the hardware macro knobs of a rack module."""
+"""Map a plugin's parameters to the hardware macro knobs of a rack module."""
 from __future__ import annotations
 
 
@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QGroupBox, QHBoxLayout
 from ... import plugins as P
 from ...config import PluginSlot
 from ...core import Core, inst
+from ...internal_dsp import is_internal_plugin
 
 
 class PluginParamMapDialog(QDialog):
@@ -25,7 +26,9 @@ class PluginParamMapDialog(QDialog):
         self.slot = slot
         self.core = core
         self.plugin = inst(slot)
-        self.setWindowTitle(f"Map VST Parameters — {slot.display_name or slot.path}")
+        # Built-in effects are not VST3 plugins; only a real VST3 gets the format name.
+        self.kind = "parameters" if is_internal_plugin(slot.path) else "VST3 parameters"
+        self.setWindowTitle(f"Knob mapping — {slot.display_name or slot.path}")
         self.resize(680, 480)
 
         self.usable_params = P.get_usable_parameters(self.plugin) if self.plugin else []
@@ -38,7 +41,7 @@ class PluginParamMapDialog(QDialog):
 
         # Header
         hdr_row = QHBoxLayout()
-        title_lbl = QLabel(f"VST MACRO KNOB MAPPING  //  {(slot.display_name or '').upper()}")
+        title_lbl = QLabel(f"KNOB MAPPING  //  {(slot.display_name or '').upper()}")
         title_lbl.setObjectName("paramMapTitle")
         hdr_row.addWidget(title_lbl, 1)
 
@@ -48,7 +51,7 @@ class PluginParamMapDialog(QDialog):
         lay.addLayout(hdr_row)
 
         sub_lbl = QLabel(
-            f"Select up to {self.MAX_KNOBS} VST parameters to expose as hardware rotary knobs on this rack module. "
+            f"Select up to {self.MAX_KNOBS} {self.kind} to expose as hardware rotary knobs on this rack module. "
             "This mapping is saved globally for this plugin whenever you insert it into any voice preset."
         )
         sub_lbl.setWordWrap(True)
@@ -80,7 +83,7 @@ class PluginParamMapDialog(QDialog):
         cols = QHBoxLayout()
         cols.setSpacing(12)
 
-        left_box = QGroupBox(f"AVAILABLE VST PARAMETERS ({len(self.usable_params)})")
+        left_box = QGroupBox(f"AVAILABLE {self.kind.upper()} ({len(self.usable_params)})")
         left_lay = QVBoxLayout(left_box)
         self.avail_list = QListWidget()
         self.avail_list.itemChanged.connect(self._on_avail_item_changed)

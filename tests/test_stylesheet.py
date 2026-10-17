@@ -275,6 +275,7 @@ SMALL_TEXT_ON_SURFACE = {
     "QPushButton#rackInsertBtn": "accent",
     "QFrame#consoleFrame QPushButton#collapseFadersBtn": "bg.panel",
     "QLabel#waveformClipName": "bg.inset",
+    "QLabel#builtinBadge": "bg.window",
 }
 
 

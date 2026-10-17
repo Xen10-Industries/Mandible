@@ -241,7 +241,7 @@ QLabel#flowPill {{
     font-size: {f_small};
     color: {text};
 }}
-QLabel#flowPill[active="true"] {{
+QLabel#flowPill[state="on"] {{
     background-color: {ok_bg};
     border: {bw} solid {ok};
     color: {ok};
@@ -260,7 +260,7 @@ QPushButton#flowBtn:hover {{
     border-color: {accent};
     color: {text};
 }}
-QPushButton#flowBtn[active="true"] {{
+QPushButton#flowBtn[state="on"] {{
     background-color: {ok_bg};
     border: {bw} solid {ok};
     color: {ok};
@@ -508,6 +508,15 @@ QLabel#formatBadge {{
     font-size: 7.5pt;
     font-weight: bold;
     color: {readout};
+}}
+QLabel#builtinBadge {{
+    background-color: {win};
+    border: {bw} solid {line};
+    border-radius: {r_sm};
+    padding: 1px 5px;
+    font-size: 7.5pt;
+    font-weight: bold;
+    color: {muted};
 }}
 QLabel#awakeBadge {{
     background-color: {ok_bg};
@@ -1390,6 +1399,9 @@ QTableWidget {{
 }}
 QTableWidget::item {{
     padding: 6px;
+}}
+QTableWidget#soundboardTable::item {{
+    padding: 2px 6px;
 }}
 QHeaderView::section {{
     background-color: {win};
