@@ -43,6 +43,20 @@ class ChainRuntime:
     latency_samples: int = 0
     error: str = ""
     slots: tuple = ()         # tuple of PluginSlot objects for per-plugin Pre/Post metering
+    dry_fifo: np.ndarray | None = None  # dry path delayed by latency_samples (audio thread only)
+
+    def __post_init__(self):
+        if self.latency_samples > 0:
+            self.dry_fifo = np.zeros((2, int(self.latency_samples)), np.float32)
+
+    def delayed_dry(self, buf: np.ndarray) -> np.ndarray:
+        """Return ``buf`` delayed by the chain's reported plugin latency (for phase-aligned blends)."""
+        if self.dry_fifo is None:
+            return buf
+        n = buf.shape[1]
+        fifo = np.concatenate((self.dry_fifo, buf), axis=1)
+        self.dry_fifo = fifo[:, n:]
+        return fifo[:, :n]
 
 
 class AudioEngine:
@@ -73,7 +87,7 @@ class AudioEngine:
         self.audition_duration_s: float = 5.0
         self.audition_target_frames: int = 0
         self.audition_rec_frames: int = 0
-        self._audition_chunks: list[np.ndarray] = []
+        self._audition_rec: np.ndarray = np.zeros(0, np.float32)
         self.audition_buffer: np.ndarray | None = None
         self.audition_play_pos: int = 0
 
@@ -92,6 +106,8 @@ class AudioEngine:
         }
         self._target: str | None = DRY_ID
         self._voices: dict[str, list] = {}   # audio-thread only: id -> [gain, tail_left]
+        self._awake_cursor = 0               # audio-thread only: round-robin keep-awake index
+        self._silence = np.zeros((2, 0), np.float32)
 
         self._in_col = 0
         self._out_cols = (0, 1)
@@ -130,9 +146,6 @@ class AudioEngine:
     def runtime(self, chain_id: str) -> ChainRuntime | None:
         return self._runtimes.get(chain_id)
 
-    def active_voices(self) -> list[str]:
-        return list(self._voices.keys())
-
     def update_prefx(self, cfg: PreFXSettings):
         self.prefx.update_settings(cfg, samplerate=self.samplerate)
 
@@ -149,14 +162,14 @@ class AudioEngine:
         """Begin recording a dry mic loop for auditioning chains and macro knobs."""
         self.audition_duration_s = max(1.0, min(30.0, float(duration_s)))
         self.audition_target_frames = int(self.audition_duration_s * (self.samplerate or 48000))
+        # Allocated here (GUI thread) so the audio callback never allocates seconds of audio.
+        self._audition_rec = np.zeros(self.audition_target_frames, np.float32)
         self.audition_rec_frames = 0
-        self._audition_chunks = []
         self.audition_state = "recording"
 
     def stop_mic_audition(self) -> None:
         """Stop audition recording or playback loop and return to live microphone."""
         self.audition_state = "idle"
-        self._audition_chunks = []
         self.audition_rec_frames = 0
         self.audition_play_pos = 0
 
@@ -329,14 +342,15 @@ class AudioEngine:
 
             # 3b. Mic Audition (5-second mic check & loopback audition)
             if self.audition_state == "recording":
-                self._audition_chunks.append(mono.copy())
-                self.audition_rec_frames += frames
-                if self.audition_rec_frames >= self.audition_target_frames:
-                    if self._audition_chunks:
-                        self.audition_buffer = np.concatenate(self._audition_chunks)
+                rec = self._audition_rec
+                pos = self.audition_rec_frames
+                n = max(0, min(frames, len(rec) - pos))
+                rec[pos:pos + n] = mono[:n]
+                self.audition_rec_frames = pos + n
+                if self.audition_rec_frames >= len(rec):
+                    self.audition_buffer = rec
                     self.audition_state = "looping"
                     self.audition_play_pos = 0
-                    self._audition_chunks.clear()
             elif self.audition_state == "looping" and self.audition_buffer is not None and len(self.audition_buffer) > 0:
                 tot = len(self.audition_buffer)
                 end = self.audition_play_pos + frames
@@ -439,24 +453,28 @@ class AudioEngine:
                     continue
 
 
-                # Dry / Wet blending per chain
+                # Dry / Wet blending per chain (dry delayed by the chain's plugin latency)
+                dry = rt.delayed_dry(buf)
                 dw = np.float32(rt.dry_wet)
                 if dw < 0.999:
-                    wet_mix = (1.0 - dw) * buf + dw * y_stereo
+                    wet_mix = (1.0 - dw) * dry + dw * y_stereo
                 else:
                     wet_mix = y_stereo
 
                 mix += wet_mix * np.float32(rt.gain)
 
-            # 5. Keep inactive chains pre-warmed & awake with silence (prevents VST suspension)
+            # 5. Keep inactive chains awake with silence (prevents VST suspension). One chain per
+            #    block, round-robin, so CPU cost stays flat however many chains exist.
             if self.keep_awake:
-                for rid, rt in runtimes.items():
-                    if rid not in voices and rt.board is not None:
-                        try:
-                            z = np.zeros((2, frames), dtype=np.float32)
-                            rt.board.process(z, sr, buffer_size=frames, reset=False)
-                        except Exception:
-                            pass
+                idle = [rt for rid, rt in runtimes.items() if rid not in voices and rt.board is not None]
+                if idle:
+                    self._awake_cursor = (self._awake_cursor + 1) % len(idle)
+                    if self._silence.shape[1] != frames:
+                        self._silence = np.zeros((2, frames), np.float32)
+                    try:
+                        idle[self._awake_cursor].board.process(self._silence, sr, buffer_size=frames, reset=False)
+                    except Exception:
+                        pass
 
             # 6. Soundboard audio mix
             sb_out, sb_mon = self.soundboard.mix(frames)

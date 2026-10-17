@@ -16,7 +16,7 @@ If a task conflicts with a rule, stop and ask the user before proceeding.
 - Free and open source, licensed **GPL-3.0-or-later** (`LICENSE`). Distribution: GitHub Releases
   first; later winget, itch.io and KVR Audio.
 - User data: `%APPDATA%\Xen10\Mandible\` (config.json, plugin_cache.json, mandible.log). Defined only in
-  `mandible/paths.py`; import `APP_DIR` / `LOG_PATH` from there (or via `mandible.config`). Never
+  `mandible/paths.py`; import `APP_DIR` / `LOG_PATH` from there. Never
   hard-code another location.
 - Presets: `.mandible` extension, format id `"Mandible.Preset"`. Legacy `.vfxpreset` must stay importable.
 - **Version:** single source of truth is `mandible/_version.py` (`__version__`, semver). Do not

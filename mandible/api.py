@@ -1,6 +1,11 @@
 """Lightweight local REST API for Mandible.
 Allows Elgato Stream Deck, OBS Studio, webhooks, and scripts to control chains,
 soundboard, mute, and mic check over HTTP (localhost:38420).
+
+Security model: the server binds to 127.0.0.1 only and is meant for local tools, not web pages.
+It sends no CORS headers, requires ``Content-Type: application/json`` on POST (which a web page
+cannot send cross-origin without a CORS preflight that this server refuses), rejects requests
+carrying an ``Origin`` header, and only accepts a localhost ``Host`` header (DNS-rebinding guard).
 """
 from __future__ import annotations
 
@@ -10,27 +15,42 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 from typing import TYPE_CHECKING
 
+from .audio_engine import DRY_ID
+
 if TYPE_CHECKING:
     from .core import Core
+
+
+_LOCAL_HOSTS = ("127.0.0.1", "localhost", "[::1]")
 
 
 class MandibleApiHandler(BaseHTTPRequestHandler):
     server: MandibleApiServer  # type hint
 
-    def _send_cors_headers(self):
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+    def _request_allowed(self, require_json: bool) -> bool:
+        """Reject browser-originated and DNS-rebinding requests (see module docstring)."""
+        host = (self.headers.get("Host") or "").strip().lower()
+        hostname = host.rsplit(":", 1)[0] if not host.startswith("[") else host.split("]")[0] + "]"
+        if hostname not in _LOCAL_HOSTS:
+            self._send_json(403, {"error": "Forbidden host"})
+            return False
+        if self.headers.get("Origin") is not None:
+            self._send_json(403, {"error": "Browser requests are not allowed"})
+            return False
+        if require_json:
+            ctype = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+            if ctype != "application/json":
+                self._send_json(415, {"error": "Content-Type must be application/json"})
+                return False
+        return True
 
     def do_OPTIONS(self):
-        self.send_response(204)
-        self._send_cors_headers()
-        self.end_headers()
+        # No CORS: refuse preflights so web pages can never call the API.
+        self._send_json(405, {"error": "Method not allowed"})
 
     def _send_json(self, status_code: int, data: dict):
         body = json.dumps(data, indent=2).encode("utf-8")
         self.send_response(status_code)
-        self._send_cors_headers()
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -51,6 +71,8 @@ class MandibleApiHandler(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
+        if not self._request_allowed(require_json=False):
+            return
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/")
         core = self.server.core
@@ -63,7 +85,7 @@ class MandibleApiHandler(BaseHTTPRequestHandler):
                 "status": "ok",
                 "running": core.engine.running,
                 "active_chain_id": target,
-                "active_chain_name": target_chain.name if target_chain else ("Clean" if target == "dry" else "Muted"),
+                "active_chain_name": target_chain.name if target_chain else ("Clean" if target == DRY_ID else "Muted"),
                 "muted": core.engine.ptt_muted,
                 "audition": {
                     "state": aud_state,
@@ -103,6 +125,8 @@ class MandibleApiHandler(BaseHTTPRequestHandler):
             self._send_json(404, {"error": "Not found", "path": path})
 
     def do_POST(self):
+        if not self._request_allowed(require_json=True):
+            return
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/")
         core = self.server.core
@@ -120,8 +144,8 @@ class MandibleApiHandler(BaseHTTPRequestHandler):
             if target_chain:
                 core.press(target_chain.id)
                 self._send_json(200, {"status": "ok", "selected_chain": target_chain.name, "id": target_chain.id})
-            elif cid == "dry" or name == "clean":
-                core.press("dry")
+            elif cid == "dry" or str(name or "").lower() == "clean":
+                core.select_clean()
                 self._send_json(200, {"status": "ok", "selected_chain": "Clean", "id": "dry"})
             else:
                 self._send_json(400, {"error": "Chain not found", "id": cid, "name": name})

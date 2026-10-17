@@ -8,23 +8,24 @@ import re
 import sys
 import threading
 import time
+from functools import partial
 
 import numpy as np
 from PySide6.QtCore import QLockFile, QPointF, QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import (QAction, QBrush, QColor, QConicalGradient, QFont, QIcon, QLinearGradient,
+from PySide6.QtGui import (QAction, QBrush, QColor, QIcon, QLinearGradient,
                             QPainter, QPainterPath, QPalette, QPen, QPixmap, QRadialGradient)
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
                                QDoubleSpinBox, QFileDialog, QFormLayout, QFrame, QGroupBox,
                                QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit,
                                QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox,
-                               QProgressDialog, QPushButton, QSlider, QSpinBox, QSplitter,
-                               QStackedWidget, QStyle, QSystemTrayIcon, QTabWidget, QTableWidget,
+                               QProgressDialog, QPushButton, QSlider, QSpinBox,
+                               QStackedWidget, QSystemTrayIcon, QTabWidget, QTableWidget,
                                QTableWidgetItem, QVBoxLayout, QWidget)
 
 from . import devices as D
 from . import plugins as P
 from .audio_engine import DRY_ID
-from .config import (APP_DIR, AppConfig, Chain, Hotkey, MidiBinding, PluginSlot,
+from .config import (APP_DIR, Chain, Hotkey, MidiBinding, PluginSlot,
                      SoundboardClipConfig, is_startup_enabled, load_config, set_startup_enabled)
 from .core import Core, inst, slot_error
 from .midi import list_midi_inputs
@@ -168,7 +169,6 @@ def build_stylesheet(
     border_focus = t["border_focus"]
     text = t["text"]
     text_muted = t["text_muted"]
-    chip_bg = t["chip_bg"]
     chip_text = t["chip_text"]
 
     card_radius = "10px" if skin == "minimal" else ("3px" if skin == "vintage" else "6px")
@@ -176,11 +176,6 @@ def build_stylesheet(
         f"{bg_card}"
         if skin == "minimal"
         else f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {bg_card_alt}, stop:1 {bg_win})"
-    )
-    plugin_card_bg = (
-        f"{bg_input}"
-        if skin == "minimal"
-        else f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {bg_card_alt}, stop:1 {bg_card})"
     )
 
     return f"""
@@ -1230,10 +1225,12 @@ class LevelMeter(QWidget):
         self.setMaximumHeight(56)
 
     def push(self, peak_lin: float):
+        before = (round(self.level_db, 1), round(self.peak_db, 1))
         db = 20 * math.log10(peak_lin) if peak_lin > 1e-6 else -90.0
         self.level_db = max(db, self.level_db - 1.5)
-        self.peak_db = db if db > self.peak_db else self.peak_db - 0.25
-        self.update()
+        self.peak_db = db if db > self.peak_db else max(-90.0, self.peak_db - 0.25)
+        if (round(self.level_db, 1), round(self.peak_db, 1)) != before:
+            self.update()
 
     def paintEvent(self, _):
         p = QPainter(self)
@@ -1487,7 +1484,7 @@ class ChannelStripCard(QFrame):
         head.addWidget(dot)
 
         t_lbl = QLabel(title)
-        t_lbl.setStyleSheet(f"font-weight: bold; font-size: 8pt; color: #94a3b8; letter-spacing: 0.5px;")
+        t_lbl.setStyleSheet("font-weight: bold; font-size: 8pt; color: #94a3b8; letter-spacing: 0.5px;")
         head.addWidget(t_lbl, 1)
         lay.addLayout(head)
 
@@ -1505,6 +1502,7 @@ class ThinLevelMeter(QWidget):
         self.peak_db = -80.0
 
     def push(self, peak_linear: float):
+        before = (round(self.level_db, 1), round(self.peak_db, 1))
         if peak_linear < 1e-4:
             db = -80.0
         else:
@@ -1518,7 +1516,8 @@ class ThinLevelMeter(QWidget):
             self.peak_db = db
         else:
             self.peak_db = max(-80.0, self.peak_db - 0.6)
-        self.update()
+        if (round(self.level_db, 1), round(self.peak_db, 1)) != before:
+            self.update()
 
     def paintEvent(self, _):
         p = QPainter(self)
@@ -2080,59 +2079,6 @@ class ChainCardWidget(QFrame):
         self.style().polish(self)
 
 
-class RackPowerButton(QPushButton):
-    """Tactile circular bypass push-button with jewel LED indicator."""
-    def __init__(self, checked=True, parent=None):
-        super().__init__(parent)
-        self.setCheckable(True)
-        self.setChecked(checked)
-        self.setFixedSize(28, 28)
-        self.setCursor(Qt.PointingHandCursor)
-        self.setObjectName("rackPowerBtn")
-        self.toggled.connect(lambda _: self.update())
-
-    def paintEvent(self, ev):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        w, h = self.width(), self.height()
-        cx, cy = w / 2.0, h / 2.0
-
-        # Outer metallic chassis bezel
-        bezel_col = QColor("#059669" if self.isChecked() else "#334155")
-        if self.underMouse():
-            bezel_col = QColor("#34d399" if self.isChecked() else "#475569")
-        p.setPen(QPen(bezel_col, 1.2))
-
-        bg = QLinearGradient(0, 0, 0, h)
-        if self.isChecked():
-            bg.setColorAt(0, QColor("#142d24"))
-            bg.setColorAt(1, QColor("#091712"))
-        else:
-            bg.setColorAt(0, QColor("#1e293b"))
-            bg.setColorAt(1, QColor("#0f172a"))
-        p.setBrush(bg)
-        p.drawEllipse(QPointF(cx, cy), 12, 12)
-
-        # Center indicator jewel LED
-        led_radius = 4.5
-        if self.isChecked():
-            glow = QRadialGradient(QPointF(cx, cy), led_radius * 1.8)
-            glow.setColorAt(0, QColor("#34d399"))
-            glow.setColorAt(0.6, QColor("#10b981"))
-            glow.setColorAt(1.0, QColor(16, 185, 129, 0))
-            p.setPen(Qt.NoPen)
-            p.setBrush(glow)
-            p.drawEllipse(QPointF(cx, cy), led_radius * 1.6, led_radius * 1.6)
-
-            p.setBrush(QColor("#a7f3d0"))
-            p.drawEllipse(QPointF(cx, cy), led_radius, led_radius)
-        else:
-            p.setPen(Qt.NoPen)
-            p.setBrush(QColor("#334155"))
-            p.drawEllipse(QPointF(cx, cy), led_radius, led_radius)
-        p.end()
-
-
 class HardwareSwitch(QWidget):
     """
     Physical hardware switch control with integrated jewel pilot LED (skin-aware).
@@ -2538,6 +2484,8 @@ class PluginPrePostMeter(QWidget):
         self.setToolTip(f"Plugin Signal Meter  ·  PRE (In): {pre_s}  |  POST (Out): {post_s}")
 
     def push(self, pre_lin: float, post_lin: float, enabled: bool = True):
+        before = (self.slot_enabled, round(self.pre_db, 1), round(self.post_db, 1),
+                  round(self.pre_peak_db, 1), round(self.post_peak_db, 1))
         self.slot_enabled = bool(enabled)
         target_pre = 20.0 * math.log10(min(pre_lin, 2.5)) if pre_lin > 1e-4 else -85.0
         target_post = 20.0 * math.log10(min(post_lin, 2.5)) if (enabled and post_lin > 1e-4) else -85.0
@@ -2547,7 +2495,10 @@ class PluginPrePostMeter(QWidget):
 
         self.pre_peak_db = target_pre if target_pre >= self.pre_peak_db else max(-85.0, self.pre_peak_db - 0.5)
         self.post_peak_db = target_post if target_post >= self.post_peak_db else max(-85.0, self.post_peak_db - 0.5)
-        self.update()
+        after = (self.slot_enabled, round(self.pre_db, 1), round(self.post_db, 1),
+                 round(self.pre_peak_db, 1), round(self.post_peak_db, 1))
+        if after != before:
+            self.update()
 
     def paintEvent(self, _):
         p = QPainter(self)
@@ -4755,23 +4706,6 @@ class ChainEditor(QWidget):
             self.set_chain(self.chain)
             self.chainEdited.emit()
 
-    def _set_slot_bypass_hotkey(self):
-        s = self._slot()
-        if not s:
-            return
-        dlg = HotkeyDialog(self.core, self, f"Bypass Hotkey for “{s.display_name}”")
-        if dlg.exec() and dlg.result_hotkey is not None:
-            hk = dlg.result_hotkey
-            if hk.is_set():
-                clash = self.core.find_hotkey_conflict(hk, exclude=s.bypass_hotkey)
-                if clash:
-                    QMessageBox.warning(self, "Hotkey in use", f"{hk.label} is already used by {clash}.")
-                    return
-            s.bypass_hotkey = hk
-            self.core.rebind_hotkeys()
-            self.core.save()
-            self.refresh_plugins(select_row=self.chain.plugins.index(s))
-
     def _mode(self):
         if self.chain:
             self.chain.mode = self.mode.currentData()
@@ -4811,40 +4745,6 @@ class ChainEditor(QWidget):
         self.refresh_plugins(select_row=len(self.chain.plugins) - 1)
         if slot_error(slot):
             QMessageBox.warning(self, "Plugin failed to load", f"{dlg.path}\n\n{slot_error(slot)}")
-
-    def _edit(self):
-        s = self._slot()
-        if s is not None:
-            self.openEditor.emit(s)
-
-    def _remove(self):
-        s = self._slot()
-        if s is None:
-            return
-        self.core.remove_plugin(self.chain, s)
-        self.refresh_plugins()
-
-    def _move(self, d):
-        s = self._slot()
-        if s is None:
-            return
-        self.core.move_plugin(self.chain, s, d)
-        self.refresh_plugins(select_row=self.chain.plugins.index(s))
-
-    def _item_changed(self, it):
-        r = self.plugins.row(it)
-        if self.chain and 0 <= r < len(self.chain.plugins):
-            self.core.set_plugin_enabled(self.chain, self.chain.plugins[r], it.checkState() == Qt.Checked)
-            self.refresh_plugins(select_row=r)
-
-    def _test_down(self):
-        if self.chain:
-            self.core.press(self.chain.id)
-
-    def _test_up(self):
-        if self.chain and self.chain.mode == "hold":
-            self.core.release(self.chain.id)
-
 
 def _monitor_and_center_plugin_window(plugin_title: str, parent_hwnd: int | None = None):
     import ctypes
@@ -5524,18 +5424,6 @@ class MainWindow(QMainWindow):
             self.monitor.setText("PHONES MONITOR: ON" if self.core.engine.monitor_enabled else "PHONES MONITOR")
 
 
-    @staticmethod
-    def _dot(on: bool) -> QIcon:
-        pm = QPixmap(14, 14)
-        pm.fill(Qt.transparent)
-        p = QPainter(pm)
-        p.setRenderHint(QPainter.Antialiasing)
-        p.setBrush(QColor(ACTIVE if on else "#444455"))
-        p.setPen(Qt.NoPen)
-        p.drawEllipse(1, 1, 12, 12)
-        p.end()
-        return QIcon(pm)
-
     def _current_chain(self) -> Chain | None:
         r = self.chain_list.currentRow()
         return self.cfg.chains[r] if 0 <= r < len(self.cfg.chains) else None
@@ -5886,6 +5774,8 @@ class MainWindow(QMainWindow):
 
     def _update_status(self):
         e = self.core.engine
+        state_changed = getattr(self, "_status_running", None) != e.running
+        self._status_running = e.running
         if hasattr(self, "pilot_lamp"):
             self.pilot_lamp.set_active(e.running)
 
@@ -5895,7 +5785,8 @@ class MainWindow(QMainWindow):
             self.status.setProperty("on", True)
             if hasattr(self, "vfd_stat"):
                 self.vfd_stat.setText(f"DSP: {e.load * 100:2.0f}%")
-                self.vfd_stat.setStyleSheet("font-family: Consolas, monospace; font-size: 7.5pt; font-weight: bold; color: #10b981;")
+                if state_changed:
+                    self.vfd_stat.setStyleSheet("font-family: Consolas, monospace; font-size: 7.5pt; font-weight: bold; color: #10b981;")
             if hasattr(self, "vfd_sr"):
                 self.vfd_sr.setText(f"{e.samplerate / 1000:g} kHz")
             if hasattr(self, "vfd_buf"):
@@ -5910,7 +5801,8 @@ class MainWindow(QMainWindow):
             self.status.setProperty("on", False)
             if hasattr(self, "vfd_stat"):
                 self.vfd_stat.setText("DSP: OFF")
-                self.vfd_stat.setStyleSheet("font-family: Consolas, monospace; font-size: 7.5pt; font-weight: bold; color: #64748b;")
+                if state_changed:
+                    self.vfd_stat.setStyleSheet("font-family: Consolas, monospace; font-size: 7.5pt; font-weight: bold; color: #64748b;")
             if hasattr(self, "vfd_sr"):
                 self.vfd_sr.setText("-- kHz")
             if hasattr(self, "vfd_buf"):
@@ -5920,8 +5812,9 @@ class MainWindow(QMainWindow):
             if hasattr(self, "vfd_drv"):
                 self.vfd_drv.setText("OFFLINE")
 
-        self.status.style().unpolish(self.status)
-        self.status.style().polish(self.status)
+        if state_changed:
+            self.status.style().unpolish(self.status)
+            self.status.style().polish(self.status)
         self.diag.setText(f"DSP {e.load * 100:4.0f}%   dropouts {e.xruns}" if e.running else "DSP OFFLINE")
         if e.last_error:
             print("[Mandible] audio error:", e.last_error)
@@ -6007,6 +5900,32 @@ class MainWindow(QMainWindow):
         self.setWindowState(self.windowState() & ~Qt.WindowMinimized)
         self.raise_()
         self.activateWindow()
+
+    def _sync_timers(self):
+        """Run the 30 Hz meter timer only while the window is actually on screen."""
+        if not hasattr(self, "meter_timer"):
+            return
+        on_screen = self.isVisible() and not self.isMinimized()
+        if on_screen and not self.meter_timer.isActive():
+            self.meter_timer.start(33)
+            self.status_timer.setInterval(500)
+            self._update_status()
+        elif not on_screen and self.meter_timer.isActive():
+            self.meter_timer.stop()
+            self.status_timer.setInterval(2000)  # still logs audio errors while hidden
+
+    def showEvent(self, ev):
+        super().showEvent(ev)
+        self._sync_timers()
+
+    def hideEvent(self, ev):
+        super().hideEvent(ev)
+        self._sync_timers()
+
+    def changeEvent(self, ev):
+        super().changeEvent(ev)
+        if ev.type() == ev.Type.WindowStateChange:
+            self._sync_timers()
 
     def closeEvent(self, ev):
         if self.cfg.close_to_tray and not self._quitting:

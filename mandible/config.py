@@ -8,7 +8,7 @@ from dataclasses import dataclass, field, fields
 
 from .prefx import PreFXSettings
 
-from .paths import APP_DIR, LOG_PATH  # noqa: F401  (re-exported)
+from .paths import APP_DIR
 
 CONFIG_PATH = os.path.join(APP_DIR, "config.json")
 STARTUP_REG_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"

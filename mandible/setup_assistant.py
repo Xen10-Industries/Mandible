@@ -8,11 +8,11 @@ import webbrowser
 from typing import TYPE_CHECKING
 
 import numpy as np
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QTimer
 from PySide6.QtGui import QColor, QFont, QPainter, QLinearGradient
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QFrame, QHBoxLayout, QLabel,
-    QPushButton, QSlider, QStackedWidget, QVBoxLayout, QWidget, QMessageBox
+    QPushButton, QStackedWidget, QVBoxLayout, QWidget, QMessageBox
 )
 
 from . import devices as D

@@ -1,11 +1,11 @@
 """Built-in studio DSP effects engine for Mandible.
 Provides true independent pitch and formant shifting, studio reverb, delay, chorus,
 analog drive, lo-fi bitcrushing, tactical GSM, and Moog-style ladder filter.
-All effects run with sub-0.1ms latency and zero third-party VST requirements.
+No third-party VSTs required. Pitch & Formant reports ~21 ms of latency (fixed-hop formant STFT);
+the other effects add none.
 """
 from __future__ import annotations
 
-import base64
 import json
 import math
 from typing import Callable
@@ -128,12 +128,85 @@ class BaseInternalPlugin:
             print(f"[InternalDSP] could not restore state: {exc}")
 
 
+class _FormantStage:
+    """Streaming liftered-cepstrum formant shifter for one channel.
+
+    Runs a fixed-hop STFT (n_fft=1024, hop=256, periodic Hann analysis and synthesis windows)
+    with its own input/output FIFOs, so the result does not depend on the host buffer size.
+    Output latency is constant (``LATENCY`` samples) whether or not a shift is applied.
+    """
+
+    N_FFT = 1024
+    HOP = 256
+    LATENCY = N_FFT  # measured: (N_FFT - HOP) through the window + HOP of output priming
+
+    _window = (0.5 - 0.5 * np.cos(2.0 * np.pi * np.arange(N_FFT) / N_FFT)).astype(np.float32)
+    _ola_scale = np.float32(1.0 / 1.5)  # sum of Hann^2 at 75% overlap is 1.5
+    _lifter_cutoff = 26
+    _lifter = np.zeros(N_FFT, dtype=np.float32)
+    _lifter[:_lifter_cutoff] = 1.0
+    _ramp = 0.5 * (1.0 + np.cos(np.pi * np.arange(_lifter_cutoff) / _lifter_cutoff))
+    _lifter[_lifter_cutoff:_lifter_cutoff * 2] = _ramp
+    _lifter[-_lifter_cutoff * 2:-_lifter_cutoff] = _ramp[::-1]
+    _lifter[-_lifter_cutoff:] = 1.0
+    _bins = np.arange(N_FFT // 2 + 1, dtype=np.float32)
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.frame = np.zeros(self.N_FFT, dtype=np.float32)
+        self.ola = np.zeros(self.N_FFT, dtype=np.float32)
+        self.in_fifo = np.zeros(0, dtype=np.float32)
+        self.out_fifo = np.zeros(self.HOP, dtype=np.float32)  # priming keeps output always available
+
+    def copy_state_from(self, other: "_FormantStage"):
+        self.frame[:] = other.frame
+        self.ola[:] = other.ola
+        self.in_fifo = other.in_fifo.copy()
+        self.out_fifo = other.out_fifo.copy()
+
+    def _transform(self, alpha: float) -> np.ndarray:
+        x_win = self.frame * self._window
+        if abs(alpha - 1.0) < 0.01:
+            return x_win  # identity: keeps latency constant without the FFT cost
+        X = np.fft.rfft(x_win)
+        log_mag = np.log(np.abs(X) + 1e-7)
+        env = np.exp(np.fft.rfft(np.fft.irfft(log_mag) * self._lifter).real)
+        warped = np.interp(self._bins / alpha, self._bins, env, left=env[0], right=env[-1])
+        H = np.clip(warped / env, 0.1, 4.0)
+        return np.fft.irfft(X * H, n=self.N_FFT).astype(np.float32)
+
+    def process(self, chunk: np.ndarray, alpha: float) -> np.ndarray:
+        hop = self.HOP
+        self.in_fifo = np.concatenate((self.in_fifo, chunk.astype(np.float32, copy=False)))
+        produced = []
+        while len(self.in_fifo) >= hop:
+            self.frame[:-hop] = self.frame[hop:]
+            self.frame[-hop:] = self.in_fifo[:hop]
+            self.in_fifo = self.in_fifo[hop:]
+            self.ola += self._transform(alpha) * self._window * self._ola_scale
+            produced.append(self.ola[:hop].copy())
+            self.ola[:-hop] = self.ola[hop:]
+            self.ola[-hop:] = 0.0
+        if produced:
+            self.out_fifo = np.concatenate([self.out_fifo, *produced])
+        n = len(chunk)
+        out = self.out_fifo[:n]
+        self.out_fifo = self.out_fifo[n:]
+        return out
+
+
 class PitchFormantPlugin(BaseInternalPlugin):
     """
-    True real-time independent Pitch & Formant Shifter.
-    Uses time-domain rotating delay interpolation for pitch shift and
-    real-time liftered cepstral spectral envelope warping for formant shift.
+    Real-time independent Pitch & Formant Shifter.
+    Pitch: time-domain dual rotating delay-line interpolation (no added latency).
+    Formant: streaming liftered-cepstrum spectral envelope warping on a fixed 256-sample hop,
+    adding a constant ``reported_latency_samples`` (1024 samples, ~21 ms at 48 kHz) of delay.
+    The dry signal used by the Mix control is delayed by the same amount so blends don't phase.
     """
+
+    reported_latency_samples = _FormantStage.LATENCY
 
     def __init__(self, samplerate: int = 48000):
         super().__init__("Mandible Pitch & Formant", "internal:pitch_formant")
@@ -149,23 +222,9 @@ class PitchFormantPlugin(BaseInternalPlugin):
         self.phase = 0.0
         self.window_size = float(self.max_delay_samples)
 
-        # STFT parameters for formant shifting
-        self.n_fft = 1024
-        self.hop = 256
-        self.window = np.hanning(self.n_fft).astype(np.float32)
-        self.lifter_cutoff = 26
-        self.lifter = np.zeros(self.n_fft, dtype=np.float32)
-        self.lifter[:self.lifter_cutoff] = 1.0
-        ramp = 0.5 * (1.0 + np.cos(np.pi * np.arange(self.lifter_cutoff) / self.lifter_cutoff))
-        self.lifter[self.lifter_cutoff:self.lifter_cutoff * 2] = ramp
-        self.lifter[-self.lifter_cutoff * 2:-self.lifter_cutoff] = ramp[::-1]
-        self.lifter[-self.lifter_cutoff:] = 1.0
-
-        self.stft_in_l = np.zeros(self.n_fft, dtype=np.float32)
-        self.stft_in_r = np.zeros(self.n_fft, dtype=np.float32)
-        self.stft_out_l = np.zeros(self.n_fft * 2, dtype=np.float32)
-        self.stft_out_r = np.zeros(self.n_fft * 2, dtype=np.float32)
-        self.stft_out_pos = 0
+        self.formant_l = _FormantStage()
+        self.formant_r = _FormantStage()
+        self.dry_fifo = np.zeros((2, self.reported_latency_samples), dtype=np.float32)
 
         # Define parameters
         self.p_pitch = InternalParameter("pitch", "Pitch", -24.0, 24.0, 0.0, unit="st", step=0.1)
@@ -185,11 +244,9 @@ class PitchFormantPlugin(BaseInternalPlugin):
         self.buffer_r.fill(0.0)
         self.write_pos = 0
         self.phase = 0.0
-        self.stft_in_l.fill(0.0)
-        self.stft_in_r.fill(0.0)
-        self.stft_out_l.fill(0.0)
-        self.stft_out_r.fill(0.0)
-        self.stft_out_pos = 0
+        self.formant_l.reset()
+        self.formant_r.reset()
+        self.dry_fifo = np.zeros((2, self.reported_latency_samples), dtype=np.float32)
 
     def _shift_pitch_mono(self, chunk: np.ndarray, buf: np.ndarray, pitch_st: float) -> np.ndarray:
         frames = len(chunk)
@@ -220,47 +277,6 @@ class PitchFormantPlugin(BaseInternalPlugin):
         w2 = 1.0 - w1
         return (w1 * s1 + w2 * s2).astype(np.float32)
 
-    def _shift_formant_mono(self, chunk: np.ndarray, stft_in: np.ndarray, stft_out: np.ndarray, alpha: float) -> np.ndarray:
-        frames = len(chunk)
-        if abs(alpha - 1.0) < 0.01:
-            return chunk
-
-        # Stream input buffer
-        stft_in[:-frames] = stft_in[frames:]
-        stft_in[-frames:] = chunk
-
-        # Window & FFT
-        x_win = stft_in * self.window
-        X = np.fft.rfft(x_win)
-        mag = np.abs(X) + 1e-7
-
-        # Liftered cepstrum -> smooth spectral envelope
-        log_mag = np.log(mag)
-        cep = np.fft.irfft(log_mag)
-        cep_liftered = cep * self.lifter
-        env = np.exp(np.fft.rfft(cep_liftered).real)
-
-        # Warp envelope along frequency
-        n_bins = len(env)
-        freqs = np.arange(n_bins, dtype=np.float32)
-        warped_env = np.interp(freqs / alpha, freqs, env, left=env[0], right=env[-1]).astype(np.float32)
-
-        # Transfer function
-        H = np.clip(warped_env / env, 0.1, 4.0)
-        Y = X * H
-        y = np.fft.irfft(Y).real.astype(np.float32)
-
-        # Overlap-add
-        olen = len(stft_out)
-        add_indices = (self.stft_out_pos + np.arange(self.n_fft)) % olen
-        scale = float(self.hop) / float(self.n_fft * 0.375)
-        stft_out[add_indices] += y * self.window * scale
-
-        out_indices = (self.stft_out_pos + np.arange(frames)) % olen
-        res = stft_out[out_indices].copy()
-        stft_out[out_indices] = 0.0
-        return res
-
     def process(self, input_array: np.ndarray, sample_rate: float, buffer_size: int = 512, reset: bool = False) -> np.ndarray:
         if reset:
             self.reset()
@@ -278,9 +294,6 @@ class PitchFormantPlugin(BaseInternalPlugin):
         formant_st = self.p_formant.value
         preserve = self.p_preserve.value >= 0.5
         mix = self.p_mix.value / 100.0
-
-        if abs(pitch_st) < 0.05 and abs(formant_st) < 0.05:
-            return in_2d
 
         pitch_ratio = 2.0 ** (pitch_st / 12.0)
         target_formant_ratio = 2.0 ** (formant_st / 12.0)
@@ -300,34 +313,33 @@ class PitchFormantPlugin(BaseInternalPlugin):
                 pitched_r = self._shift_pitch_mono(in_2d[1], self.buffer_r, pitch_st)
 
             # Advance pitch phase and write position once per block
-            ratio = 2.0 ** (pitch_st / 12.0)
-            rate = (1.0 - ratio) / self.window_size
+            rate = (1.0 - pitch_ratio) / self.window_size
             self.write_pos = (self.write_pos + frames) % self.buffer_len
             self.phase = (self.phase + frames * rate) % 1.0
         else:
             pitched_l = in_2d[0]
             pitched_r = in_2d[1]
 
-        # Formant shift
-        if abs(alpha - 1.0) > 0.01:
-            out_l = self._shift_formant_mono(pitched_l, self.stft_in_l, self.stft_out_l, alpha)
-            if is_mono:
-                out_r = out_l
-            else:
-                out_r = self._shift_formant_mono(pitched_r, self.stft_in_r, self.stft_out_r, alpha)
-            self.stft_out_pos = (self.stft_out_pos + frames) % len(self.stft_out_l)
+        # Formant stage always runs (identity when alpha ~ 1) so latency stays constant.
+        out_l = self.formant_l.process(pitched_l, alpha)
+        if is_mono:
+            out_r = out_l
+            self.formant_r.copy_state_from(self.formant_l)
         else:
-            out_l = pitched_l
-            out_r = pitched_r
+            out_r = self.formant_r.process(pitched_r, alpha)
 
-        out = np.empty_like(in_2d)
+        # Latency-matched dry path for the Mix control.
+        self.dry_fifo = np.concatenate((self.dry_fifo, in_2d.astype(np.float32, copy=False)), axis=1)
+        dry = self.dry_fifo[:, :frames]
+        self.dry_fifo = self.dry_fifo[:, frames:]
+
+        out = np.empty((2, frames), dtype=np.float32)
         if mix < 0.999:
-            out[0] = (1.0 - mix) * in_2d[0] + mix * out_l
-            out[1] = (1.0 - mix) * in_2d[1] + mix * out_r
+            out[0] = (1.0 - mix) * dry[0] + mix * out_l
+            out[1] = (1.0 - mix) * dry[1] + mix * out_r
         else:
             out[0] = out_l
             out[1] = out_r
-
         return out
 
 
