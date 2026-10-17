@@ -996,7 +996,7 @@ QDialog#setupAssistant QPushButton#wizardNextBtn[final="true"]:hover {{
     border-color: {text};
 }}
 QLabel#wizardStep {{
-    color: {accent};
+    color: {accent_hover};
     font-weight: 800;
     font-size: 8pt;
     letter-spacing: 1px;

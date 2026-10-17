@@ -252,3 +252,23 @@ def test_informational_text_is_readable_not_disabled_colour(look):
         for surface in ("bg.panel", "bg.raised", "bg.inset"):
             ratio = contrast_ratio(colour, pal.color(surface))
             assert ratio >= 4.5, (selector, surface, round(ratio, 2))
+
+
+# Small coloured text and the surface it actually sits on (4.5:1 applies to all of it).
+SMALL_TEXT_ON_SURFACE = {
+    "QLabel#wizardStep": "bg.window",
+}
+
+
+@pytest.mark.parametrize("look", ALL_LOOKS)
+def test_small_accent_text_meets_contrast_on_its_surface(look):
+    from mandible.ui.palette_gen import contrast_ratio
+
+    qss = build_qss(look)
+    pal = look.palette
+    for selector, surface in SMALL_TEXT_ON_SURFACE.items():
+        body = " ".join(rule_blocks(qss, selector))
+        colour = re.search(r"(?<![-\w])color:\s*(#[0-9a-fA-F]{6})", body)
+        assert colour, selector
+        ratio = contrast_ratio(colour.group(1), pal.color(surface))
+        assert ratio >= 4.5, (selector, surface, look.palette.id, round(ratio, 2))
