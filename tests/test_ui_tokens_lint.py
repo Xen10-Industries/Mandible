@@ -33,8 +33,7 @@ def test_repo_passes_with_the_legacy_allowlist():
 
 def test_legacy_allowlist_contents(tool):
     assert tool.ALLOWLIST_LEGACY == {
-        "mandible/gui.py", "mandible/setup_assistant.py", "mandible/overlay.py",
-        "mandible/waveform_widget.py", "mandible/about.py"}
+        "mandible/gui.py", "mandible/overlay.py", "mandible/waveform_widget.py"}
 
 
 def test_legacy_files_are_flagged_without_the_allowlist(tool):
@@ -93,5 +92,15 @@ def test_nonexistent_path_is_an_error():
 def test_widget_modules_have_no_literals(tool):
     """Task 8a: the widgets under mandible/ui/widgets are never on the allowlist."""
     for path in sorted((ROOT / "mandible" / "ui" / "widgets").glob("*.py")):
+        assert not tool.is_allowed(tool._relative(path, ROOT)), path
+        assert tool.scan_file(path, ROOT) == [], path
+
+
+def test_dialog_modules_have_no_literals(tool):
+    """Task 8b: the dialogs under mandible/ui/dialogs are never on the allowlist."""
+    paths = sorted((ROOT / "mandible" / "ui" / "dialogs").glob("*.py"))
+    assert {p.stem for p in paths} >= {"param_map", "hotkey", "add_plugin", "prefx", "soundboard",
+                                       "settings", "setup_assistant", "about"}
+    for path in paths:
         assert not tool.is_allowed(tool._relative(path, ROOT)), path
         assert tool.scan_file(path, ROOT) == [], path

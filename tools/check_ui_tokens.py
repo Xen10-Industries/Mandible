@@ -29,10 +29,8 @@ ALLOWED_MODULES = {
 # Files not yet migrated; Task 8c empties this set.
 ALLOWLIST_LEGACY: set[str] = {
     "mandible/gui.py",
-    "mandible/setup_assistant.py",
     "mandible/overlay.py",
     "mandible/waveform_widget.py",
-    "mandible/about.py",
 }
 
 # #rgb, #rrggbb and #rrggbbaa, not part of a longer word (so "#abcd" and "#12" pass).

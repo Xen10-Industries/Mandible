@@ -230,7 +230,10 @@ def test_set_look_applies_the_real_stylesheet(qapp, restore_look):
 
 
 INFO_TEXT_SELECTORS = ("QLabel#flowBusLabel", "QLabel#flowArrow", "QLabel#chainSub",
-                       "QLabel#rackSlotIndex", "QLabel#latencyChip", "QLabel#rackBayLabel")
+                       "QLabel#rackSlotIndex", "QLabel#latencyChip", "QLabel#rackBayLabel",
+                       "QLabel#dialogInfo", "QLabel#duckLabel", "QLabel#wizardDesc",
+                       "QLabel#wizardFieldLabel", "QLabel#wizardMicStatus",
+                       "QLabel#wizardCardDesc", "QLabel#wizardGuideText")
 
 
 @pytest.mark.parametrize("look", ALL_LOOKS)

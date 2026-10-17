@@ -860,6 +860,221 @@ QLabel#diagLabel {{
     font-size: {f_small};
 }}
 
+QLabel#dialogInfo {{
+    color: {muted};
+    font-size: 8.5pt;
+}}
+QLabel#paramMapTitle {{
+    font-weight: 800;
+    font-size: 9.5pt;
+    color: {text};
+    letter-spacing: 0.6px;
+}}
+QLabel#paramMapBadge {{
+    background-color: {inset};
+    border: {bw} solid {readout};
+    border-radius: {r_sm};
+    color: {readout};
+    font-family: Consolas, monospace;
+    font-size: 8pt;
+    font-weight: bold;
+    padding: 2px 8px;
+}}
+QPushButton#paramMapSmartBtn {{
+    background-color: {ok_bg};
+    border: {bw} solid {ok};
+    color: {ok};
+    font-weight: bold;
+    font-size: 7.5pt;
+    padding: 5px 10px;
+    border-radius: {r_sm};
+}}
+QPushButton#paramMapClearBtn {{
+    background-color: {inset};
+    border: {bw} solid {strong};
+    color: {text};
+    font-weight: bold;
+    font-size: 7.5pt;
+    padding: 5px 10px;
+    border-radius: {r_sm};
+}}
+QPushButton#paramMapOrderBtn {{
+    font-size: 7.5pt;
+    font-weight: bold;
+    padding: 4px 8px;
+}}
+QPushButton#audioWizardBtn {{
+    background-color: {ok_bg};
+    border: {bw} solid {ok};
+    color: {ok};
+    font-weight: bold;
+    padding: 6px 12px;
+    border-radius: {r_sm};
+}}
+QPushButton#audioWizardBtn:hover {{
+    background-color: {alt};
+}}
+QPushButton#midiLearnBtn {{
+    background-color: {inset};
+    border: {bw} solid {readout};
+    color: {readout};
+    font-weight: bold;
+    padding: 5px 12px;
+    border-radius: {r_sm};
+}}
+QFrame#settingsSeparator {{
+    color: {line};
+    margin: 8px 0;
+}}
+QFrame#duckStrip, QFrame#duckStrip QCheckBox, QFrame#duckStrip QLabel, QFrame#duckStrip QSlider {{
+    background-color: {inset};
+    border: {bw} solid {line};
+    border-radius: {r_sm};
+    padding: 4px 8px;
+}}
+QLabel#duckLabel {{
+    color: {muted};
+    font-size: 8pt;
+}}
+QLabel#duckValue {{
+    color: {readout};
+    font-family: Consolas, monospace;
+    font-size: 8pt;
+    font-weight: bold;
+}}
+
+QDialog#setupAssistant QComboBox {{
+    background-color: {inset};
+    border: {bw} solid {line};
+    border-radius: {r_sm};
+    padding: 6px 10px;
+    color: {text};
+    font-size: 9pt;
+}}
+QDialog#setupAssistant QComboBox:hover {{
+    border-color: {strong};
+}}
+QDialog#setupAssistant QPushButton {{
+    background-color: {card};
+    border: {bw} solid {strong};
+    color: {text};
+    padding: 7px 16px;
+    border-radius: {r_sm};
+    font-weight: bold;
+    font-size: 8.5pt;
+}}
+QDialog#setupAssistant QPushButton:hover {{
+    background-color: {alt};
+    border-color: {muted};
+}}
+QDialog#setupAssistant QPushButton#wizardDownloadBtn {{
+    background-color: {inset};
+    border: {bw} solid {readout};
+    color: {readout};
+}}
+QDialog#setupAssistant QPushButton#wizardDownloadBtn:hover {{
+    background-color: {readout};
+    color: {win};
+}}
+QDialog#setupAssistant QPushButton#wizardNextBtn {{
+    background-color: {accent};
+    border: {bw} solid {accent_hover};
+    color: {on_accent};
+    padding: 7px 20px;
+}}
+QDialog#setupAssistant QPushButton#wizardNextBtn:hover {{
+    background-color: {accent_hover};
+}}
+QDialog#setupAssistant QPushButton#wizardNextBtn[final="true"] {{
+    background-color: {ok};
+    border-color: {ok};
+    color: {win};
+    padding: 7px 22px;
+}}
+QDialog#setupAssistant QPushButton#wizardNextBtn[final="true"]:hover {{
+    background-color: {ok};
+    border-color: {text};
+}}
+QLabel#wizardStep {{
+    color: {accent};
+    font-weight: 800;
+    font-size: 8pt;
+    letter-spacing: 1px;
+}}
+QLabel#wizardTitle {{
+    font-size: 15pt;
+    font-weight: bold;
+    color: {text};
+}}
+QLabel#wizardDesc {{
+    color: {muted};
+    font-size: 9pt;
+}}
+QLabel#wizardFieldLabel {{
+    color: {muted};
+    font-size: 7.5pt;
+    font-weight: bold;
+}}
+QLabel#wizardMicStatus {{
+    color: {muted};
+    font-size: 7.5pt;
+    font-family: Consolas, monospace;
+}}
+QLabel#wizardMicStatus[ok="true"] {{
+    color: {ok};
+    font-weight: bold;
+    font-size: {f_body};
+}}
+QFrame#wizardCard, QLabel#wizardCardTitle, QLabel#wizardCardDesc {{
+    background-color: {card};
+    border: {bw} solid {line};
+    border-radius: {r_pnl};
+    padding: 12px;
+}}
+QFrame#wizardCard[state="ok"], QLabel#wizardCardTitle[state="ok"], QLabel#wizardCardDesc[state="ok"] {{
+    background-color: {ok_bg};
+    border: {bw} solid {ok};
+}}
+QFrame#wizardCard[state="warn"], QLabel#wizardCardTitle[state="warn"], QLabel#wizardCardDesc[state="warn"] {{
+    background-color: {warn_bg};
+    border: {bw} solid {warn};
+}}
+QLabel#wizardCardTitle {{
+    font-weight: bold;
+    font-size: 10pt;
+}}
+QLabel#wizardCardTitle[state="ok"] {{
+    color: {ok};
+}}
+QLabel#wizardCardTitle[state="warn"] {{
+    color: {warn};
+}}
+QLabel#wizardCardDesc {{
+    color: {muted};
+    font-size: 8.5pt;
+}}
+QFrame#wizardGuideCard, QFrame#wizardGuideCard QLabel {{
+    background-color: {card};
+    border: {bw} solid {line};
+    border-radius: {r_pnl};
+    padding: 14px;
+}}
+QLabel#wizardGuideTitle {{
+    font-weight: 800;
+    font-size: 8pt;
+    color: {readout};
+    letter-spacing: 0.8px;
+}}
+QLabel#wizardGuideNum {{
+    font-weight: bold;
+    color: {text};
+    font-size: 8.5pt;
+}}
+QLabel#wizardGuideText {{
+    color: {muted};
+    font-size: 8.5pt;
+}}
+
 QGroupBox {{
     border: {bw} solid {line};
     border-radius: {r_pnl};

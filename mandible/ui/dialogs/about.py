@@ -6,8 +6,8 @@ from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QLabel, QPlainTextEdit, QTabWidget,
                                QVBoxLayout, QWidget)
 
-from . import APP_NAME, PUBLISHER, __version__
-from .config import resource_path
+from ... import APP_NAME, PUBLISHER, __version__
+from ...config import resource_path
 
 TRADEMARK_NOTICE = "VST is a trademark of Steinberg Media Technologies GmbH, registered in Europe and other countries."
 

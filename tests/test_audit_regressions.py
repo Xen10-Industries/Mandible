@@ -36,9 +36,9 @@ def _sine(freq: float, seconds: float, sr: int = 48000, amp: float = 0.3) -> np.
 # ------------------------------------------------------------------ GUI
 
 def test_soundboard_dialog_opens_with_clips(sample_core):
-    from mandible import gui
+    from mandible.ui.dialogs.soundboard import SoundboardDialog
 
-    dlg = gui.SoundboardDialog(sample_core, None)  # used to raise NameError
+    dlg = SoundboardDialog(sample_core, None)  # used to raise NameError
     assert dlg.table.rowCount() == 3
     dlg.deleteLater()
 

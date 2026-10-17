@@ -219,10 +219,10 @@ def test_old_theme_api_removed():
 
 
 def test_settings_pickers_show_palette_names_and_preview(core, restore_look):
-    from mandible import gui
+    from mandible.ui.dialogs.settings import SettingsDialog
 
     set_look(_look("skeuomorphic", "scarlet"))
-    dlg = gui.SettingsDialog(core, False, None)
+    dlg = SettingsDialog(core, False, None)
     try:
         names = [dlg.theme_combo.itemText(i) for i in range(dlg.theme_combo.count())]
         assert names == ["Scarlet", "Cyan", "Stealth", "Amber"]
@@ -244,10 +244,10 @@ def test_settings_pickers_show_palette_names_and_preview(core, restore_look):
 
 
 def test_settings_apply_persists_look(core, restore_look):
-    from mandible import gui
+    from mandible.ui.dialogs.settings import SettingsDialog
 
     set_look(_look("skeuomorphic", "scarlet"))
-    dlg = gui.SettingsDialog(core, False, None)
+    dlg = SettingsDialog(core, False, None)
     try:
         dlg.skin_combo.setCurrentIndex(dlg.skin_combo.findData("minimal"))
         dlg.theme_combo.setCurrentIndex(dlg.theme_combo.findData("stealth"))

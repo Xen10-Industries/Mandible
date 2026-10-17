@@ -157,9 +157,14 @@ def run_gallery(out: pathlib.Path, skins: list[str], themes: list[str],
     from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QApplication
 
-    from mandible import gui
-    from mandible.about import AboutDialog
-    from mandible.setup_assistant import SetupAssistantDialog
+    from mandible.ui.dialogs.about import AboutDialog
+    from mandible.ui.dialogs.add_plugin import AddPluginDialog
+    from mandible.ui.dialogs.hotkey import HotkeyDialog
+    from mandible.ui.dialogs.param_map import PluginParamMapDialog
+    from mandible.ui.dialogs.prefx import PreFXDialog
+    from mandible.ui.dialogs.settings import SettingsDialog
+    from mandible.ui.dialogs.setup_assistant import SetupAssistantDialog
+    from mandible.ui.dialogs.soundboard import SoundboardDialog
     from mandible.ui.sample_setup import build_sample_core
 
     app = QApplication.instance() or QApplication([])
@@ -183,12 +188,12 @@ def run_gallery(out: pathlib.Path, skins: list[str], themes: list[str],
             app.processEvents()
 
         builders = {
-            "settings": lambda: gui.SettingsDialog(core, False, None),
-            "prefx": lambda: gui.PreFXDialog(core, None),
-            "soundboard": lambda: gui.SoundboardDialog(core, None),
-            "hotkey": lambda: gui.HotkeyDialog(core, None, "Set hotkey"),
-            "add_plugin": lambda: gui.AddPluginDialog([], None),
-            "param_map": lambda: gui.PluginParamMapDialog(slot, core, None),
+            "settings": lambda: SettingsDialog(core, False, None),
+            "prefx": lambda: PreFXDialog(core, None),
+            "soundboard": lambda: SoundboardDialog(core, None),
+            "hotkey": lambda: HotkeyDialog(core, None, "Set hotkey"),
+            "add_plugin": lambda: AddPluginDialog([], None),
+            "param_map": lambda: PluginParamMapDialog(slot, core, None),
             "setup_assistant": lambda: SetupAssistantDialog(core, None),
             "about": lambda: AboutDialog(None),
         }

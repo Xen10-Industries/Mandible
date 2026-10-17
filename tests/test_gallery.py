@@ -75,12 +75,12 @@ def test_gallery_main_window_never_shows_tray_or_toast(sample_core, monkeypatch)
 
 
 def test_gallery_run_records_screen_errors_and_continues(qapp, tmp_path, monkeypatch):
-    import mandible.about
+    import mandible.ui.dialogs.about as about_module
 
     def boom(*_a, **_k):
         raise RuntimeError("synthetic failure")
 
-    monkeypatch.setattr(mandible.about, "AboutDialog", boom)
+    monkeypatch.setattr(about_module, "AboutDialog", boom)
     gallery = _load_gallery()
     out = tmp_path / "gallery"
     out.mkdir()
