@@ -53,6 +53,7 @@ Run from source: `python -m mandible`.
      text, copied verbatim from the project. Update version numbers there when you bump a pin.
   4. be pinned to an exact version in `requirements.txt` (runtime) or `requirements-build.txt` (build),
      and added to `NOTICE_NAMES` in `tools/check_release_compliance.py` (CI enforces this).
+- Dev-only tools (pytest, in `requirements-dev.txt`) are not shipped and need no `THIRD_PARTY_NOTICES.txt` entry.
 - The VST 3 SDK entry stays first in `THIRD_PARTY_NOTICES.txt`. The shipped SDK is **3.7.2 (GPLv3
   option)**, not the MIT-licensed 3.8+. Do not relabel it as MIT unless pedalboard/JUCE actually move to
   SDK ≥ 3.8 (and note that JUCE 8's open-source license is AGPLv3, which would affect Mandible's license).
