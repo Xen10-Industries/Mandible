@@ -13,10 +13,14 @@ with real Windows font metrics (``QT_QPA_PLATFORM=windows``) in a subprocess. Th
         "size": [w, h], "min_size": [w, h], "overflow": [...], "clipped_text": [...],
         "elided": [...], "elided_without_tooltip": [...],
         "flow_mode": "full|icons|hidden", "actions_folded": bool,
-        "strips_collapsed": bool}}}}}
+        "strips_collapsed": bool, "header_left_width": int,
+        "flow_entry_points": {"prefx": [...], "sb": [...], "lim": [...]}}}}}}
 
 ``--scenario long_names`` renames the first chain to 60 characters, gives its first plugin a
 long display name and sets a non-Latin input device name before the window is built.
+``--scenario running`` fills the header with run-time texts after the window is built, as
+if audio had started: the widest reserved readout texts (sample rate, buffer, latency, every
+driver name) with AUDIO ACTIVE and STOP LOOP, then oversize values that must elide.
 ``--strict`` exits 1 when any size reports overflow, clipped text, an elided label without
 its full text in the tooltip, or a window that could not shrink to the requested size.
 """
@@ -43,8 +47,40 @@ def apply_scenario(core, scenario: str) -> None:
         chain.name = LONG_CHAIN_NAME
         chain.plugins[0].display_name = LONG_PLUGIN_NAME
         core.cfg.audio.input_device = NON_LATIN_DEVICE
-    elif scenario != "sample":
+    elif scenario not in ("sample", "running"):
         raise ValueError(f"unknown scenario {scenario!r}")
+
+
+def _widest(widget, samples) -> str:
+    fm = widget.fontMetrics()
+    return max(samples, key=fm.horizontalAdvance)
+
+
+def apply_window_scenario(win, scenario: str) -> None:
+    """Scenarios that change the built window: ``running`` shows the widest run-time texts."""
+    if scenario != "running":
+        return
+    from mandible.ui.widgets.base import set_style_property
+    from mandible.ui.widgets.header import READOUT_OVERSIZE, READOUT_SAMPLES
+
+    h = win.header
+    fields = h.readout_fields()
+    for key, label in fields.items():
+        label.setText(_widest(label, READOUT_SAMPLES[key]))
+        if label.is_elided():
+            raise AssertionError(f"reserved readout text elides: {label.full_text()!r}")
+    # Oversize values elide (with the full text in the tooltip) instead of growing the zone;
+    # sample rate and buffer stay oversize for the measurements.
+    for key in ("sr", "buf"):
+        fields[key].setText(READOUT_OVERSIZE[key])
+    set_style_property(h.vfd_stat, "running", True)
+    # Texts and checked states only: no signal may reach the audio engine.
+    for button in (win.power, win.monitor):
+        button.blockSignals(True)
+        button.setChecked(True)
+        button.blockSignals(False)
+    win.power.setText("AUDIO ACTIVE")
+    win.audition_btn.setText("STOP LOOP")
 
 
 def _elided(win) -> tuple[list[str], list[str]]:
@@ -79,6 +115,8 @@ def measure(win, app, w: int, h: int) -> dict:
         "flow_mode": header.flow_mode(),
         "actions_folded": header.actions_folded(),
         "strips_collapsed": bool(win.faders_collapsed),
+        "header_left_width": header.left.width(),
+        "flow_entry_points": header.flow_entry_points(),
     }
 
 
@@ -103,6 +141,8 @@ def run(skins: list[str], theme: str, sizes: list[tuple[int, int]], scenario: st
                 if core.cfg.chains:
                     win.chain_list.setCurrentRow(0)
                     app.processEvents()
+                apply_window_scenario(win, scenario)
+                app.processEvents()
                 hint = win.minimumSizeHint().expandedTo(win.minimumSize())
                 entry = {"min_size": [hint.width(), hint.height()], "sizes": {}}
                 for w, h in sizes:
@@ -125,6 +165,9 @@ def problems(report: dict) -> list[str]:
             for name in ("overflow", "clipped_text", "elided_without_tooltip"):
                 if m[name]:
                     found.append(f"{skin} {size}: {name} {m[name]}")
+            for key, where in m["flow_entry_points"].items():
+                if not where:
+                    found.append(f"{skin} {size}: flow action {key!r} has no visible entry point")
     return found
 
 
@@ -134,7 +177,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--skins", default="skeuomorphic,vintage,minimal")
     ap.add_argument("--theme", default="scarlet")
     ap.add_argument("--sizes", default="1024x640")
-    ap.add_argument("--scenario", default="sample", choices=("sample", "long_names"))
+    ap.add_argument("--scenario", default="sample", choices=("sample", "long_names", "running"))
     ap.add_argument("--strict", action="store_true")
     args = ap.parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):

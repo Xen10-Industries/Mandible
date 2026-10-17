@@ -266,7 +266,7 @@ QPushButton#flowBtn[active="true"] {{
     color: {ok};
 }}
 QLabel#flowPill[compact="true"], QPushButton#flowBtn[compact="true"] {{
-    padding: 2px 6px;
+    padding: 2px 4px;
 }}
 QFrame#signalFlowStrip[mode="hidden"] {{
     background: transparent;

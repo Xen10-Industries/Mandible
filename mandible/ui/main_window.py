@@ -750,8 +750,6 @@ class MainWindow(QMainWindow):
         # ---- wiring
         self.power.toggled.connect(self._power)
         self.monitor.toggled.connect(self._monitor_toggled)
-        self.clean_mic_btn.clicked.connect(self._open_prefx)
-        self.soundboard_btn.clicked.connect(self._open_soundboard)
         self.panic_top_btn.clicked.connect(core.panic)
         settings_btn.clicked.connect(self._settings)
 

@@ -34,12 +34,17 @@ class SignalFlowStrip(QFrame):
     prefxClicked = Signal()
     soundboardClicked = Signal()
     limiterClicked = Signal()
+    modeChanged = Signal(str)
 
     def __init__(self, core: Core, parent=None):
         super().__init__(parent)
         self.core = core
         self.setObjectName("signalFlowStrip")
         self._requested = "full"
+        # Width a neighbour gives back once the strip shows again (the header's MORE button,
+        # shown only because the strip is hidden); without it a hidden strip could never
+        # come back at widths where it fits.
+        self.reclaimable_width = lambda: 0
         self._mode = ""
         self._spaced = SpacedLayouts()
         lay = self._spaced.add(QHBoxLayout(self), spacing=1, margins=(2, 1, 2, 1))
@@ -99,6 +104,12 @@ class SignalFlowStrip(QFrame):
         _follow_look(self)
 
     # ------------------------------------------------------------------ modes
+    def step_button(self, key: str, mode: str):
+        """The clickable widget of step ``key`` in ``mode`` (None for status-only steps)."""
+        table = self._full if mode == "full" else self._icons if mode == "icons" else {}
+        w = table.get(key)
+        return w if isinstance(w, QPushButton) else None
+
     def mode(self) -> str:
         return self._mode
 
@@ -126,7 +137,7 @@ class SignalFlowStrip(QFrame):
         return total
 
     def _fit(self) -> None:
-        avail = self.width()
+        avail = self.width() + (self.reclaimable_width() if self._mode == "hidden" else 0)
         order = MODES[MODES.index(self._requested):]
         chosen = next((m for m in order if self.width_for(m) <= avail), "hidden")
         self._show_mode(chosen)
@@ -142,6 +153,7 @@ class SignalFlowStrip(QFrame):
         for w in self._icons.values():
             w.setVisible(mode == "icons")
         set_style_property(self, "mode", mode)
+        self.modeChanged.emit(mode)
 
     def resizeEvent(self, ev) -> None:  # noqa: N802
         super().resizeEvent(ev)

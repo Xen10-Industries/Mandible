@@ -138,6 +138,15 @@ def freeze_main_window(win) -> None:
     QApplication.instance().processEvents()
 
 
+def settle(win, passes: int = 3) -> None:
+    """Let a resize finish: the header's breakpoints (folding, flow-strip mode, MORE) change
+    widgets' visibility, which re-lays the window out over a few event-loop passes."""
+    from PySide6.QtWidgets import QApplication
+
+    for _ in range(passes):
+        QApplication.instance().processEvents()
+
+
 def dispose_main_window(win) -> None:
     """Tear a gallery MainWindow down without ``close()`` (its closeEvent would hide to the
     tray and raise a toast) and without ``quit()`` (which shuts the shared core down)."""
@@ -220,7 +229,7 @@ def run_gallery(out: pathlib.Path, skins: list[str], themes: list[str],
                 hint = win.minimumSizeHint().expandedTo(win.minimumSize())
                 for w, h in sizes:
                     win.resize(w, h)
-                    app.processEvents()
+                    settle(win)
                     key = f"main|{skin}|{theme}|{w}x{h}"
                     entry = {"min_size": [hint.width(), hint.height()]}
                     entry.update(_inspect(win, contrast))
