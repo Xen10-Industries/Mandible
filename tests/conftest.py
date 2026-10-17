@@ -46,21 +46,10 @@ def core(qapp):
 
 
 @pytest.fixture
-def sample_core(core):
-    """``core`` plus four internal-DSP chains and three soundboard clips."""
-    from mandible.config import SoundboardClipConfig
+def sample_core(qapp):
+    """A Core with four internal-DSP chains and three soundboard clips, shut down after the test."""
+    from mandible.ui.sample_setup import build_sample_core
 
-    layout = {
-        "Robot Voice": ("toggle", ["internal:pitch_formant", "internal:gsm", "internal:reverb"]),
-        "Deep Narrator": ("hold", ["internal:pitch_formant", "internal:reverb"]),
-        "Walkie-Talkie": ("toggle", ["internal:gsm", "internal:filter"]),
-        "Cave Echo": ("toggle", ["internal:reverb", "internal:delay"]),
-    }
-    for name, (mode, paths) in layout.items():
-        chain = core.add_chain(name)
-        chain.mode = mode
-        for path in paths:
-            core.add_plugin(chain, path)
-    for clip_name in ("Airhorn", "Rimshot", "Sad trombone"):
-        core.cfg.soundboard.append(SoundboardClipConfig(name=clip_name, path=""))
-    return core
+    c = build_sample_core()
+    yield c
+    c.shutdown()
