@@ -16,6 +16,7 @@ from .midi import MidiManager
 from .overlay import VoiceOverlay
 from .soundboard import SoundboardClip
 from .api import ApiManager
+from .ui.look import current_look, look_from_config, set_look
 
 
 def inst(slot: PluginSlot):
@@ -617,20 +618,31 @@ class Core(QObject):
         self.engine.update_limiter(lim_cfg)
         self.save()
 
+    # Appearance: store the id, then make the Look the config selects current. Changing
+    # the look restyles and repaints widgets only; it never touches the audio engine.
+    def _apply_look(self):
+        look = look_from_config(self.cfg)
+        if look != current_look():
+            set_look(look)
+
     def set_theme(self, theme: str):
         self.cfg.theme = theme
+        self._apply_look()
         self.save()
 
     def set_ui_skin(self, skin: str):
         self.cfg.ui_skin = skin
+        self._apply_look()
         self.save()
 
     def set_chassis_frame(self, frame: str):
         self.cfg.chassis_frame = frame
+        self._apply_look()
         self.save()
 
     def set_switch_style(self, style: str):
         self.cfg.switch_style = style
+        self._apply_look()
         self.save()
 
     def set_soundboard_ducking(self, enabled: bool, duck_db: float):

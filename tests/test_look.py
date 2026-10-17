@@ -178,14 +178,20 @@ def test_set_look_emits_once_and_applies_stylesheet(qapp, restore_look, monkeypa
     monkeypatch.setattr("mandible.ui.stylesheet.build_qss",
                         lambda look: calls.append(look) or "/* qss */")
     seen = []
-    look_bus().lookChanged.connect(lambda: seen.append(current_look()))
-    new = Look(BUILTIN_PALETTES["amber"], BUILTIN_SKINS["vintage"])
-    set_look(new)
-    assert current_look() is new
-    assert seen == [new]
-    assert calls == [new]
-    assert qapp.styleSheet() == "/* qss */"
-    look_bus().lookChanged.disconnect()
+
+    def on_change():
+        seen.append(current_look())
+
+    look_bus().lookChanged.connect(on_change)
+    try:
+        new = Look(BUILTIN_PALETTES["amber"], BUILTIN_SKINS["vintage"])
+        set_look(new)
+        assert current_look() is new
+        assert seen == [new]
+        assert calls == [new]
+        assert qapp.styleSheet() == "/* qss */"
+    finally:
+        look_bus().lookChanged.disconnect(on_change)
 
 
 def test_set_look_without_app_does_not_fail(qapp, restore_look, monkeypatch):
@@ -193,10 +199,16 @@ def test_set_look_without_app_does_not_fail(qapp, restore_look, monkeypatch):
     from PySide6.QtWidgets import QApplication
     monkeypatch.setattr(QApplication, "instance", staticmethod(lambda: None))
     seen = []
-    look_bus().lookChanged.connect(lambda: seen.append(1))
-    set_look(Look(BUILTIN_PALETTES["cyan"], BUILTIN_SKINS["minimal"]))
-    assert seen == [1] and current_look().palette.id == "cyan"
-    look_bus().lookChanged.disconnect()
+
+    def on_change():
+        seen.append(1)
+
+    look_bus().lookChanged.connect(on_change)
+    try:
+        set_look(Look(BUILTIN_PALETTES["cyan"], BUILTIN_SKINS["minimal"]))
+        assert seen == [1] and current_look().palette.id == "cyan"
+    finally:
+        look_bus().lookChanged.disconnect(on_change)
 
 
 def test_skin_dataclass_shape():
@@ -223,15 +235,20 @@ def test_set_look_is_exception_safe(qapp, restore_look, monkeypatch):
     set_look(good)
     sheet_before = qapp.styleSheet()
     seen = []
-    look_bus().lookChanged.connect(lambda: seen.append(1))
+
+    def on_change():
+        seen.append(1)
 
     def boom(look):
         raise RuntimeError("bad look")
 
-    monkeypatch.setattr("mandible.ui.stylesheet.build_qss", boom)
-    with pytest.raises(RuntimeError):
-        set_look(Look(BUILTIN_PALETTES["amber"], BUILTIN_SKINS["vintage"]))
-    assert current_look() is good
-    assert qapp.styleSheet() == sheet_before
-    assert seen == []
-    look_bus().lookChanged.disconnect()
+    look_bus().lookChanged.connect(on_change)
+    try:
+        monkeypatch.setattr("mandible.ui.stylesheet.build_qss", boom)
+        with pytest.raises(RuntimeError):
+            set_look(Look(BUILTIN_PALETTES["amber"], BUILTIN_SKINS["vintage"]))
+        assert current_look() is good
+        assert qapp.styleSheet() == sheet_before
+        assert seen == []
+    finally:
+        look_bus().lookChanged.disconnect(on_change)

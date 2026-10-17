@@ -49,10 +49,12 @@ def parse_sizes(text: str) -> list[tuple[int, int]]:
 
 
 def _apply(app, skin_id: str, theme_id: str) -> None:
-    """Select a skin and theme. The one place that knows how (Task 7 swaps in ``set_look``)."""
+    """Select a skin and theme: ``set_look`` (via ``gui.apply_theme``, which also sets the
+    app's Fusion style as ``main()`` does)."""
     from mandible import gui
+    from mandible.ui.look import BUILTIN_PALETTES, BUILTIN_SKINS, Look
 
-    gui.apply_theme(app, theme_id, skin_id, "auto")
+    gui.apply_theme(app, Look(BUILTIN_PALETTES[theme_id], BUILTIN_SKINS[skin_id]))
 
 
 def _contrast(theme_id: str) -> list[dict]:

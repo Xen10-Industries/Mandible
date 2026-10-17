@@ -2,7 +2,11 @@
 
 An element paints just the bar into its rect (the caller draws channel names,
 dB readouts and scales). ``state.value`` is the level 0..1; ``state.peak`` is the
-peak-hold position 0..1, or ``None`` to hide the marker.
+peak-hold position 0..1, or ``None`` to hide the marker. ``state.enabled=False`` is an
+inactive row (a bypassed plugin's POST meter): unlit, with no level and no peak.
+
+Every meter variant offers the same three presets, one per meter widget:
+``main()`` (channel meter), ``thin()`` (condensed strip) and ``prepost()`` (plugin row).
 """
 from __future__ import annotations
 
@@ -78,9 +82,15 @@ class LedSegments(Element):
     def draw(self, p: QPainter, w: float, h: float, state: ElementState, look: Look) -> None:
         n = self.segments
         seg_w = max(self.min_seg_w, (w - (n - 1) * self.gap) / n)
+        p.setPen(Qt.PenStyle.NoPen)
+        if not state.enabled:
+            # Inactive row: every segment flat unlit, no zone tint, level or peak.
+            p.setBrush(tok(look, "meter.off"))
+            for i in range(n):
+                p.drawRoundedRect(QRectF(i * (seg_w + self.gap), 0, seg_w, h), self.corner, self.corner)
+            return
         active = int(round(_clamp01(state.value) * n))
         peak_seg = self.peak_segment(state.peak)
-        p.setPen(Qt.PenStyle.NoPen)
         for i in range(n):
             on, off = self._zone(look, i)
             if i == peak_seg:
@@ -102,9 +112,24 @@ class SmoothBar(Element):
         self.corner = float(corner)
         self._size = size
 
+    @classmethod
+    def main(cls) -> "SmoothBar":
+        """The main channel meter's 13 px bar."""
+        return cls()
+
+    @classmethod
+    def thin(cls) -> "SmoothBar":
+        """The 8 px condensed-strip bar."""
+        return cls(2.5, size=(80, 8))
+
+    @classmethod
+    def prepost(cls) -> "SmoothBar":
+        """One 7 px row of the plugin pre/post meter."""
+        return cls(2.0, size=(78, 7))
+
     def draw(self, p: QPainter, w: float, h: float, state: ElementState, look: Look) -> None:
         corner = self.corner
-        frac = _clamp01(state.value)
+        frac = _clamp01(state.value) if state.enabled else 0.0
         track = QRectF(0, 0, w, h)
         if h >= 12.0:
             p.setPen(QPen(tok(look, "line.subtle"), 1.0))
@@ -127,7 +152,7 @@ class SmoothBar(Element):
                 QRectF(inset, inset, max(2.0, w * frac - 2.0 * inset), h - 2.0 * inset),
                 max(1.0, corner - inset), max(1.0, corner - inset))
 
-        if state.peak is not None:
+        if state.peak is not None and state.enabled:
             px = min(w - 2.0, max(inset, w * _clamp01(state.peak)))
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(tok(look, "text.primary"))

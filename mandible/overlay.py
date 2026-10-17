@@ -8,9 +8,11 @@ from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QBrush, QColor, QFont, QFontMetrics, QLinearGradient, QPainter, QPen, QRadialGradient
 from PySide6.QtWidgets import QWidget
 
-ACTIVE = "#10b981"
-MUTED = "#ef4444"
-CLEAN = "#64748b"
+from .ui.look import current_look, look_bus
+
+
+def _tok(token: str) -> QColor:
+    return QColor(current_look().palette.color(token))
 
 
 class VoiceOverlay(QWidget):
@@ -31,6 +33,7 @@ class VoiceOverlay(QWidget):
         self.is_active = False
         self.is_muted = False
         self.setFixedSize(230, 38)
+        look_bus().lookChanged.connect(self._on_look_changed)
 
         # Make clicks pass completely through the window using Win32 API
         try:
@@ -43,6 +46,18 @@ class VoiceOverlay(QWidget):
             user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style | WS_EX_TRANSPARENT | WS_EX_LAYERED)
         except Exception:
             pass
+
+    def _on_look_changed(self):
+        self.update()
+
+    def active_color(self) -> QColor:
+        """LED / border colour while a voice is live: the look's accent."""
+        return _tok("accent")
+
+    def _state_color(self) -> QColor:
+        if self.is_active:
+            return self.active_color()
+        return _tok("status.danger") if self.is_muted else _tok("text.secondary")
 
     def update_status(self, text: str, is_active: bool = False, is_muted: bool = False):
         self.text = text.upper()
@@ -80,11 +95,12 @@ class VoiceOverlay(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         r = QRectF(1.0, 1.0, self.width() - 2.0, self.height() - 2.0)
+        live = self.is_active or self.is_muted
 
-        # Anodized hardware chassis background
+        # Panel background
         bg_grad = QLinearGradient(0, 0, 0, self.height())
-        c_top = QColor("#141923")
-        c_bot = QColor("#090b10")
+        c_top = _tok("bg.panel")
+        c_bot = _tok("bg.window")
         alpha = max(0.2, min(1.0, float(self.opacity)))
         c_top.setAlphaF(alpha)
         c_bot.setAlphaF(alpha)
@@ -92,8 +108,7 @@ class VoiceOverlay(QWidget):
         bg_grad.setColorAt(1.0, c_bot)
         p.setBrush(QBrush(bg_grad))
 
-        border_hex = ACTIVE if self.is_active else (MUTED if self.is_muted else "#262f40")
-        border_col = QColor(border_hex)
+        border_col = self._state_color() if live else _tok("line.subtle")
         border_col.setAlphaF(min(1.0, alpha + 0.1))
         p.setPen(QPen(border_col, 1.4))
         p.drawRoundedRect(r, 6.0, 6.0)
@@ -101,24 +116,22 @@ class VoiceOverlay(QWidget):
         # Faceted jewel pilot LED
         cx, cy = 18.0, self.height() / 2.0
         led_r = 4.8
-        p.setPen(QPen(QColor("#334155"), 0.8))
-        p.setBrush(QColor("#07090d"))
+        p.setPen(QPen(_tok("line.strong"), 0.8))
+        p.setBrush(_tok("bg.inset"))
         p.drawEllipse(QPointF(cx, cy), led_r + 1.2, led_r + 1.2)
 
-        led_hex = ACTIVE if self.is_active else (MUTED if self.is_muted else CLEAN)
+        led = self._state_color()
         jg = QRadialGradient(QPointF(cx - 1.2, cy - 1.2), led_r)
-        jg.setColorAt(0.0, QColor("#ffffff" if (self.is_active or self.is_muted) else "#cbd5e1"))
-        jg.setColorAt(0.4, QColor(led_hex))
-        jg.setColorAt(1.0, QColor(led_hex).darker(190))
+        jg.setColorAt(0.0, _tok("text.primary" if live else "text.secondary").lighter(110))
+        jg.setColorAt(0.4, led)
+        jg.setColorAt(1.0, led.darker(190))
         p.setPen(Qt.NoPen)
         p.setBrush(QBrush(jg))
         p.drawEllipse(QPointF(cx, cy), led_r, led_r)
 
         # Monospace telemetry readout
-        txt_col = QColor("#f8fafc" if (self.is_active or self.is_muted) else "#94a3b8")
-        p.setPen(txt_col)
+        p.setPen(_tok("text.primary" if live else "text.secondary"))
         font = QFont("Consolas", 9, QFont.Bold)
         p.setFont(font)
         p.drawText(r.adjusted(32, 0, -10, 0), Qt.AlignVCenter | Qt.AlignLeft, self.text)
         p.end()
-

@@ -146,9 +146,19 @@ def app_icon() -> QIcon:
     return _icon_cache["app"]
 
 
-def tray_icon(active: bool, accent: str) -> QIcon:
-    """Tray icon: the bare mark, matching the taskbar when idle and in the theme accent when active."""
-    color = accent if active else (INK if taskbar_is_light() else OFF_WHITE)
+def tray_color(active: bool) -> str:
+    """Tray mark colour: the current look's accent when active, else matching the taskbar."""
+    if active:
+        from .ui.look import current_look
+
+        return current_look().palette.color("accent")
+    return INK if taskbar_is_light() else OFF_WHITE
+
+
+def tray_icon(active: bool, accent: str | None = None) -> QIcon:
+    """Tray icon: the bare mark, matching the taskbar when idle and in the look's accent
+    (or ``accent``, when given) when active."""
+    color = (accent or tray_color(True)) if active else tray_color(False)
     key = ("tray", color)
     if key not in _icon_cache:
         ico = QIcon()

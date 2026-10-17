@@ -434,6 +434,12 @@ QFrame#channelStripCard, QFrame#channelStrip {{
     border-radius: {r_pnl};
 }}
 
+QFrame#pluginMacroBay {{
+    background-color: {inset};
+    border: {bw} solid {line};
+    border-radius: {r_ctl};
+}}
+
 QPushButton {{
     background-color: {card};
     border: {bw} solid {line};

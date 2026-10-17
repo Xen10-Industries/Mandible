@@ -278,3 +278,71 @@ def test_smooth_bar_peak_marker_position(qapp):
     assert img.pixelColor(60, 6).rgb() != want
     none_img, _ = _paint_meter(SmoothBar(), None, width=200, height=13)
     assert none_img.pixelColor(101, 6).rgb() != want
+
+
+# ----------------------------------------------- meter presets and inactive rows (Task 7)
+
+@pytest.mark.parametrize("variant", registry.variants("meter"))
+def test_every_meter_variant_offers_the_three_presets(qapp, variant):
+    cls = registry.get("meter", variant)
+    look = look_mod.current_look()
+    sizes = {name: getattr(cls, name)().size_hint(look) for name in ("main", "thin", "prepost")}
+    assert sizes["main"].height() == 13 and sizes["thin"].height() == 8
+    for name in ("main", "thin", "prepost"):
+        assert isinstance(getattr(cls, name)(), cls)
+
+
+def _segment_centres(meter, img):
+    n = meter.segments
+    w, h = img.width(), img.height()
+    seg_w = max(meter.min_seg_w, (w - (n - 1) * meter.gap) / n)
+    return [img.pixelColor(int(i * (seg_w + meter.gap) + seg_w / 2), h // 2) for i in range(n)]
+
+
+def test_inactive_led_row_is_unlit_meter_off(qapp):
+    """A disabled row (a bypassed plugin's POST meter) shows flat meter.off, no level, no peak."""
+    from PySide6.QtCore import QRectF
+    from PySide6.QtGui import QColor, QImage, QPainter
+
+    from mandible.ui.elements.meters import LedSegments
+
+    meter = LedSegments.prepost()
+    look = look_mod.Look(look_mod.BUILTIN_PALETTES["scarlet"], SKIN)
+
+    def paint(state):
+        img = QImage(200, 9, QImage.Format.Format_ARGB32)
+        img.fill(0)
+        p = QPainter(img)
+        meter.paint(p, QRectF(0, 0, 200, 9), state, look)
+        p.end()
+        return _segment_centres(meter, img)
+
+    off = QColor(look.palette.color("meter.off"))
+    disabled = paint(ElementState(enabled=False, value=1.0, peak=0.5))
+    assert len({c.rgb() for c in disabled}) == 1          # one flat colour, no zones/level/peak
+    c = disabled[0]
+    assert abs(c.red() - off.red()) <= 2 and abs(c.green() - off.green()) <= 2
+    assert abs(c.blue() - off.blue()) <= 2
+    enabled_idle = paint(ElementState(value=0.0))
+    assert len({c.rgb() for c in enabled_idle}) == 3      # dim green / amber / red zone tints
+
+
+def test_inactive_smooth_bar_row_draws_only_the_track(qapp):
+    from PySide6.QtCore import QRectF
+    from PySide6.QtGui import QImage, QPainter
+
+    from mandible.ui.elements.meters import SmoothBar
+
+    look = look_mod.Look(look_mod.BUILTIN_PALETTES["scarlet"], SKIN)
+
+    def paint(state):
+        img = QImage(200, 7, QImage.Format.Format_ARGB32)
+        img.fill(0)
+        p = QPainter(img)
+        SmoothBar.prepost().paint(p, QRectF(0, 0, 200, 7), state, look)
+        p.end()
+        return img
+
+    assert paint(ElementState(enabled=False, value=0.9, peak=0.5)) == \
+        paint(ElementState(enabled=False, value=0.0))
+    assert paint(ElementState(value=0.9)) != paint(ElementState(value=0.0))

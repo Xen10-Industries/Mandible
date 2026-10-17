@@ -8,7 +8,7 @@ import re
 import sys
 import threading
 import time
-from functools import partial
+from functools import lru_cache, partial
 
 import numpy as np
 from PySide6.QtCore import QLockFile, QPointF, QRectF, QSize, Qt, QTimer, Signal
@@ -33,990 +33,127 @@ from .midi import list_midi_inputs
 from .setup_assistant import SetupAssistantDialog
 from .waveform_widget import SoundboardWaveformWidget
 from .factory_presets import get_factory_presets, instantiate_factory_preset
+from .ui.elements import registry as _registry
+from .ui.elements.base import ElementState, metal, mix
+from .ui.look import (BUILTIN_PALETTES, BUILTIN_SKINS, Look, current_look, look_bus, look_for,
+                      look_from_config, set_look)
 
 
-ACTIVE = "#10b981"  # Emerald green for active live audio / voice
-ACCENT = "#e11d48"  # Default Scarlet
+# =============================================================== look: palette + skin
+# Colours come from ``current_look().palette`` and skin-dependent drawing from the element
+# registry (``mandible.ui.elements``); widgets repaint on ``look_bus().lookChanged``.
 
-# =============================================================== multi-theme & skin system
-THEMES = {
-    "scarlet": {
-        "name": "Focusrite Scarlet & Matte Obsidian",
-        "accent": "#e11d48",
-        "accent_hover": "#f43f5e",
-        "active": "#10b981",
-        "active_bg": "#12261e",
-        "bg_win": "#0e1017",
-        "bg_card": "#151822",
-        "bg_card_alt": "#1c1f2c",
-        "bg_input": "#10121a",
-        "border": "#262a3a",
-        "border_focus": "#e11d48",
-        "text": "#f1f5f9",
-        "text_muted": "#94a3b8",
-        "chip_bg": "#22151b",
-        "chip_text": "#fda4af",
-        "vfd": "#38bdf8",
-    },
-    "cyan": {
-        "name": "Cyber Cyan & Electric Blue",
-        "accent": "#06b6d4",
-        "accent_hover": "#22d3ee",
-        "active": "#10b981",
-        "active_bg": "#0f2824",
-        "bg_win": "#0b0f19",
-        "bg_card": "#111827",
-        "bg_card_alt": "#1a2337",
-        "bg_input": "#0d1322",
-        "border": "#1f293d",
-        "border_focus": "#06b6d4",
-        "text": "#f8fafc",
-        "text_muted": "#8592a6",
-        "chip_bg": "#12202e",
-        "chip_text": "#67e8f9",
-        "vfd": "#67e8f9",
-    },
-    "stealth": {
-        "name": "Monochrome Stealth & Emerald",
-        "accent": "#10b981",
-        "accent_hover": "#34d399",
-        "active": "#10b981",
-        "active_bg": "#13231c",
-        "bg_win": "#101114",
-        "bg_card": "#17181d",
-        "bg_card_alt": "#20222a",
-        "bg_input": "#121317",
-        "border": "#282a33",
-        "border_focus": "#10b981",
-        "text": "#ffffff",
-        "text_muted": "#8a8e99",
-        "chip_bg": "#151e19",
-        "chip_text": "#6ee7b7",
-        "vfd": "#34d399",
-    },
-    "amber": {
-        "name": "Vintage Analog Amber & Gold",
-        "accent": "#d97706",
-        "accent_hover": "#f59e0b",
-        "active": "#f59e0b",
-        "active_bg": "#291d0e",
-        "bg_win": "#12100e",
-        "bg_card": "#1c1917",
-        "bg_card_alt": "#26211e",
-        "bg_input": "#0f0d0c",
-        "border": "#38322e",
-        "border_focus": "#f59e0b",
-        "text": "#fafaf9",
-        "text_muted": "#a8a29e",
-        "chip_bg": "#271c12",
-        "chip_text": "#fcd34d",
-        "vfd": "#fbbf24",
-    },
-}
-
-_UI_STATE = {
-    "theme": "scarlet",
-    "skin": "skeuomorphic",   # "skeuomorphic" | "vintage" | "minimal"
-    "frame": "auto",          # "auto" | "metal_rack" | "wood_cheeks" | "frameless"
-}
+@lru_cache(maxsize=16)
+def _resolved_elements(look: Look) -> dict[str, str]:
+    return _registry.resolve(look.skin.elements)[0]
 
 
-def current_skin() -> str:
-    s = _UI_STATE.get("skin", "skeuomorphic")
-    return s if s in ("skeuomorphic", "vintage", "minimal") else "skeuomorphic"
+def look_element(slot: str, preset: str | None = None, **ctor):
+    """The current skin's element for ``slot``: ``cls.<preset>()`` or ``cls(**ctor)``."""
+    cls = _registry.get(slot, _resolved_elements(current_look())[slot])
+    return getattr(cls, preset)() if preset else cls(**ctor)
 
 
-def resolve_chassis_frame(skin: str | None = None, frame: str | None = None) -> str:
-    sk = skin or current_skin()
-    fr = frame or _UI_STATE.get("frame", "auto")
-    if fr in ("metal_rack", "wood_cheeks", "frameless"):
-        return fr
-    if sk == "vintage":
-        return "wood_cheeks"
-    if sk == "minimal":
-        return "frameless"
-    return "metal_rack"
+def look_color(token: str) -> QColor:
+    """A palette token of the current look as a QColor."""
+    return QColor(current_look().palette.color(token))
 
 
-def get_theme_dict(theme_name: str | None = None) -> dict:
-    key = theme_name or _UI_STATE.get("theme", "scarlet")
-    base = dict(THEMES.get(key, THEMES["scarlet"]))
-    if current_skin() == "vintage" and key != "amber":
-        # Warm analog console charcoal surfaces while preserving user's chosen accent color
-        base["bg_win"] = "#12100e"
-        base["bg_card"] = "#1c1917"
-        base["bg_card_alt"] = "#26221e"
-        base["bg_input"] = "#0e0c0b"
-        base["border"] = "#38322e"
-    return base
+def _follow_look(widget: QWidget) -> None:
+    """Call ``widget._on_look_changed`` (default: repaint) whenever the look changes.
+
+    The connection goes away with the widget (the slot is a method of the QObject).
+    """
+    look_bus().lookChanged.connect(widget._on_look_changed)
 
 
-def build_stylesheet(
-    theme_name: str = "scarlet",
-    skin_name: str | None = None,
-    frame_name: str | None = None,
-) -> str:
-    skin = skin_name or current_skin()
-    t = get_theme_dict(theme_name)
-    accent = t["accent"]
-    accent_hover = t["accent_hover"]
-    active = t["active"]
-    active_bg = t["active_bg"]
-    bg_win = t["bg_win"]
-    bg_card = t["bg_card"]
-    bg_card_alt = t["bg_card_alt"]
-    bg_input = t["bg_input"]
-    border = t["border"]
-    border_focus = t["border_focus"]
-    text = t["text"]
-    text_muted = t["text_muted"]
-    chip_text = t["chip_text"]
-
-    card_radius = "10px" if skin == "minimal" else ("3px" if skin == "vintage" else "6px")
-    head_bg = (
-        f"{bg_card}"
-        if skin == "minimal"
-        else f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {bg_card_alt}, stop:1 {bg_win})"
-    )
-
-    return f"""
-QWidget {{
-    font-family: "Segoe UI", -apple-system, system-ui, Roboto, sans-serif;
-    font-size: 9.5pt;
-    color: {text};
-}}
-QMainWindow, QDialog {{
-    background-color: {bg_win};
-}}
-
-QToolTip {{
-    background-color: #121622;
-    color: #f1f5f9;
-    border: 1px solid #334155;
-    border-radius: 4px;
-    padding: 4px 8px;
-    font-family: "Segoe UI", sans-serif;
-    font-size: 8.5pt;
-    font-weight: 500;
-}}
-
-QFrame#rackChassis {{
-    background-color: transparent;
-    border: none;
-}}
-QFrame#masterHeadStrip {{
-    background: {head_bg};
-    border-bottom: 1.5px solid {border};
-    border-top-left-radius: {card_radius};
-    border-top-right-radius: {card_radius};
-}}
-QFrame#telemetryDisplay {{
-    background: {bg_input};
-    border: 1px solid {border};
-    border-radius: {card_radius};
-}}
-QFrame#signalMatrix {{
-    background: {bg_input};
-    border: 1px solid {border};
-    border-radius: {card_radius};
-}}
-QFrame#sideRackBay {{
-    background: transparent;
-    border: none;
-}}
-QFrame#modularBay, QFrame#presetModularBay {{
-    background: {bg_win if skin != 'minimal' else bg_card};
-    border: 1px solid {border};
-    border-radius: {card_radius};
-}}
-QFrame#prefxModule, QFrame#limiterModule {{
-    background: {bg_input};
-    border: 1px solid {border};
-    border-radius: {card_radius};
-}}
-QFrame#prefxModule[active="true"], QFrame#limiterModule[active="true"] {{
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #0a1712, stop:1 #070e0a);
-    border: 1.5px solid {active};
-}}
-QFrame#prefxModule[active="true"]:hover, QFrame#limiterModule[active="true"]:hover {{
-    background: #0e2018;
-    border-color: #34d399;
-}}
-QFrame#prefxModule[active="false"]:hover, QFrame#limiterModule[active="false"]:hover {{
-    border-color: #334155;
-    background: #0d1017;
-}}
-
-QPushButton#hardwareMasterToggle, QPushButton#powerButton {{
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #1e2330, stop:1 #10131a);
-    border: 1.5px solid #2d3548;
-    border-radius: 6px;
-    color: #f1f5f9;
-    font-weight: 800;
-    font-size: 8.5pt;
-    letter-spacing: 0.5px;
-    padding: 6px 14px;
-}}
-QPushButton#hardwareMasterToggle:hover, QPushButton#powerButton:hover {{
-    border-color: {active};
-    background: #171b24;
-}}
-QPushButton#hardwareMasterToggle:checked, QPushButton#powerButton:checked {{
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {active}, stop:1 #065f46);
-    border: 1.5px solid #34d399;
-    color: white;
-}}
-
-QPushButton#hardwareMonitorToggle, QPushButton#monitorButton {{
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #1e2330, stop:1 #10131a);
-    border: 1.5px solid #2d3548;
-    border-radius: 6px;
-    color: #cbd5e1;
-    font-weight: 700;
-    font-size: 8.5pt;
-    padding: 6px 14px;
-}}
-QPushButton#hardwareMonitorToggle:hover, QPushButton#monitorButton:hover {{
-    border-color: {accent};
-}}
-QPushButton#hardwareMonitorToggle:checked, QPushButton#monitorButton:checked {{
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {accent}, stop:1 #9f1239);
-    border: 1.5px solid {accent_hover};
-    color: white;
-}}
-
-QPushButton#hardwarePanicCut, QPushButton#panicTopButton {{
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #2d1419, stop:1 #1a0b0e);
-    border: 1.5px solid #7f1d1d;
-    border-radius: 6px;
-    color: #fca5a5;
-    font-weight: 800;
-    font-size: 8pt;
-    letter-spacing: 0.5px;
-    padding: 6px 14px;
-}}
-QPushButton#hardwarePanicCut:hover, QPushButton#panicTopButton:hover {{
-    background: #dc2626;
-    color: white;
-}}
-
-QPushButton#hardwareConfigBtn {{
-    background: #171a24;
-    border: 1.5px solid #2a3142;
-    color: #94a3b8;
-    font-weight: bold;
-    font-size: 8pt;
-    padding: 6px 12px;
-    border-radius: 6px;
-}}
-QPushButton#hardwareConfigBtn:hover {{
-    background: {bg_card_alt};
-    color: white;
-}}
-
-QFrame#signalFlowStrip {{
-    background-color: {bg_card};
-    border: 1px solid {border};
-    border-radius: 10px;
-}}
-QLabel#flowPill {{
-    background-color: {bg_win};
-    border: 1px solid {border};
-    border-radius: 6px;
-    padding: 4px 10px;
-    font-weight: 600;
-    font-size: 8.5pt;
-    color: {text};
-}}
-QLabel#flowPill[active="true"] {{
-    background-color: {active_bg};
-    border: 1px solid {active};
-    color: #34d399;
-}}
-QPushButton#flowBtn {{
-    background-color: {bg_win};
-    border: 1px solid {border};
-    border-radius: 6px;
-    padding: 4px 10px;
-    font-weight: 600;
-    font-size: 8.5pt;
-    color: {text};
-}}
-QPushButton#flowBtn:hover {{
-    background-color: {bg_card_alt};
-    border-color: {accent};
-    color: white;
-}}
-QPushButton#flowBtn[active="true"] {{
-    background-color: {active_bg};
-    border: 1px solid {active};
-    color: #34d399;
-}}
-
-QListWidget#chainList {{
-    background-color: transparent;
-    border: none;
-    padding: 0px;
-    outline: none;
-}}
-QListWidget#chainList::item {{
-    border-radius: 8px;
-    padding: 2px;
-    margin-bottom: 4px;
-}}
-QListWidget#chainList::item:selected {{
-    background-color: transparent;
-}}
-QFrame#chainCard {{
-    background-color: {bg_card};
-    border: 1px solid {border};
-    border-radius: 8px;
-}}
-QFrame#chainCard:hover {{
-    background-color: {bg_card_alt};
-    border-color: #3f4760;
-}}
-QFrame#chainCard[selected="true"] {{
-    background-color: #131722;
-    border: 1.5px solid #38bdf8;
-}}
-QFrame#chainCard[active="true"] {{
-    background-color: {active_bg};
-    border: 1.5px solid {active};
-}}
-QFrame#chainCard[active="true"][selected="true"] {{
-    background-color: {active_bg};
-    border: 1.5px solid {active};
-}}
-QLabel#rackInspLabel {{
-    color: #64748b;
-    font-size: 7.5pt;
-    font-weight: 800;
-    letter-spacing: 0.8px;
-    border: none;
-    background: transparent;
-    padding: 0px;
-    margin: 0px;
-}}
-QLabel#cardHotkey {{
-    background-color: #0b0e14;
-    border: 1px solid {border};
-    border-radius: 4px;
-    padding: 0px 6px;
-    font-family: Consolas, monospace;
-    font-size: 7.5pt;
-    font-weight: bold;
-    color: {chip_text};
-    min-height: 18px;
-    max-height: 18px;
-    qproperty-alignment: 'AlignCenter';
-}}
-
-QListWidget#rackList {{
-    background-color: {bg_win};
-    border: 1px solid {border};
-    border-radius: 10px;
-    padding: 4px;
-    outline: none;
-}}
-QListWidget#rackList::item {{
-    border-radius: 8px;
-    padding: 2px;
-    margin-bottom: 6px;
-}}
-QListWidget#rackList::item:selected {{
-    background-color: transparent;
-}}
-QFrame#pluginRackCard {{
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {bg_card_alt}, stop:1 {bg_card});
-    border: 1px solid {border};
-    border-radius: 8px;
-}}
-QFrame#pluginRackCard:hover {{
-    border-color: #3f4760;
-}}
-QFrame#pluginRackCard[bypassed="true"] {{
-    border-style: dashed;
-    border-color: #353b50;
-}}
-QFrame#pluginRackCard[error="true"] {{
-    border-color: #ef4444;
-    background-color: #241418;
-}}
-
-QPushButton#rackPowerBtn {{
-    background-color: #1a202c;
-    border: 1px solid #2d3748;
-    border-radius: 15px;
-    font-weight: bold;
-    font-size: 11pt;
-    color: #64748b;
-}}
-QPushButton#rackPowerBtn:checked {{
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {active}, stop:1 #059669);
-    border: 1px solid #34d399;
-    color: white;
-}}
-QPushButton#rackPowerBtn:hover {{
-    border-color: {active};
-}}
-
-QLabel#vendorBadge {{
-    background-color: {bg_win};
-    border: 1px solid {border};
-    border-radius: 4px;
-    padding: 1px 6px;
-    font-size: 7.5pt;
-    font-weight: 600;
-    color: {text_muted};
-}}
-QPushButton#rackHotkeyBtn {{
-    background-color: {bg_win};
-    border: 1px solid {border};
-    border-radius: 4px;
-    padding: 2px 6px;
-    font-family: Consolas, monospace;
-    font-size: 7.5pt;
-    color: {chip_text};
-}}
-QPushButton#rackHotkeyBtn:hover {{
-    border-color: {accent};
-    color: white;
-}}
-QPushButton#rackUiBtn {{
-    background-color: {accent};
-    border: 1px solid {accent_hover};
-    border-radius: 6px;
-    padding: 5px 12px;
-    font-weight: bold;
-    font-size: 8.5pt;
-    color: white;
-}}
-QPushButton#rackUiBtn:hover {{
-    background-color: {accent_hover};
-}}
-QPushButton#rackToolBtn {{
-    background-color: {bg_card};
-    border: 1px solid {border};
-    border-radius: 4px;
-    color: {text};
-    font-size: 9pt;
-    padding: 0px;
-    margin: 0px;
-    min-width: 0px;
-    min-height: 0px;
-}}
-QPushButton#rackToolBtn:hover {{
-    background-color: {bg_card_alt};
-    color: white;
-}}
-QPushButton#rackRemoveBtn {{
-    background-color: #261418;
-    border: 1px solid #481d24;
-    border-radius: 4px;
-    color: #fca5a5;
-    font-size: 9pt;
-    font-weight: bold;
-    padding: 0px;
-    margin: 0px;
-    min-width: 0px;
-    min-height: 0px;
-}}
-QPushButton#rackRemoveBtn:hover {{
-    background-color: #ef4444;
-    color: white;
-}}
-
-QFrame#channelStripCard {{
-    background-color: {bg_card};
-    border: 1px solid {border};
-    border-radius: 10px;
-}}
-
-QPushButton {{
-    background-color: {bg_card};
-    border: 1px solid {border};
-    border-radius: 6px;
-    padding: 5px 12px;
-    font-weight: 500;
-    color: {text};
-}}
-QPushButton:hover {{
-    background-color: {bg_card_alt};
-    border-color: #3e4663;
-}}
-QPushButton:pressed {{
-    background-color: {accent};
-    color: white;
-}}
-QPushButton:disabled {{
-    color: #555c70;
-    border-color: #202434;
-}}
-QPushButton#testButton:pressed {{
-    background-color: {active};
-    border-color: #34d399;
-    color: white;
-}}
-
-QSlider::groove:horizontal {{
-    border: 1px solid #06070a;
-    height: 6px;
-    background: #08090d;
-    border-radius: 3px;
-}}
-QSlider::sub-page:horizontal {{
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {accent_hover}, stop:1 {accent});
-    border-radius: 3px;
-}}
-QSlider::handle:horizontal {{
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ffffff, stop:0.4 #cbd5e1, stop:1 #94a3b8);
-    border: 1px solid #475569;
-    width: 14px;
-    margin-top: -5px;
-    margin-bottom: -5px;
-    border-radius: 2px;
-}}
-QSlider::handle:horizontal:hover {{
-    background: #ffffff;
-    border-color: #94a3b8;
-}}
-
-QLineEdit, QComboBox, QDoubleSpinBox, QSpinBox {{
-    background-color: {bg_input};
-    border: 1px solid {border};
-    border-radius: 6px;
-    padding: 4px 8px;
-    color: {text};
-}}
-QLineEdit:focus, QComboBox:focus, QDoubleSpinBox:focus, QSpinBox:focus {{
-    border: 1.5px solid {border_focus};
-}}
-QComboBox::drop-down {{
-    border: none;
-    width: 20px;
-}}
-QComboBox QAbstractItemView {{
-    background-color: {bg_card};
-    border: 1px solid {border};
-    selection-background-color: {accent};
-    selection-color: white;
-    padding: 4px;
-}}
-
-QLabel#hotkeyLabel {{
-    background-color: {bg_input};
-    border: 1px solid {border};
-    border-radius: 4px;
-    padding: 4px 8px;
-    font-family: Consolas, monospace;
-    color: {chip_text};
-}}
-QLabel#activeLabel {{
-    font-size: 11pt;
-    font-weight: bold;
-    padding: 4px 12px;
-    border-radius: 6px;
-    background-color: {bg_card};
-    color: {text_muted};
-}}
-QLabel#activeLabel[on="true"] {{
-    background-color: {active_bg};
-    border: 1px solid {active};
-    color: #34d399;
-}}
-QLabel#statusLabel {{
-    color: {text_muted};
-    padding-left: 8px;
-    font-size: 9pt;
-}}
-QLabel#statusLabel[on="true"] {{
-    color: {active};
-    font-weight: bold;
-}}
-QLabel#diagLabel {{
-    color: {text_muted};
-    font-family: Consolas, monospace;
-    font-size: 8.5pt;
-}}
-
-QGroupBox {{
-    border: 1px solid {border};
-    border-radius: 8px;
-    margin-top: 14px;
-    padding-top: 10px;
-    background-color: {bg_card};
-}}
-QGroupBox::title {{
-    subcontrol-origin: margin;
-    left: 12px;
-    padding: 0 6px;
-    font-weight: bold;
-    color: {accent};
-}}
-
-QTabWidget::pane {{
-    border: 1px solid {border};
-    border-radius: 8px;
-    background-color: {bg_card};
-}}
-QTabBar::tab {{
-    background-color: {bg_win};
-    border: 1px solid {border};
-    padding: 8px 16px;
-    border-top-left-radius: 6px;
-    border-top-right-radius: 6px;
-    margin-right: 2px;
-    color: {text_muted};
-    font-weight: 500;
-}}
-QTabBar::tab:selected {{
-    background-color: {bg_card};
-    border-bottom-color: {bg_card};
-    color: white;
-    font-weight: bold;
-}}
-
-QTableWidget {{
-    background-color: {bg_card};
-    border: 1px solid {border};
-    border-radius: 8px;
-    gridline-color: {border};
-}}
-QTableWidget::item {{
-    padding: 6px;
-}}
-QHeaderView::section {{
-    background-color: {bg_win};
-    border: 1px solid {border};
-    padding: 6px;
-    font-weight: bold;
-    color: {text};
-}}
-
-QScrollBar:vertical {{
-    border: none;
-    background-color: {bg_win};
-    width: 8px;
-    margin: 0px;
-    border-radius: 4px;
-}}
-QScrollBar::handle:vertical {{
-    background-color: #2b3046;
-    min-height: 20px;
-    border-radius: 4px;
-}}
-QScrollBar::handle:vertical:hover {{
-    background-color: #3f4666;
-}}
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-    height: 0px;
-}}
-"""
-
-
-def apply_theme(
-    app: QApplication,
-    theme_name: str = "scarlet",
-    skin_name: str | None = None,
-    frame_name: str | None = None,
-):
-    if theme_name:
-        _UI_STATE["theme"] = theme_name
-    if skin_name:
-        _UI_STATE["skin"] = skin_name
-    if frame_name:
-        _UI_STATE["frame"] = frame_name
-
-    t = get_theme_dict(_UI_STATE["theme"])
-    app.setStyle("Fusion")
+def _qpalette(look: Look) -> QPalette:
+    c = look.palette.color
     pal = QPalette()
-    pal.setColor(QPalette.Window, QColor(t["bg_win"]))
-    pal.setColor(QPalette.WindowText, QColor(t["text"]))
-    pal.setColor(QPalette.Base, QColor(t["bg_input"]))
-    pal.setColor(QPalette.AlternateBase, QColor(t["bg_card"]))
-    pal.setColor(QPalette.Text, QColor(t["text"]))
-    pal.setColor(QPalette.Button, QColor(t["bg_card"]))
-    pal.setColor(QPalette.ButtonText, QColor(t["text"]))
-    pal.setColor(QPalette.Highlight, QColor(t["accent"]))
-    pal.setColor(QPalette.HighlightedText, QColor("white"))
-    pal.setColor(QPalette.ToolTipBase, QColor("#121622"))
-    pal.setColor(QPalette.ToolTipText, QColor("#f1f5f9"))
-    app.setPalette(pal)
-    app.setStyleSheet(build_stylesheet(_UI_STATE["theme"], _UI_STATE["skin"], _UI_STATE["frame"]))
+    for role, token in ((QPalette.Window, "bg.window"), (QPalette.WindowText, "text.primary"),
+                        (QPalette.Base, "bg.inset"), (QPalette.AlternateBase, "bg.panel"),
+                        (QPalette.Text, "text.primary"), (QPalette.Button, "bg.panel"),
+                        (QPalette.ButtonText, "text.primary"), (QPalette.Highlight, "accent"),
+                        (QPalette.HighlightedText, "text.on_accent"),
+                        (QPalette.ToolTipBase, "bg.raised"), (QPalette.ToolTipText, "text.primary"),
+                        (QPalette.PlaceholderText, "text.disabled")):
+        pal.setColor(role, QColor(c(token)))
+    return pal
+
+
+_palette_synced_apps: set[int] = set()
+
+
+def apply_theme(app: QApplication, look: Look | None = None) -> None:
+    """Fusion style and the app icon, then ``set_look`` (stylesheet once + ``lookChanged``).
+
+    The application QPalette follows every later look change too (``core.set_theme`` etc.).
+    """
+    if app.style().name().lower() != "fusion":
+        app.setStyle("Fusion")
+    if id(app) not in _palette_synced_apps:
+        _palette_synced_apps.add(id(app))
+        look_bus().lookChanged.connect(lambda: app.setPalette(_qpalette(current_look())))
     app.setWindowIcon(branding.app_icon())
-    for w in app.allWidgets():
-        if hasattr(w, "update_frame_margins"):
-            w.update_frame_margins()
-        w.update()
+    set_look(look or current_look(), app)
 
 
 class ChassisWrapperFrame(QFrame):
-    """
-    Full-window outer hardware wrapper frame supporting:
-      - 'metal_rack': 19-Inch Brushed Anodized Steel Rack Ears with EIA oval slots & silver machine bolts
-      - 'wood_cheeks': Sculpted Walnut / Mahogany Wood Cheek Blocks with silver screws & padded leather bolster
-      - 'frameless': Clean borderless matte DAW wrapper
-    """
+    """Full-window outer chassis; the skin's ``frame`` element paints it and sets the margins."""
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("rackChassis")
+        _follow_look(self)
+
+    def element(self):
+        return look_element("frame")
 
     def update_frame_margins(self):
         lay = self.layout()
-        if lay is None:
-            return
-        frame_mode = resolve_chassis_frame()
-        if frame_mode == "metal_rack":
-            lay.setContentsMargins(28, 14, 28, 14)
-        elif frame_mode == "wood_cheeks":
-            lay.setContentsMargins(28, 14, 28, 18)
-        else:
-            lay.setContentsMargins(2, 2, 2, 2)
+        if lay is not None:
+            lay.setContentsMargins(*self.element().content_margins(current_look()))
 
-    @staticmethod
-    def _draw_silver_screw(p: QPainter, cx: float, cy: float, r: float = 5.4, angle_deg: float = 35.0):
-        """Draws a bright brushed silver/chrome countersunk screwhead that stands out on wood and metal."""
-        # Subtle recessed shadow ring
-        p.setPen(Qt.NoPen)
-        p.setBrush(QColor(0, 0, 0, 150))
-        p.drawEllipse(QPointF(cx + 0.6, cy + 0.9), r + 0.8, r + 0.8)
-
-        # Bright machined silver/chrome dome gradient
-        sg = QLinearGradient(cx - r, cy - r, cx + r, cy + r)
-        sg.setColorAt(0.0, QColor("#f8fafc"))
-        sg.setColorAt(0.3, QColor("#cbd5e1"))
-        sg.setColorAt(0.7, QColor("#94a3b8"))
-        sg.setColorAt(1.0, QColor("#475569"))
-        p.setPen(QPen(QColor("#1e293b"), 0.9))
-        p.setBrush(sg)
-        p.drawEllipse(QPointF(cx, cy), r, r)
-
-        # Specular rim highlight
-        p.setPen(QPen(QColor(255, 255, 255, 110), 0.7))
-        p.setBrush(Qt.NoBrush)
-        p.drawArc(QRectF(cx - r + 1.0, cy - r + 1.0, (r - 1.0) * 2, (r - 1.0) * 2), 45 * 16, 160 * 16)
-
-        # Machined Phillips / cross drive slot
-        rad1 = math.radians(angle_deg)
-        rad2 = math.radians(angle_deg + 90.0)
-        arm = r * 0.56
-        p.setPen(QPen(QColor("#0f172a"), 1.6, Qt.SolidLine, Qt.RoundCap))
-        p.drawLine(
-            QPointF(cx - arm * math.cos(rad1), cy - arm * math.sin(rad1)),
-            QPointF(cx + arm * math.cos(rad1), cy + arm * math.sin(rad1)),
-        )
-        p.drawLine(
-            QPointF(cx - arm * math.cos(rad2), cy - arm * math.sin(rad2)),
-            QPointF(cx + arm * math.cos(rad2), cy + arm * math.sin(rad2)),
-        )
+    def _on_look_changed(self):
+        self.update_frame_margins()
+        self.update()
 
     def paintEvent(self, _):
         p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        w, h = float(self.width()), float(self.height())
-        frame_mode = resolve_chassis_frame()
-        t = get_theme_dict()
-
-        if frame_mode == "frameless":
-            p.setPen(QPen(QColor("#232730"), 1.2))
-            p.setBrush(QColor(t["bg_win"]))
-            p.drawRoundedRect(QRectF(0.6, 0.6, w - 1.2, h - 1.2), 10.0, 10.0)
-            p.end()
-            return
-
-        if frame_mode == "metal_rack":
-            ear_w = 26.0
-            rail_h = 12.0
-
-            # Outer dark anodized steel body
-            outer_rect = QRectF(0.5, 0.5, w - 1.0, h - 1.0)
-            base_grad = QLinearGradient(0, 0, 0, h)
-            base_grad.setColorAt(0.0, QColor("#2a3242"))
-            base_grad.setColorAt(0.5, QColor("#181d27"))
-            base_grad.setColorAt(1.0, QColor("#10141c"))
-            p.setPen(QPen(QColor("#475569"), 1.2))
-            p.setBrush(base_grad)
-            p.drawRoundedRect(outer_rect, 9.0, 9.0)
-
-            # Top & bottom cross-rail extrusions
-            for ry in (1.0, h - rail_h - 1.0):
-                rg = QLinearGradient(0, ry, 0, ry + rail_h)
-                rg.setColorAt(0.0, QColor("#384256"))
-                rg.setColorAt(0.5, QColor("#202736"))
-                rg.setColorAt(1.0, QColor("#11151e"))
-                p.setPen(QPen(QColor("#0b0e14"), 1.0))
-                p.setBrush(rg)
-                p.drawRect(QRectF(ear_w, ry, w - 2 * ear_w, rail_h))
-                # Light silver machine screws along top & bottom rails
-                num_bolts = 6
-                for bi in range(num_bolts):
-                    bx = ear_w + 36.0 + bi * ((w - 2 * ear_w - 72.0) / max(1, num_bolts - 1))
-                    by = ry + rail_h / 2.0
-                    self._draw_silver_screw(p, bx, by, r=3.3, angle_deg=25.0 + bi * 20.0)
-
-            # Left & Right 19" Brushed Steel Rack Ears
-            for ex in (1.0, w - ear_w - 1.0):
-                eg = QLinearGradient(ex, 0, ex + ear_w, 0)
-                eg.setColorAt(0.0, QColor("#434e66"))
-                eg.setColorAt(0.25, QColor("#2e3748"))
-                eg.setColorAt(0.75, QColor("#1f2533"))
-                eg.setColorAt(1.0, QColor("#141822"))
-                p.setPen(QPen(QColor("#090b10"), 1.0))
-                p.setBrush(eg)
-                p.drawRoundedRect(QRectF(ex, 1.0, ear_w, h - 2.0), 7.0, 7.0)
-
-                # Brushed vertical grain striations
-                p.setPen(QPen(QColor(255, 255, 255, 14), 1.0))
-                for gx in range(int(ex + 4), int(ex + ear_w - 3), 3):
-                    p.drawLine(QPointF(gx, 6.0), QPointF(gx, h - 6.0))
-
-                # EIA Rack Mounting Oval Slots + Light Silver/Chrome Rack Bolts
-                ec_x = ex + ear_w / 2.0
-                slot_ys = [28.0, 82.0, h / 2.0 - 28.0, h / 2.0 + 28.0, h - 82.0, h - 28.0]
-                for idx_s, sy in enumerate(slot_ys):
-                    if sy < 20.0 or sy > h - 20.0:
-                        continue
-                    slot_rect = QRectF(ec_x - 7.5, sy - 4.8, 15.0, 9.6)
-                    p.setPen(QPen(QColor("#07090d"), 1.0))
-                    p.setBrush(QColor("#050608"))
-                    p.drawRoundedRect(slot_rect, 4.5, 4.5)
-
-                    # Bright silver washer + machine screw on outer/middle slots
-                    if idx_s in (0, 2, 3, 5):
-                        p.setPen(QPen(QColor("#1e293b"), 0.8))
-                        p.setBrush(QColor("#64748b"))
-                        p.drawEllipse(QPointF(ec_x, sy), 6.5, 6.5)
-                        self._draw_silver_screw(p, ec_x, sy, r=5.0, angle_deg=35.0 + idx_s * 25.0)
-
-            # Inner Recessed Faceplate Well
-            inner_rect = QRectF(ear_w, rail_h, w - 2 * ear_w, h - 2 * rail_h)
-            p.setPen(QPen(QColor("#05070a"), 1.6))
-            p.setBrush(QColor(t["bg_win"]))
-            p.drawRect(inner_rect)
-
-        elif frame_mode == "wood_cheeks":
-            cheek_w = 26.0
-            top_rail_h = 12.0
-            bolster_h = 16.0
-
-            # Top carved walnut wood valence rail
-            top_grad = QLinearGradient(0, 0, 0, top_rail_h)
-            top_grad.setColorAt(0.0, QColor("#5c3218"))
-            top_grad.setColorAt(0.5, QColor("#3d1f0d"))
-            top_grad.setColorAt(1.0, QColor("#241106"))
-            p.setPen(QPen(QColor("#170a03"), 1.0))
-            p.setBrush(top_grad)
-            p.drawRect(QRectF(cheek_w - 2.0, 0.5, w - 2 * cheek_w + 4.0, top_rail_h))
-
-            # Inner Console Well
-            inner_rect = QRectF(cheek_w, top_rail_h, w - 2 * cheek_w, h - top_rail_h - bolster_h)
-            p.setPen(QPen(QColor("#0a0806"), 1.6))
-            p.setBrush(QColor(t["bg_win"]))
-            p.drawRect(inner_rect)
-
-            # Bottom Padded Black Leather Console Armrest Bolster
-            bol_y = h - bolster_h
-            bol_rect = QRectF(cheek_w - 2.0, bol_y, w - 2 * cheek_w + 4.0, bolster_h - 0.5)
-            bol_grad = QLinearGradient(0, bol_y, 0, h)
-            bol_grad.setColorAt(0.0, QColor("#2c2927"))
-            bol_grad.setColorAt(0.35, QColor("#171514"))
-            bol_grad.setColorAt(1.0, QColor("#090807"))
-            p.setPen(QPen(QColor("#050404"), 1.2))
-            p.setBrush(bol_grad)
-            p.drawRect(bol_rect)
-            # Subtle warm stitch line along top of leather bolster
-            stitch_pen = QPen(QColor(180, 130, 80, 75), 1.0, Qt.DashLine)
-            p.setPen(stitch_pen)
-            p.drawLine(QPointF(cheek_w + 8.0, bol_y + 3.0), QPointF(w - cheek_w - 8.0, bol_y + 3.0))
-
-            # Left & Right Sculpted Walnut Wood Cheek Blocks
-            for cx_left in (0.5, w - cheek_w - 0.5):
-                c_rect = QRectF(cx_left, 0.5, cheek_w, h - 1.0)
-                wg = QLinearGradient(cx_left, 0, cx_left + cheek_w, 0)
-                wg.setColorAt(0.0, QColor("#6e3d1e"))
-                wg.setColorAt(0.22, QColor("#542c14"))
-                wg.setColorAt(0.65, QColor("#3b1d0b"))
-                wg.setColorAt(1.0, QColor("#241005"))
-                p.setPen(QPen(QColor("#170a03"), 1.2))
-                p.setBrush(wg)
-                p.drawRoundedRect(c_rect, 7.0, 7.0)
-
-                # Organic vertical wood grain fibers
-                for gi in range(5):
-                    gx = cx_left + 4.0 + gi * 4.4
-                    grain_col = QColor(20, 8, 2, 70 if gi % 2 == 0 else 40)
-                    p.setPen(QPen(grain_col, 1.1))
-                    path = QPainterPath(QPointF(gx, 5.0))
-                    path.cubicTo(
-                        QPointF(gx + (1.6 if gi % 2 == 0 else -1.4), h * 0.33),
-                        QPointF(gx + (-1.5 if gi % 2 == 0 else 1.5), h * 0.66),
-                        QPointF(gx, h - 5.0),
-                    )
-                    p.setBrush(Qt.NoBrush)
-                    p.drawPath(path)
-
-                # Inner chamfered highlight edge
-                hl_x = cx_left + cheek_w - 1.5 if cx_left < 10 else cx_left + 1.5
-                p.setPen(QPen(QColor(255, 200, 150, 45), 1.0))
-                p.drawLine(QPointF(hl_x, 6.0), QPointF(hl_x, h - 6.0))
-
-                # Contrast Light Silver / Chrome Wood Mounting Screws with dark steel finishing washers
-                sc_x = cx_left + cheek_w / 2.0
-                for idx_s, sy in enumerate((34.0, h / 2.0, h - 34.0)):
-                    # Countersunk steel cup washer
-                    p.setPen(QPen(QColor("#140904"), 1.0))
-                    p.setBrush(QColor("#334155"))
-                    p.drawEllipse(QPointF(sc_x, sy), 6.6, 6.6)
-                    # Light silver screwhead (high contrast against walnut wood)
-                    self._draw_silver_screw(p, sc_x, sy, r=5.2, angle_deg=40.0 + idx_s * 30.0)
-
+        self.element().paint(p, QRectF(0, 0, self.width(), self.height()), ElementState(), current_look())
         p.end()
-
 
 # =============================================================== small widgets
 class RackScrew(QWidget):
-    """Countersunk light brushed-steel hardware rack screw (hidden in minimal skin)."""
+    """Hardware rack screw: the skin's ``screws`` element (nothing in the minimal skin)."""
     def __init__(self, size=14, parent=None):
         super().__init__(parent)
         self.setFixedSize(size, size)
+        _follow_look(self)
+
+    def _on_look_changed(self):
+        self.update()
+
+    def element(self):
+        return look_element("screws")
 
     def paintEvent(self, _):
-        if current_skin() == "minimal":
-            return
         p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-
-        cx = self.width() / 2.0
-        cy = self.height() / 2.0
-        radius = (min(self.width(), self.height()) / 2.0) - 1.0
-
-        # Light brushed steel / silver screw dome
-        bezel_rect = QRectF(cx - radius, cy - radius, radius * 2.0, radius * 2.0)
-        p.setPen(QPen(QColor("#0f172a"), 0.9))
-        g = QLinearGradient(cx - radius, cy - radius, cx + radius, cy + radius)
-        g.setColorAt(0.0, QColor("#e2e8f0"))
-        g.setColorAt(0.35, QColor("#94a3b8"))
-        g.setColorAt(0.75, QColor("#64748b"))
-        g.setColorAt(1.0, QColor("#334155"))
-        p.setBrush(QBrush(g))
-        p.drawEllipse(bezel_rect)
-
-        # Dead-center cross socket
-        arm = radius * 0.52
-        p.setPen(QPen(QColor("#0f172a"), 1.6, Qt.SolidLine, Qt.RoundCap))
-        p.drawLine(QPointF(cx - arm, cy), QPointF(cx + arm, cy))
-        p.drawLine(QPointF(cx, cy - arm), QPointF(cx, cy + arm))
+        self.element().paint(p, QRectF(0, 0, self.width(), self.height()), ElementState(), current_look())
         p.end()
 
 
 class PilotLamp(QWidget):
-    """Faceted studio hardware pilot lamp / jewel indicator (skin-aware)."""
-    def __init__(self, active=True, color="#10b981", size=18, parent=None):
+    """Faceted pilot lamp / jewel indicator; a plain dot in skins without depth."""
+    def __init__(self, active=True, token="status.ok", size=18, parent=None):
         super().__init__(parent)
         self.active = active
-        self.color_hex = color
+        self.token = token
         self.setFixedSize(size, size)
+        _follow_look(self)
+
+    def _on_look_changed(self):
+        self.update()
 
     def set_active(self, on: bool):
         if self.active != on:
@@ -1024,45 +161,52 @@ class PilotLamp(QWidget):
             self.update()
 
     def paintEvent(self, _):
+        look = current_look()
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        r = self.rect().adjusted(1, 1, -1, -1)
-        skin = current_skin()
+        r = QRectF(self.rect().adjusted(1, 1, -1, -1))
+        jr = r.adjusted(2.5, 2.5, -2.5, -2.5)
+        on = look_color(self.token)
 
-        if skin == "minimal":
-            jr = r.adjusted(2.5, 2.5, -2.5, -2.5)
+        if look.skin.shape.get("shadow.depth", 1) == 0:
             p.setPen(Qt.NoPen)
-            p.setBrush(QColor(self.color_hex) if self.active else QColor("#2a2f3d"))
+            p.setBrush(on if self.active else look_color("line.subtle"))
             p.drawEllipse(jr)
             p.end()
             return
 
         # Chrome bezel ring
+        m = metal(look)
         bg = QLinearGradient(0, 0, r.width(), r.height())
-        bg.setColorAt(0.0, QColor("#cbd5e1"))
-        bg.setColorAt(0.5, QColor("#334155"))
-        bg.setColorAt(1.0, QColor("#64748b"))
-        p.setPen(QPen(QColor("#0a0c10"), 1))
+        bg.setColorAt(0.0, mix(m.hi, m.light, 0.5))
+        bg.setColorAt(0.5, mix(m.dark, m.mid, 0.5))
+        bg.setColorAt(1.0, m.mid)
+        p.setPen(QPen(m.black, 1))
         p.setBrush(QBrush(bg))
         p.drawEllipse(r)
 
         # Glass jewel
-        jr = r.adjusted(2.5, 2.5, -2.5, -2.5)
         if self.active:
             jg = QRadialGradient(jr.center(), jr.width() / 2)
-            jg.setColorAt(0.0, QColor("#ffffff"))
-            jg.setColorAt(0.35, QColor(self.color_hex))
-            jg.setColorAt(1.0, QColor(self.color_hex).darker(180))
+            jg.setColorAt(0.0, m.hi)
+            jg.setColorAt(0.35, on)
+            jg.setColorAt(1.0, on.darker(180))
             p.setBrush(QBrush(jg))
-            p.setPen(QPen(QColor(self.color_hex).lighter(140), 1))
+            p.setPen(QPen(on.lighter(140), 1))
         else:
-            p.setBrush(QColor("#1e222d"))
-            p.setPen(QPen(QColor("#2d3343"), 1))
+            p.setBrush(look_color("bg.raised"))
+            p.setPen(QPen(look_color("line.subtle"), 1))
         p.drawEllipse(jr)
         p.end()
 
 
+def _meter_frac(db: float) -> float:
+    """dB -> 0..1 over the meters' -60..+6 dB scale."""
+    return max(0.0, min(1.0, (db + 60.0) / 66.0))
+
+
 class LevelMeter(QWidget):
+    """Main channel meter: name, dB readout, the skin's ``meter`` bar and a dB scale."""
     def __init__(self, label: str):
         super().__init__()
         self.label = label
@@ -1070,6 +214,10 @@ class LevelMeter(QWidget):
         self.peak_db = -90.0
         self.setMinimumSize(140, 50)
         self.setMaximumHeight(56)
+        _follow_look(self)
+
+    def _on_look_changed(self):
+        self.update()
 
     def push(self, peak_lin: float):
         before = (round(self.level_db, 1), round(self.peak_db, 1))
@@ -1079,15 +227,21 @@ class LevelMeter(QWidget):
         if (round(self.level_db, 1), round(self.peak_db, 1)) != before:
             self.update()
 
+    def element(self):
+        return look_element("meter", "main")
+
+    def bar_state(self) -> ElementState:
+        peak = _meter_frac(self.peak_db) if self.peak_db > -55.0 else None
+        return ElementState(value=_meter_frac(self.level_db), peak=peak)
+
     def paintEvent(self, _):
+        look = current_look()
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         r = self.rect()
-        skin = current_skin()
-        t = get_theme_dict()
 
-        # Header Row: Channel Name & Precision dB Readout
-        p.setPen(QColor("#94a3b8"))
+        # Header row: channel name and dB readout
+        p.setPen(look_color("text.secondary"))
         f = p.font()
         f.setFamily("Segoe UI")
         f.setPointSize(8)
@@ -1098,83 +252,22 @@ class LevelMeter(QWidget):
         f.setFamily("Consolas")
         f.setBold(False)
         p.setFont(f)
-        p.setPen(QColor("#f59e0b" if skin == "vintage" else "#38bdf8"))
+        p.setPen(look_color("readout.text"))
         val_str = f"{self.level_db:+.1f} dB" if self.level_db > -79 else "-INF"
         p.drawText(QRectF(r.left(), 0, r.width(), 14), Qt.AlignRight | Qt.AlignVCenter, val_str)
 
-        seg_y = 18
-        seg_h = 13
+        seg_y, seg_h = 18, 13
         total_w = float(r.width())
-        frac = max(0.0, min(1.0, (self.level_db + 60.0) / 66.0))
-        pk_frac = max(0.0, min(1.0, (self.peak_db + 60.0) / 66.0))
+        self.element().paint(p, QRectF(r.left(), seg_y, total_w, seg_h), self.bar_state(), look)
 
-        if skin in ("minimal", "vintage"):
-            # Continuous ribbon / backlit VU bar
-            track_rect = QRectF(r.left(), seg_y, total_w, seg_h)
-            p.setPen(QPen(QColor("#2c251d" if skin == "vintage" else "#232730"), 1.0))
-            p.setBrush(QColor("#14110d" if skin == "vintage" else "#0c0e14"))
-            p.drawRoundedRect(track_rect, 2.5, 2.5)
-
-            if frac > 0.008:
-                fw = total_w * frac
-                grad = QLinearGradient(r.left(), 0, r.left() + total_w, 0)
-                if skin == "vintage":
-                    grad.setColorAt(0.0, QColor("#d97706"))
-                    grad.setColorAt(0.72, QColor("#f59e0b"))
-                    grad.setColorAt(0.88, QColor("#fb923c"))
-                    grad.setColorAt(1.0, QColor("#ef4444"))
-                else:
-                    grad.setColorAt(0.0, QColor(t["accent"]))
-                    grad.setColorAt(0.75, QColor("#10b981"))
-                    grad.setColorAt(0.9, QColor("#f59e0b"))
-                    grad.setColorAt(1.0, QColor("#ef4444"))
-                p.setPen(Qt.NoPen)
-                p.setBrush(grad)
-                p.drawRoundedRect(QRectF(r.left() + 1.0, seg_y + 1.0, max(2.0, fw - 2.0), seg_h - 2.0), 2.0, 2.0)
-
-            if self.peak_db > -55.0:
-                px = r.left() + min(total_w - 2.0, max(1.0, total_w * pk_frac))
-                p.setPen(Qt.NoPen)
-                p.setBrush(QColor("#fef3c7" if skin == "vintage" else "#ffffff"))
-                p.drawRect(QRectF(px, seg_y + 1.0, 2.0, seg_h - 2.0))
-        else:
-            # 26-Segment LED Ladder Bar (Skeuomorphic 500-Series)
-            num_segs = 26
-            gap = 2
-            seg_w = max(1.0, (total_w - (num_segs - 1) * gap) / num_segs)
-            active_segs = int(round(frac * num_segs))
-            peak_seg = int(round(pk_frac * num_segs))
-
-            for i in range(num_segs):
-                sx = r.left() + i * (seg_w + gap)
-                s_rect = QRectF(sx, seg_y, seg_w, seg_h)
-                if i < 18:
-                    on_c, off_c = QColor("#10b981"), QColor("#0d241d")
-                elif i < 22:
-                    on_c, off_c = QColor("#f59e0b"), QColor("#291f0d")
-                else:
-                    on_c, off_c = QColor("#ef4444"), QColor("#2d1115")
-
-                is_on = (i < active_segs)
-                is_peak = (i == peak_seg and self.peak_db > -55.0)
-                p.setPen(Qt.NoPen)
-                if is_peak:
-                    p.setBrush(QColor("#ffffff"))
-                elif is_on:
-                    p.setBrush(on_c)
-                else:
-                    p.setBrush(off_c)
-                p.drawRoundedRect(s_rect, 1.5, 1.5)
-
-        # Calibrated scale marks below segments
-        p.setPen(QColor("#4b5563"))
+        # Calibrated scale marks below the bar
+        p.setPen(look_color("text.disabled"))
         f.setPointSize(7)
         p.setFont(f)
         scale_y = seg_y + seg_h + 3
         ticks = [(-60, "-60"), (-36, "-36"), (-18, "-18"), (-6, "-6"), (0, "0"), (6, "+6")]
         for db, txt in ticks:
-            t_frac = max(0.0, min(1.0, (db + 60.0) / 66.0))
-            tx = r.left() + t_frac * (total_w - 6.0)
+            tx = r.left() + _meter_frac(db) * (total_w - 6.0)
             p.drawLine(QPointF(tx + 3.0, scale_y), QPointF(tx + 3.0, scale_y + 2))
             p.drawText(QRectF(tx - 12, scale_y + 2, 24, 10), Qt.AlignHCenter | Qt.AlignTop, txt)
         p.end()
@@ -1347,6 +440,7 @@ class ThinLevelMeter(QWidget):
         self.setMinimumWidth(80)
         self.level_db = -80.0
         self.peak_db = -80.0
+        _follow_look(self)
 
     def push(self, peak_linear: float):
         before = (round(self.level_db, 1), round(self.peak_db, 1))
@@ -1366,68 +460,19 @@ class ThinLevelMeter(QWidget):
         if (round(self.level_db, 1), round(self.peak_db, 1)) != before:
             self.update()
 
+    def _on_look_changed(self):
+        self.update()
+
+    def element(self):
+        return look_element("meter", "thin")
+
+    def bar_state(self) -> ElementState:
+        peak = _meter_frac(self.peak_db) if self.peak_db > -55.0 else None
+        return ElementState(value=_meter_frac(self.level_db), peak=peak)
+
     def paintEvent(self, _):
         p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        r = self.rect()
-        w, h = float(r.width()), float(r.height())
-        skin = current_skin()
-        t = get_theme_dict()
-
-        frac = max(0.0, min(1.0, (self.level_db + 60.0) / 66.0))
-        p_frac = max(0.0, min(1.0, (self.peak_db + 60.0) / 66.0))
-
-        if skin == "skeuomorphic":
-            # Segmented mini LED bar
-            num_segs = 18
-            gap = 1.5
-            seg_w = max(1.5, (w - (num_segs - 1) * gap) / num_segs)
-            active_segs = int(round(frac * num_segs))
-            peak_seg = int(round(p_frac * num_segs)) - 1
-            p.setPen(Qt.NoPen)
-            for i in range(num_segs):
-                sx = i * (seg_w + gap)
-                if i < 12:
-                    on_c, off_c = QColor("#10b981"), QColor("#0d1f19")
-                elif i < 15:
-                    on_c, off_c = QColor("#f59e0b"), QColor("#211a0d")
-                else:
-                    on_c, off_c = QColor("#ef4444"), QColor("#261014")
-                if i == peak_seg and self.peak_db > -55.0:
-                    p.setBrush(QColor("#ffffff"))
-                elif i < active_segs:
-                    p.setBrush(on_c)
-                else:
-                    p.setBrush(off_c)
-                p.drawRoundedRect(QRectF(sx, 0, seg_w, h), 1.2, 1.2)
-            p.end()
-            return
-
-        # Minimal & Vintage continuous ribbon meter
-        p.setPen(Qt.NoPen)
-        p.setBrush(QColor("#14110d" if skin == "vintage" else "#090b10"))
-        p.drawRoundedRect(r, 2.5, 2.5)
-
-        if frac > 0.01:
-            fw = w * frac
-            grad = QLinearGradient(0, 0, w, 0)
-            if skin == "vintage":
-                grad.setColorAt(0.0, QColor("#d97706"))
-                grad.setColorAt(0.75, QColor("#f59e0b"))
-                grad.setColorAt(0.9, QColor("#fb923c"))
-                grad.setColorAt(1.0, QColor("#ef4444"))
-            else:
-                grad.setColorAt(0.0, QColor(t["accent"]))
-                grad.setColorAt(0.7, QColor("#10b981"))
-                grad.setColorAt(0.85, QColor("#f59e0b"))
-                grad.setColorAt(1.0, QColor("#ef4444"))
-            p.setBrush(grad)
-            p.drawRoundedRect(QRectF(0, 0, fw, h), 2.5, 2.5)
-
-        if p_frac > 0.05:
-            px = min(w - 2.0, max(0.0, w * p_frac - 1.0))
-            p.setBrush(QColor("#fef3c7" if skin == "vintage" else "#ffffff"))
-            p.drawRect(QRectF(px, 0, 2.0, h))
+        self.element().paint(p, QRectF(0, 0, self.width(), self.height()), self.bar_state(), current_look())
         p.end()
 
 
@@ -1462,6 +507,7 @@ class HardwareKnob(QWidget):
         self.edit.hide()
         self.edit.committed.connect(self._commit_edit)
         self.edit.cancelled.connect(self._cancel_edit)
+        _follow_look(self)
 
     def _update_tooltip(self, over_value: bool = False):
         if over_value:
@@ -1552,215 +598,18 @@ class HardwareKnob(QWidget):
         self.edit.hide()
         self.update()
 
-def _draw_themed_rotary_dial(
-    p: QPainter,
-    w: float,
-    h: float,
-    title: str,
-    frac: float,
-    val_str: str,
-    accent_hex: str,
-    show_readout: bool = True,
-    compact: bool = False,
-):
-    """Renders a rotary knob in Skeuomorphic (500-Series), Vintage Console, or Minimalist DAW style."""
-    skin = current_skin()
-    frac = max(0.0, min(1.0, float(frac)))
+    def _on_look_changed(self):
+        self.update()
 
-    # 1. Title Label
-    f = p.font()
-    f.setFamily("Segoe UI")
-    f.setPointSizeF(6.5 if compact else 7.0)
-    f.setBold(True)
-    p.setFont(f)
-    if skin == "vintage":
-        p.setPen(QColor("#d6c7b2"))
-    elif skin == "minimal":
-        p.setPen(QColor("#94a3b8"))
-    else:
-        p.setPen(QColor("#cbd5e1"))
-    p.drawText(QRectF(0, 0, w, 11.5), Qt.AlignHCenter | Qt.AlignTop, title)
-
-    cx = w / 2.0
-    cy = 26.0 if compact else 27.5
-    radius = 10.8 if compact else 11.8
-    angle_deg = 225.0 - frac * 270.0
-    angle_rad = math.radians(angle_deg)
-
-    if skin == "minimal":
-        # Clean Minimalist Vector Arc + Flat Matte Cap
-        arc_r = radius + 2.4
-        track_rect = QRectF(cx - arc_r, cy - arc_r, arc_r * 2, arc_r * 2)
-        p.setPen(QPen(QColor("#252934"), 2.5, Qt.SolidLine, Qt.RoundCap))
-        p.setBrush(Qt.NoBrush)
-        p.drawArc(track_rect, int(225.0 * 16), int(-270.0 * 16))
-
-        if frac > 0.005:
-            p.setPen(QPen(QColor(accent_hex), 2.6, Qt.SolidLine, Qt.RoundCap))
-            p.drawArc(track_rect, int(225.0 * 16), int(-frac * 270.0 * 16))
-
-        # Flat matte inner cap
-        p.setPen(QPen(QColor("#2e3442"), 1.0))
-        p.setBrush(QColor("#161920"))
-        p.drawEllipse(QPointF(cx, cy), radius - 0.8, radius - 0.8)
-
-        # Crisp vector indicator line
-        x1 = cx + 3.0 * math.cos(angle_rad)
-        y1 = cy - 3.0 * math.sin(angle_rad)
-        x2 = cx + (radius - 2.0) * math.cos(angle_rad)
-        y2 = cy - (radius - 2.0) * math.sin(angle_rad)
-        p.setPen(QPen(QColor("#f8fafc"), 1.8, Qt.SolidLine, Qt.RoundCap))
-        p.drawLine(QPointF(x1, y1), QPointF(x2, y2))
-
-        if show_readout:
-            f.setFamily("Consolas")
-            f.setPointSizeF(7.0 if compact else 7.5)
-            f.setBold(False)
-            p.setFont(f)
-            p.setPen(QColor("#94a3b8"))
-            p.drawText(QRectF(0, h - 14, w, 14), Qt.AlignHCenter | Qt.AlignVCenter, val_str)
-        return
-
-    if skin == "vintage":
-        # Vintage Analog Console: Perimeter Scale Dots + Skirted Bakelite Pointer Knob
-        dot_r = radius + 3.4
-        num_dots = 11
-        p.setPen(Qt.NoPen)
-        for i in range(num_dots):
-            df = i / float(num_dots - 1)
-            da = math.radians(225.0 - df * 270.0)
-            dx = cx + dot_r * math.cos(da)
-            dy = cy - dot_r * math.sin(da)
-            p.setBrush(QColor(accent_hex) if df <= frac + 0.02 else QColor("#574c3f"))
-            p.drawEllipse(QPointF(dx, dy), 1.25, 1.25)
-
-        # Drop shadow
-        p.setBrush(QColor(0, 0, 0, 140))
-        p.drawEllipse(QPointF(cx + 0.8, cy + 1.4), radius + 0.8, radius + 0.8)
-
-        # Outer dark Bakelite skirt
-        p.setPen(QPen(QColor("#0c0a08"), 1.0))
-        p.setBrush(QColor("#1c1714"))
-        p.drawEllipse(QPointF(cx, cy), radius + 0.5, radius + 0.5)
-
-        # Inner raised vintage cap
-        cap_r = radius - 2.0
-        cg = QLinearGradient(cx - cap_r, cy - cap_r, cx + cap_r, cy + cap_r)
-        cg.setColorAt(0.0, QColor("#3d332a"))
-        cg.setColorAt(0.5, QColor("#28211b"))
-        cg.setColorAt(1.0, QColor("#171310"))
-        p.setPen(QPen(QColor("#57493c"), 0.9))
-        p.setBrush(cg)
-        p.drawEllipse(QPointF(cx, cy), cap_r, cap_r)
-
-        # Full-radius cream/ivory pointer stripe
-        x1 = cx + 1.8 * math.cos(angle_rad)
-        y1 = cy - 1.8 * math.sin(angle_rad)
-        x2 = cx + (radius - 0.6) * math.cos(angle_rad)
-        y2 = cy - (radius - 0.6) * math.sin(angle_rad)
-        p.setPen(QPen(QColor("#fef3c7"), 2.0, Qt.SolidLine, Qt.RoundCap))
-        p.drawLine(QPointF(x1, y1), QPointF(x2, y2))
-
-        if show_readout:
-            f.setFamily("Consolas")
-            f.setPointSizeF(7.0 if compact else 7.5)
-            f.setBold(True)
-            p.setFont(f)
-            p.setPen(QColor("#fbbf24"))
-            p.drawText(QRectF(0, h - 14, w, 14), Qt.AlignHCenter | Qt.AlignVCenter, val_str)
-        return
-
-    # Default: Skeuomorphic 500-Series Hardware Rack
-    # Outer tick marks
-    tick_r1 = radius + 2.2
-    tick_r2 = radius + 4.0
-    for i in range(11):
-        tf = i / 10.0
-        ta = math.radians(225.0 - tf * 270.0)
-        tx1 = cx + tick_r1 * math.cos(ta)
-        ty1 = cy - tick_r1 * math.sin(ta)
-        tx2 = cx + tick_r2 * math.cos(ta)
-        ty2 = cy - tick_r2 * math.sin(ta)
-        p.setPen(QPen(QColor(accent_hex) if tf <= frac + 0.01 else QColor("#334155"), 1.1, Qt.SolidLine, Qt.RoundCap))
-        p.drawLine(QPointF(tx1, ty1), QPointF(tx2, ty2))
-
-    # Active arc ring inside ticks
-    track_r = radius + 2.0
-    track_rect = QRectF(cx - track_r, cy - track_r, track_r * 2, track_r * 2)
-    p.setPen(QPen(QColor("#1a202e"), 1.8, Qt.SolidLine, Qt.RoundCap))
-    p.setBrush(Qt.NoBrush)
-    p.drawArc(track_rect, int(225.0 * 16), int(-270.0 * 16))
-    if frac > 0.005:
-        p.setPen(QPen(QColor(accent_hex), 2.0, Qt.SolidLine, Qt.RoundCap))
-        p.drawArc(track_rect, int(225.0 * 16), int(-frac * 270.0 * 16))
-
-    # Drop shadow
-    p.setPen(Qt.NoPen)
-    p.setBrush(QColor(0, 0, 0, 150))
-    p.drawEllipse(QPointF(cx + 0.7, cy + 1.3), radius, radius)
-
-    # Outer knurled metallic skirt
-    dial_rect = QRectF(cx - radius, cy - radius, radius * 2, radius * 2)
-    dial_grad = QLinearGradient(cx - radius, cy - radius, cx + radius, cy + radius)
-    dial_grad.setColorAt(0.0, QColor("#475569"))
-    dial_grad.setColorAt(0.5, QColor("#1e293b"))
-    dial_grad.setColorAt(1.0, QColor("#0f131a"))
-    p.setPen(QPen(QColor("#64748b"), 0.9))
-    p.setBrush(dial_grad)
-    p.drawEllipse(dial_rect)
-
-    # Brushed aluminum inner cap
-    cap_r = radius * 0.76
-    cap_grad = QLinearGradient(cx - cap_r, cy - cap_r, cx + cap_r, cy + cap_r)
-    cap_grad.setColorAt(0.0, QColor("#384357"))
-    cap_grad.setColorAt(0.5, QColor("#222938"))
-    cap_grad.setColorAt(1.0, QColor("#141821"))
-    p.setPen(QPen(QColor("#475569"), 0.7))
-    p.setBrush(cap_grad)
-    p.drawEllipse(QPointF(cx, cy), cap_r, cap_r)
-
-    # Center Pointer Line
-    inner_r = 3.2
-    outer_r = radius - 1.2
-    x1 = cx + inner_r * math.cos(angle_rad)
-    y1 = cy - inner_r * math.sin(angle_rad)
-    x2 = cx + outer_r * math.cos(angle_rad)
-    y2 = cy - outer_r * math.sin(angle_rad)
-    p.setPen(QPen(QColor("#ffffff"), 1.8, Qt.SolidLine, Qt.RoundCap))
-    p.drawLine(QPointF(x1, y1), QPointF(x2, y2))
-
-    # Recessed LCD Readout Box
-    if show_readout:
-        lcd_rect = QRectF(3.0, h - 14.5, w - 6.0, 13.5)
-        p.setPen(QPen(QColor("#1e2638"), 0.9))
-        p.setBrush(QColor("#07090e"))
-        p.drawRoundedRect(lcd_rect, 2.5, 2.5)
-
-        f.setFamily("Consolas")
-        f.setPointSizeF(6.8 if compact else 7.2)
-        f.setBold(False)
-        p.setFont(f)
-        p.setPen(QColor("#e2e8f0"))
-        p.drawText(lcd_rect, Qt.AlignHCenter | Qt.AlignVCenter, val_str)
-
+    def element(self):
+        return look_element("knob", compact=False)
 
     def paintEvent(self, _):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        w, h = float(self.width()), float(self.height())
-        t = get_theme_dict()
         frac = (self.val - self.min_val) / max(1e-5, (self.max_val - self.min_val))
-        _draw_themed_rotary_dial(
-            p,
-            w,
-            h,
-            self.title,
-            frac,
-            self.val_str(),
-            t["accent"],
-            show_readout=not self.edit.isVisible(),
-            compact=False,
-        )
+        state = ElementState(value=frac, label=self.title,
+                             readout="" if self.edit.isVisible() else self.val_str())
+        p = QPainter(self)
+        self.element().paint(p, QRectF(0, 0, self.width(), self.height()), state, current_look())
         p.end()
 
 
@@ -1772,6 +621,10 @@ class RackToolButton(QPushButton):
         self.setFixedSize(26, 26)
         self.setToolTip(tooltip)
         self.setCursor(Qt.PointingHandCursor)
+        _follow_look(self)
+
+    def _on_look_changed(self):
+        self.update()
 
     def paintEvent(self, _):
         p = QPainter(self)
@@ -1783,27 +636,31 @@ class RackToolButton(QPushButton):
         is_down = self.isDown()
 
         if self.kind == "remove":
+            danger = look_color("status.danger")
+            danger_bg = look_color("status.danger.subtle")
             if is_down:
-                bg = QColor("#4c131a")
+                bg = mix(danger_bg, danger, 0.3)
             elif is_hover:
-                bg = QColor("#381217")
+                bg = mix(danger_bg, danger, 0.15)
             else:
-                bg = QColor("#220d11")
-            border = QColor("#7f1d1d" if not is_hover else "#b91c1c")
-            icon_color = QColor("#fca5a5" if not is_hover else "#ffffff")
+                bg = danger_bg
+            border = danger if is_hover else mix(danger_bg, danger, 0.45)
+            icon_color = look_color("text.primary") if is_hover else danger
         else:
             if is_down:
-                bg = QColor("#090b10")
+                bg = look_color("bg.window")
             elif is_hover:
-                bg = QColor("#1e2433")
+                bg = look_color("bg.raised")
             else:
-                bg = QColor("#131620")
-            border = QColor("#2d3748" if not is_hover else "#475569")
-            icon_color = QColor("#cbd5e1" if not is_hover else "#ffffff")
+                bg = look_color("bg.panel")
+            border = look_color("line.strong" if is_hover else "line.subtle")
+            icon_color = (look_color("text.primary") if is_hover
+                          else mix(look_color("text.secondary"), look_color("text.primary"), 0.5))
 
         p.setPen(QPen(border, 1.0))
         p.setBrush(bg)
-        p.drawRoundedRect(r, 4.0, 4.0)
+        radius = min(4.0, float(current_look().skin.shape.get("radius.control", 4)))
+        p.drawRoundedRect(r, radius, radius)
 
         cx, cy = w / 2.0, h / 2.0
         p.setPen(Qt.NoPen)
@@ -1841,12 +698,11 @@ class RackToolButton(QPushButton):
 
 class ChainCardWidget(QFrame):
     """Studio broadcast preset card with pilot lamp and monospace telemetry."""
-    def __init__(self, chain: Chain, is_active: bool, theme_name: str = "scarlet", parent=None):
+    def __init__(self, chain: Chain, is_active: bool, parent=None):
         super().__init__(parent)
         self.chain = chain
         self.is_active = is_active
         self.is_selected = False
-        self.theme_name = theme_name
         self.setObjectName("chainCard")
 
         lay = QVBoxLayout(self)
@@ -1858,7 +714,7 @@ class ChainCardWidget(QFrame):
         row1.setSpacing(7)
         row1.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
-        self.lamp = PilotLamp(active=is_active, color="#10b981", size=10)
+        self.lamp = PilotLamp(active=is_active, size=10)
         row1.addWidget(self.lamp)
 
         self.name_lbl = QLabel(chain.name.upper())
@@ -1927,19 +783,13 @@ class ChainCardWidget(QFrame):
 
 
 class HardwareSwitch(QWidget):
-    """
-    Physical hardware switch control with integrated jewel pilot LED (skin-aware).
-    Supports:
-      - 'minimal' skin: Clean sliding pill toggle
-      - 'vintage' skin: Illuminated square console push-button (IN / BYP)
-      - 'skeuomorphic' skin: 3D Bat-Handle Metal Toggle or Beveled Rocker with jewel LED
-    """
+    """Two-state hardware switch; the skin's ``switch`` element paints it (bat toggle,
+    rocker or pill). ``compact`` and ``vertical`` pick the smaller widget variants."""
     toggled = Signal(bool)
 
-    def __init__(self, active: bool = True, style: str = "bat_toggle", compact: bool = False, vertical: bool = False, parent=None):
+    def __init__(self, active: bool = True, compact: bool = False, vertical: bool = False, parent=None):
         super().__init__(parent)
         self.active = bool(active)
-        self.style_type = style if style in ("bat_toggle", "rocker") else "bat_toggle"
         self.compact = compact
         self.vertical = vertical
         if self.vertical:
@@ -1952,15 +802,17 @@ class HardwareSwitch(QWidget):
         self.setToolTip("Click to toggle ON / BYPASS")
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setStyleSheet("background: transparent;")
+        _follow_look(self)
+
+    def _on_look_changed(self):
+        self.update()
+
+    def element(self):
+        return look_element("switch", compact=self.compact, vertical=self.vertical)
 
     def set_active(self, on: bool):
         if self.active != bool(on):
             self.active = bool(on)
-            self.update()
-
-    def set_style(self, style: str):
-        if style in ("bat_toggle", "rocker") and self.style_type != style:
-            self.style_type = style
             self.update()
 
     def mousePressEvent(self, ev):
@@ -1974,335 +826,8 @@ class HardwareSwitch(QWidget):
 
     def paintEvent(self, _):
         p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        w, h = float(self.width()), float(self.height())
-        cy = h / 2.0
-        skin = current_skin()
-        t = get_theme_dict()
-
-        if skin == "minimal":
-            # Modern Flat Sliding Pill Toggle
-            pw = 34.0 if (self.compact or self.vertical) else 38.0
-            ph = 16.0
-            px = (w - pw) / 2.0
-            py = (h - ph) / 2.0
-            pill_rect = QRectF(px, py, pw, ph)
-            p.setPen(QPen(QColor(t["accent"]) if self.active else QColor("#2e3442"), 1.0))
-            p.setBrush(QColor(t["accent"]) if self.active else QColor("#1b1f28"))
-            p.drawRoundedRect(pill_rect, ph / 2.0, ph / 2.0)
-
-            thumb_r = (ph - 4.0) / 2.0
-            tx = (px + pw - thumb_r - 2.0) if self.active else (px + thumb_r + 2.0)
-            p.setPen(Qt.NoPen)
-            p.setBrush(QColor("#ffffff" if self.active else "#64748b"))
-            p.drawEllipse(QPointF(tx, cy), thumb_r, thumb_r)
-            p.end()
-            return
-
-        if skin == "vintage":
-            # Vintage Backlit Console Push-Button
-            bw = w - 6.0
-            bh = h - 6.0
-            bx, by = 3.0, 3.0
-            bezel_rect = QRectF(bx, by, bw, bh)
-            p.setPen(QPen(QColor("#0a0806"), 1.2))
-            p.setBrush(QColor("#14110e"))
-            p.drawRoundedRect(bezel_rect, 3.0, 3.0)
-
-            cap_rect = bezel_rect.adjusted(1.5, 1.5, -1.5, -1.5)
-            if self.active:
-                cg = QRadialGradient(cap_rect.center(), max(bw, bh) * 0.65)
-                cg.setColorAt(0.0, QColor("#fde68a"))
-                cg.setColorAt(0.45, QColor("#f59e0b"))
-                cg.setColorAt(1.0, QColor("#92400e"))
-                p.setPen(QPen(QColor("#fbbf24"), 1.0))
-                p.setBrush(cg)
-                p.drawRoundedRect(cap_rect, 2.0, 2.0)
-                txt_col = QColor("#1c1308")
-            else:
-                p.setPen(QPen(QColor("#3d332a"), 1.0))
-                p.setBrush(QColor("#241e19"))
-                p.drawRoundedRect(cap_rect, 2.0, 2.0)
-                txt_col = QColor("#786b59")
-
-            f = p.font()
-            f.setFamily("Consolas")
-            f.setPointSizeF(7.0)
-            f.setBold(True)
-            p.setFont(f)
-            p.setPen(txt_col)
-            p.drawText(cap_rect, Qt.AlignCenter, "IN" if self.active else "BYP")
-            p.end()
-            return
-
-        # -------------------------------------------------------------
-        # Skeuomorphic 500-Series: Jewel Pilot LED + 3D Toggle/Rocker
-        # -------------------------------------------------------------
-        led_cx = 9.0 if (self.compact or self.vertical) else 10.0
-        led_r = 4.0 if (self.compact or self.vertical) else 4.5
-
-        # Chrome bezel ring
-        p.setPen(QPen(QColor("#475569"), 0.8))
-        p.setBrush(QColor("#0d1117"))
-        p.drawEllipse(QPointF(led_cx, cy), led_r + 1.2, led_r + 1.2)
-
-        if self.active:
-            # Illuminated Emerald Jewel
-            jg = QRadialGradient(QPointF(led_cx - 1.0, cy - 1.0), led_r)
-            jg.setColorAt(0.0, QColor("#ffffff"))
-            jg.setColorAt(0.35, QColor("#34d399"))
-            jg.setColorAt(0.8, QColor("#10b981"))
-            jg.setColorAt(1.0, QColor("#065f46"))
-            p.setPen(QPen(QColor("#6ee7b7"), 0.8))
-            p.setBrush(QBrush(jg))
-            p.drawEllipse(QPointF(led_cx, cy), led_r, led_r)
-        else:
-            # Extinguished Dark Jewel
-            p.setPen(QPen(QColor("#1e293b"), 0.8))
-            p.setBrush(QColor("#131722"))
-            p.drawEllipse(QPointF(led_cx, cy), led_r, led_r)
-
-        if self.style_type == "bat_toggle":
-            if self.vertical:
-                sw_cx = 28.0
-                bush_r = 5.8
-
-                bg = QLinearGradient(sw_cx - bush_r, cy - bush_r, sw_cx + bush_r, cy + bush_r)
-                bg.setColorAt(0.0, QColor("#94a3b8"))
-                bg.setColorAt(0.3, QColor("#475569"))
-                bg.setColorAt(0.7, QColor("#1e293b"))
-                bg.setColorAt(1.0, QColor("#64748b"))
-                p.setPen(QPen(QColor("#0f172a"), 0.9))
-                p.setBrush(QBrush(bg))
-                p.drawEllipse(QPointF(sw_cx, cy), bush_r, bush_r)
-
-                p.setPen(Qt.NoPen)
-                p.setBrush(QColor("#080a0f"))
-                p.drawEllipse(QPointF(sw_cx, cy), bush_r * 0.6, bush_r * 0.6)
-
-                tip_dx = 1.0
-                tip_dy = -8.0 if self.active else 8.0
-                tip_x = sw_cx + tip_dx
-                tip_y = cy + tip_dy
-
-                p.setPen(QPen(QColor(0, 0, 0, 130), 2.6, Qt.SolidLine, Qt.RoundCap))
-                if self.active:
-                    p.drawLine(QPointF(sw_cx + 1.2, cy + 1.2), QPointF(tip_x + 2.2, tip_y + 2.2))
-                else:
-                    p.drawLine(QPointF(sw_cx + 1.2, cy + 1.0), QPointF(tip_x + 2.0, tip_y + 1.2))
-
-                lever_pen = QPen()
-                lever_pen.setWidthF(2.8)
-                lever_pen.setCapStyle(Qt.RoundCap)
-                lg = QLinearGradient(sw_cx, cy, tip_x, tip_y)
-                if self.active:
-                    lg.setColorAt(0.0, QColor("#64748b"))
-                    lg.setColorAt(0.5, QColor("#cbd5e1"))
-                    lg.setColorAt(1.0, QColor("#ffffff"))
-                else:
-                    lg.setColorAt(0.0, QColor("#334155"))
-                    lg.setColorAt(0.6, QColor("#64748b"))
-                    lg.setColorAt(1.0, QColor("#94a3b8"))
-                lever_pen.setBrush(QBrush(lg))
-                p.setPen(lever_pen)
-                p.drawLine(QPointF(sw_cx, cy), QPointF(tip_x, tip_y))
-
-                tip_r = 2.0
-                tg = QRadialGradient(QPointF(tip_x - 0.5, tip_y - 0.5), tip_r)
-                tg.setColorAt(0.0, QColor("#ffffff"))
-                tg.setColorAt(0.5, QColor("#cbd5e1" if self.active else "#94a3b8"))
-                tg.setColorAt(1.0, QColor("#475569" if self.active else "#334155"))
-                p.setPen(QPen(QColor("#1e293b"), 0.5))
-                p.setBrush(QBrush(tg))
-                p.drawEllipse(QPointF(tip_x, tip_y), tip_r, tip_r)
-
-            else:
-                sw_cx = 32.0 if self.compact else 39.0
-                bush_r = 5.8 if self.compact else 7.0
-
-                bg = QLinearGradient(sw_cx - bush_r, cy - bush_r, sw_cx + bush_r, cy + bush_r)
-                bg.setColorAt(0.0, QColor("#94a3b8"))
-                bg.setColorAt(0.3, QColor("#475569"))
-                bg.setColorAt(0.7, QColor("#1e293b"))
-                bg.setColorAt(1.0, QColor("#64748b"))
-                p.setPen(QPen(QColor("#0f172a"), 0.9))
-                p.setBrush(QBrush(bg))
-                p.drawEllipse(QPointF(sw_cx, cy), bush_r, bush_r)
-
-                p.setPen(Qt.NoPen)
-                p.setBrush(QColor("#080a0f"))
-                p.drawEllipse(QPointF(sw_cx, cy), bush_r * 0.6, bush_r * 0.6)
-
-                tip_dx = (7.0 if self.compact else 8.5) if self.active else (-7.0 if self.compact else -8.5)
-                tip_dy = -2.0
-                tip_x = sw_cx + tip_dx
-                tip_y = cy + tip_dy
-
-                p.setPen(QPen(QColor(0, 0, 0, 140), 2.8, Qt.SolidLine, Qt.RoundCap))
-                p.drawLine(QPointF(sw_cx, cy + 1.5), QPointF(tip_x, tip_y + 2.5))
-
-                lever_pen = QPen()
-                lever_pen.setWidthF(2.8 if self.compact else 3.2)
-                lever_pen.setCapStyle(Qt.RoundCap)
-                lg = QLinearGradient(sw_cx, cy, tip_x, tip_y)
-                if self.active:
-                    lg.setColorAt(0.0, QColor("#64748b"))
-                    lg.setColorAt(0.5, QColor("#cbd5e1"))
-                    lg.setColorAt(1.0, QColor("#ffffff"))
-                else:
-                    lg.setColorAt(0.0, QColor("#334155"))
-                    lg.setColorAt(0.6, QColor("#64748b"))
-                    lg.setColorAt(1.0, QColor("#94a3b8"))
-                lever_pen.setBrush(QBrush(lg))
-                p.setPen(lever_pen)
-                p.drawLine(QPointF(sw_cx, cy), QPointF(tip_x, tip_y))
-
-                tip_r = 2.0 if self.compact else 2.4
-                tg = QRadialGradient(QPointF(tip_x - 0.5, tip_y - 0.5), tip_r)
-                tg.setColorAt(0.0, QColor("#ffffff"))
-                tg.setColorAt(0.5, QColor("#cbd5e1" if self.active else "#94a3b8"))
-                tg.setColorAt(1.0, QColor("#475569" if self.active else "#334155"))
-                p.setPen(QPen(QColor("#1e293b"), 0.5))
-                p.setBrush(QBrush(tg))
-                p.drawEllipse(QPointF(tip_x, tip_y), tip_r, tip_r)
-
-                if not self.compact:
-                    f = p.font()
-                    f.setFamily("Consolas")
-                    f.setPointSize(6.5)
-                    f.setBold(True)
-                    p.setFont(f)
-                    if self.active:
-                        p.setPen(QColor("#10b981"))
-                        p.drawText(QRectF(sw_cx + 12, 0, 18, h), Qt.AlignLeft | Qt.AlignVCenter, "IN")
-                    else:
-                        p.setPen(QColor("#f87171"))
-                        p.drawText(QRectF(sw_cx + 12, 0, 18, h), Qt.AlignLeft | Qt.AlignVCenter, "BYP")
-
-        else:
-            # Studio Beveled Rocker Switch
-            if self.vertical:
-                rw = 16.0
-                rh = 24.0
-                rx = 22.0
-                ry = (h - rh) / 2.0
-                r_rect = QRectF(rx, ry, rw, rh)
-
-                p.setPen(QPen(QColor("#2d3748"), 1.0))
-                p.setBrush(QColor("#08090d"))
-                p.drawRoundedRect(r_rect, 2.5, 2.5)
-
-                pad_rect = r_rect.adjusted(1.2, 1.2, -1.2, -1.2)
-                half_h = pad_rect.height() / 2.0
-                top_pad = QRectF(pad_rect.left(), pad_rect.top(), pad_rect.width(), half_h)
-                bottom_pad = QRectF(pad_rect.left(), pad_rect.top() + half_h, pad_rect.width(), half_h)
-
-                p.setPen(Qt.NoPen)
-                glyph_r = 1.7
-
-                if self.active:
-                    p.setBrush(QColor("#10131a"))
-                    p.drawRoundedRect(bottom_pad, 1.5, 1.5)
-                    rg = QLinearGradient(top_pad.left(), top_pad.top(), top_pad.right(), top_pad.bottom())
-                    rg.setColorAt(0.0, QColor("#2a3344"))
-                    rg.setColorAt(1.0, QColor("#161a22"))
-                    p.setBrush(QBrush(rg))
-                    p.drawRoundedRect(top_pad, 1.5, 1.5)
-
-                    p.setPen(QPen(QColor("#38bdf8"), 1.0))
-                    p.drawLine(QPointF(top_pad.left() + 1, top_pad.top() + 1), QPointF(top_pad.right() - 1, top_pad.top() + 1))
-
-                    p.setPen(Qt.NoPen)
-                    p.setBrush(QColor("#10b981"))
-                    p.drawEllipse(QPointF(top_pad.center().x(), top_pad.center().y()), glyph_r, glyph_r)
-
-                    p.setPen(QPen(QColor("#475569"), 1.0))
-                    p.setBrush(Qt.NoBrush)
-                    p.drawEllipse(QPointF(bottom_pad.center().x(), bottom_pad.center().y()), glyph_r, glyph_r)
-                else:
-                    p.setBrush(QColor("#10131a"))
-                    p.drawRoundedRect(top_pad, 1.5, 1.5)
-                    lg = QLinearGradient(bottom_pad.left(), bottom_pad.top(), bottom_pad.right(), bottom_pad.bottom())
-                    lg.setColorAt(0.0, QColor("#2a3344"))
-                    lg.setColorAt(1.0, QColor("#161a22"))
-                    p.setBrush(QBrush(lg))
-                    p.drawRoundedRect(bottom_pad, 1.5, 1.5)
-
-                    p.setPen(QPen(QColor("#64748b"), 1.0))
-                    p.drawLine(QPointF(bottom_pad.left() + 1, bottom_pad.bottom() - 1), QPointF(bottom_pad.right() - 1, bottom_pad.bottom() - 1))
-
-                    p.setPen(QPen(QColor("#f87171"), 1.2))
-                    p.setBrush(Qt.NoBrush)
-                    p.drawEllipse(QPointF(bottom_pad.center().x(), bottom_pad.center().y()), glyph_r, glyph_r)
-
-                    p.setPen(Qt.NoPen)
-                    p.setBrush(QColor("#334155"))
-                    p.drawEllipse(QPointF(top_pad.center().x(), top_pad.center().y()), glyph_r, glyph_r)
-
-            else:
-                if self.compact:
-                    rx = 18.0
-                    ry = (h - 16.0) / 2.0
-                    rw = 30.0
-                    rh = 16.0
-                else:
-                    rx = 22.0
-                    ry = (h - 18.0) / 2.0
-                    rw = 42.0
-                    rh = 18.0
-
-                r_rect = QRectF(rx, ry, rw, rh)
-                p.setPen(QPen(QColor("#2d3748"), 1.0))
-                p.setBrush(QColor("#08090d"))
-                p.drawRoundedRect(r_rect, 2.5, 2.5)
-
-                pad_rect = r_rect.adjusted(1.2, 1.2, -1.2, -1.2)
-                half_w = pad_rect.width() / 2.0
-                left_pad = QRectF(pad_rect.left(), pad_rect.top(), half_w, pad_rect.height())
-                right_pad = QRectF(pad_rect.left() + half_w, pad_rect.top(), half_w, pad_rect.height())
-
-                p.setPen(Qt.NoPen)
-                glyph_r = 1.8 if self.compact else 2.2
-
-                if self.active:
-                    p.setBrush(QColor("#10131a"))
-                    p.drawRoundedRect(left_pad, 1.5, 1.5)
-                    rg = QLinearGradient(right_pad.left(), right_pad.top(), right_pad.left(), right_pad.bottom())
-                    rg.setColorAt(0.0, QColor("#2a3344"))
-                    rg.setColorAt(1.0, QColor("#161a22"))
-                    p.setBrush(QBrush(rg))
-                    p.drawRoundedRect(right_pad, 1.5, 1.5)
-
-                    p.setPen(QPen(QColor("#38bdf8"), 1.0))
-                    p.drawLine(QPointF(right_pad.left(), right_pad.top() + 1), QPointF(right_pad.right() - 2, right_pad.top() + 1))
-
-                    p.setPen(Qt.NoPen)
-                    p.setBrush(QColor("#10b981"))
-                    p.drawEllipse(QPointF(right_pad.center().x(), right_pad.center().y()), glyph_r, glyph_r)
-
-                    p.setPen(QPen(QColor("#475569"), 1.0))
-                    p.setBrush(Qt.NoBrush)
-                    p.drawEllipse(QPointF(left_pad.center().x(), left_pad.center().y()), glyph_r, glyph_r)
-                else:
-                    p.setBrush(QColor("#10131a"))
-                    p.drawRoundedRect(right_pad, 1.5, 1.5)
-                    lg = QLinearGradient(left_pad.left(), left_pad.top(), left_pad.left(), left_pad.bottom())
-                    lg.setColorAt(0.0, QColor("#2a3344"))
-                    lg.setColorAt(1.0, QColor("#161a22"))
-                    p.setBrush(QBrush(lg))
-                    p.drawRoundedRect(left_pad, 1.5, 1.5)
-
-                    p.setPen(QPen(QColor("#64748b"), 1.0))
-                    p.drawLine(QPointF(left_pad.left() + 2, left_pad.top() + 1), QPointF(left_pad.right(), left_pad.top() + 1))
-
-                    p.setPen(QPen(QColor("#f87171"), 1.2))
-                    p.setBrush(Qt.NoBrush)
-                    p.drawEllipse(QPointF(left_pad.center().x(), left_pad.center().y()), glyph_r, glyph_r)
-
-                    p.setPen(Qt.NoPen)
-                    p.setBrush(QColor("#334155"))
-                    p.drawEllipse(QPointF(right_pad.center().x(), right_pad.center().y()), glyph_r, glyph_r)
-
+        self.element().paint(p, QRectF(0, 0, self.width(), self.height()),
+                             ElementState(active=self.active), current_look())
         p.end()
 
 
@@ -2321,6 +846,7 @@ class PluginPrePostMeter(QWidget):
         self.setFixedSize(112, 34)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self._update_tooltip()
+        _follow_look(self)
 
     def _update_tooltip(self):
         pre_s = f"{self.pre_db:+.1f} dB" if self.pre_db > -78.0 else "-INF"
@@ -2347,27 +873,33 @@ class PluginPrePostMeter(QWidget):
         if after != before:
             self.update()
 
+    def _on_look_changed(self):
+        self.update()
+
+    def element(self):
+        return look_element("meter", "prepost")
+
+    def row_states(self) -> list[tuple[str, ElementState]]:
+        """PRE and POST bar states; a bypassed slot's POST row is inactive (unlit)."""
+        rows = []
+        for lbl, lvl_db, pk_db, active in (("PRE", self.pre_db, self.pre_peak_db, True),
+                                           ("POST", self.post_db, self.post_peak_db, self.slot_enabled)):
+            peak = _meter_frac(pk_db) if pk_db > -56.0 else None
+            rows.append((lbl, ElementState(enabled=active, value=_meter_frac(lvl_db), peak=peak)))
+        return rows
+
     def paintEvent(self, _):
+        look = current_look()
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         w, h = float(self.width()), float(self.height())
-        skin = current_skin()
-        t = get_theme_dict()
 
-        # Recessed dark bezel housing (hidden border in minimal)
-        bezel = QRectF(0.5, 0.5, w - 1.0, h - 1.0)
-        if skin == "minimal":
-            p.setPen(Qt.NoPen)
-            p.setBrush(QColor("#111318"))
-            p.drawRoundedRect(bezel, 4.0, 4.0)
-        elif skin == "vintage":
-            p.setPen(QPen(QColor("#4a3b2c"), 1.0))
-            p.setBrush(QColor("#120f0c"))
-            p.drawRoundedRect(bezel, 3.0, 3.0)
-        else:
-            p.setPen(QPen(QColor("#1e2536"), 1.0))
-            p.setBrush(QColor("#07090e"))
-            p.drawRoundedRect(bezel, 4.0, 4.0)
+        # Recessed bezel housing, darker than the bar tracks so empty rows stay visible
+        bw = float(look.skin.shape.get("border.width", 1))
+        radius = min(4.0, float(look.skin.shape.get("radius.control", 4)))
+        p.setPen(QPen(look_color("line.subtle"), bw))
+        p.setBrush(look_color("bg.inset").darker(150))
+        p.drawRoundedRect(QRectF(bw / 2.0, bw / 2.0, w - bw, h - bw), radius, radius)
 
         f = p.font()
         f.setFamily("Consolas")
@@ -2375,71 +907,16 @@ class PluginPrePostMeter(QWidget):
         f.setBold(True)
         p.setFont(f)
 
-        rows = [
-            ("PRE", 5.0, self.pre_db, self.pre_peak_db, True),
-            ("POST", 19.0, self.post_db, self.post_peak_db, self.slot_enabled),
-        ]
         label_w = 26.0
         bar_x = label_w + 3.0
         bar_w = w - bar_x - 5.0
-        seg_h = 9.0
-
-        for lbl, ry, lvl_db, pk_db, is_active in rows:
-            p.setPen(QColor("#94a3b8" if is_active else "#334155"))
-            p.drawText(QRectF(4.0, ry - 0.5, label_w, seg_h + 1.0), Qt.AlignLeft | Qt.AlignVCenter, lbl)
-
-            frac = max(0.0, min(1.0, (lvl_db + 60.0) / 66.0)) if is_active else 0.0
-            pk_frac = max(0.0, min(1.0, (pk_db + 60.0) / 66.0)) if is_active else 0.0
-
-            if skin in ("minimal", "vintage"):
-                p.setPen(Qt.NoPen)
-                p.setBrush(QColor("#1c1712" if skin == "vintage" else "#1b1f28"))
-                p.drawRoundedRect(QRectF(bar_x, ry + 1.0, bar_w, seg_h - 2.0), 2.0, 2.0)
-                if is_active and frac > 0.01:
-                    fw = bar_w * frac
-                    grad = QLinearGradient(bar_x, 0, bar_x + bar_w, 0)
-                    if skin == "vintage":
-                        grad.setColorAt(0.0, QColor("#d97706"))
-                        grad.setColorAt(0.75, QColor("#f59e0b"))
-                        grad.setColorAt(1.0, QColor("#ef4444"))
-                    else:
-                        grad.setColorAt(0.0, QColor(t["accent"]))
-                        grad.setColorAt(0.75, QColor("#10b981"))
-                        grad.setColorAt(1.0, QColor("#ef4444"))
-                    p.setBrush(grad)
-                    p.drawRoundedRect(QRectF(bar_x, ry + 1.0, fw, seg_h - 2.0), 2.0, 2.0)
-                if is_active and pk_db > -56.0:
-                    px = bar_x + min(bar_w - 1.5, max(0.0, bar_w * pk_frac))
-                    p.setBrush(QColor("#fef3c7" if skin == "vintage" else "#ffffff"))
-                    p.drawRect(QRectF(px, ry + 1.0, 1.5, seg_h - 2.0))
-            else:
-                num_segs = 14
-                gap = 1.6
-                seg_w = max(1.5, (bar_w - (num_segs - 1) * gap) / num_segs)
-                active_segs = int(round(frac * num_segs))
-                peak_seg = int(round(pk_frac * num_segs)) - 1
-                p.setPen(Qt.NoPen)
-                for i in range(num_segs):
-                    sx = bar_x + i * (seg_w + gap)
-                    s_rect = QRectF(sx, ry, seg_w, seg_h)
-                    if i < 9:
-                        on_c, off_c = QColor("#10b981"), QColor("#0d1f19")
-                    elif i < 12:
-                        on_c, off_c = QColor("#f59e0b"), QColor("#211a0d")
-                    else:
-                        on_c, off_c = QColor("#ef4444"), QColor("#261014")
-
-                    if not is_active:
-                        off_c = QColor("#11141d")
-
-                    if is_active and i == peak_seg and pk_db > -56.0:
-                        p.setBrush(QColor("#f8fafc"))
-                    elif is_active and i < active_segs:
-                        p.setBrush(on_c)
-                    else:
-                        p.setBrush(off_c)
-                    p.drawRoundedRect(s_rect, 1.0, 1.0)
-
+        row_h = 9.0
+        meter = self.element()
+        bar_h = min(row_h, float(meter.size_hint(look).height()))
+        for (lbl, state), ry in zip(self.row_states(), (5.0, 19.0)):
+            p.setPen(look_color("text.secondary" if state.enabled else "text.disabled"))
+            p.drawText(QRectF(4.0, ry - 0.5, label_w, row_h + 1.0), Qt.AlignLeft | Qt.AlignVCenter, lbl)
+            meter.paint(p, QRectF(bar_x, ry + (row_h - bar_h) / 2.0, bar_w, bar_h), state, look)
         p.end()
 
 
@@ -2471,6 +948,7 @@ class PluginParamKnob(QWidget):
         self.raw_val = max(0.0, min(1.0, cur_raw))
 
         self.setFixedSize(64, 58)
+        _follow_look(self)
         self.setMouseTracking(True)
         self.setCursor(Qt.PointingHandCursor)
         self._dragging = False
@@ -2613,24 +1091,17 @@ class PluginParamKnob(QWidget):
         self.edit.hide()
         self.update()
 
+    def _on_look_changed(self):
+        self.update()
+
+    def element(self):
+        return look_element("knob", compact=True)
+
     def paintEvent(self, _):
+        state = ElementState(value=self.raw_val, label=self.title,
+                             readout="" if self.edit.isVisible() else self.val_str())
         p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        w, h = float(self.width()), float(self.height())
-        t = get_theme_dict()
-        skin = current_skin()
-        accent = t["accent"] if skin in ("minimal", "vintage") else "#38bdf8"
-        _draw_themed_rotary_dial(
-            p,
-            w,
-            h,
-            self.title,
-            self.raw_val,
-            self.val_str(),
-            accent,
-            show_readout=not self.edit.isVisible(),
-            compact=True,
-        )
+        self.element().paint(p, QRectF(0, 0, self.width(), self.height()), state, current_look())
         p.end()
 
 
@@ -2874,8 +1345,7 @@ class PluginRackCard(QFrame):
         lay.addWidget(slot_lbl)
 
         # 1. Tactile Physical Hardware Bypass Switch (Vertical throw in Effects Rack)
-        sw_style = getattr(core.cfg, "switch_style", "bat_toggle")
-        self.pwr_switch = HardwareSwitch(active=slot.enabled, style=sw_style, compact=True, vertical=True)
+        self.pwr_switch = HardwareSwitch(active=slot.enabled, compact=True, vertical=True)
         self.pwr_switch.setToolTip("Click to toggle enable / bypass (UP=Active, DOWN=Bypass)")
         self.pwr_switch.toggled.connect(self.powerToggled.emit)
         lay.addWidget(self.pwr_switch)
@@ -3018,21 +1488,8 @@ class PluginRackCard(QFrame):
 
         # ---- Bottom Row: Recessed Hardware Macro Knob Strip (when parameters are mapped & not collapsed)
         if mapped_keys and not is_collapsed:
-            skin = current_skin()
             knob_bay = QFrame()
-            knob_bay.setObjectName("pluginMacroBay")
-            if skin == "vintage":
-                knob_bay.setStyleSheet(
-                    "QFrame#pluginMacroBay { background: #14110e; border: 1px solid #382e24; border-radius: 4px; }"
-                )
-            elif skin == "minimal":
-                knob_bay.setStyleSheet(
-                    "QFrame#pluginMacroBay { background: #111318; border: 1px solid #222630; border-radius: 6px; }"
-                )
-            else:
-                knob_bay.setStyleSheet(
-                    "QFrame#pluginMacroBay { background: #080a0f; border: 1px solid #1c2230; border-radius: 5px; }"
-                )
+            knob_bay.setObjectName("pluginMacroBay")   # styled by the generated stylesheet
             kb_lay = QHBoxLayout(knob_bay)
             kb_lay.setContentsMargins(10, 4, 10, 4)
             kb_lay.setSpacing(8)
@@ -3574,10 +2031,7 @@ class SettingsDialog(QDialog):
         self.core = core
         self.cfg = core.cfg
         self.running = running
-        self._orig_theme = getattr(self.cfg, "theme", "scarlet")
-        self._orig_skin = getattr(self.cfg, "ui_skin", "skeuomorphic")
-        self._orig_frame = getattr(self.cfg, "chassis_frame", "auto")
-        self._orig_switch_style = getattr(self.cfg, "switch_style", "bat_toggle")
+        self._orig_look = current_look()   # restored when the dialog is cancelled
         self.setWindowTitle("Settings")
         self.resize(740, 500)
         lay = QVBoxLayout(self)
@@ -3794,9 +2248,8 @@ class SettingsDialog(QDialog):
         skin_row = QHBoxLayout()
         skin_row.addWidget(QLabel("UI Skin / Style:"))
         self.skin_combo = QComboBox()
-        self.skin_combo.addItem("500-Series Hardware Rack (Skeuomorphic)", "skeuomorphic")
-        self.skin_combo.addItem("Vintage Analog Console (Warm Bakelite & VU)", "vintage")
-        self.skin_combo.addItem("Clean Minimalist DAW (Flat Modern)", "minimal")
+        for skin in BUILTIN_SKINS.values():
+            self.skin_combo.addItem(skin.name, skin.id)
         cur_skin = getattr(self.cfg, "ui_skin", "skeuomorphic")
         self.skin_combo.setCurrentIndex(max(0, self.skin_combo.findData(cur_skin)))
         self.skin_combo.currentIndexChanged.connect(self._on_appearance_preview_changed)
@@ -3821,10 +2274,8 @@ class SettingsDialog(QDialog):
         t_row = QHBoxLayout()
         t_row.addWidget(QLabel("Color Theme:"))
         self.theme_combo = QComboBox()
-        self.theme_combo.addItem("Focusrite Scarlet & Matte Obsidian", "scarlet")
-        self.theme_combo.addItem("Cyber Cyan & Electric Blue", "cyan")
-        self.theme_combo.addItem("Monochrome Stealth & Emerald", "stealth")
-        self.theme_combo.addItem("Vintage Analog Amber & Gold", "amber")
+        for palette in BUILTIN_PALETTES.values():
+            self.theme_combo.addItem(palette.name, palette.id)
         cur_t = getattr(self.cfg, "theme", "scarlet")
         self.theme_combo.setCurrentIndex(max(0, self.theme_combo.findData(cur_t)))
         self.theme_combo.currentIndexChanged.connect(self._on_appearance_preview_changed)
@@ -3839,6 +2290,7 @@ class SettingsDialog(QDialog):
         self.switch_combo.addItem("Studio Beveled Rocker (80s/90s Rackmount)", "rocker")
         cur_sw = getattr(self.cfg, "switch_style", "bat_toggle")
         self.switch_combo.setCurrentIndex(max(0, self.switch_combo.findData(cur_sw)))
+        self.switch_combo.currentIndexChanged.connect(self._on_appearance_preview_changed)
         sw_row.addWidget(self.switch_combo, 1)
         theme_lay.addLayout(sw_row)
 
@@ -4190,30 +2642,17 @@ class SettingsDialog(QDialog):
         # Monitor Mode
         self.core.set_monitor_mode(self.mon_mode.currentData())
 
-        # UI Skin
-        new_skin = self.skin_combo.currentData()
-        if new_skin:
-            self.cfg.ui_skin = new_skin
-            self.core.set_ui_skin(new_skin)
-
-        # Chassis Frame
-        new_frame = self.frame_combo.currentData()
-        if new_frame:
-            self.cfg.chassis_frame = new_frame
-            self.core.set_chassis_frame(new_frame)
-
-        # Theme
-        new_theme = self.theme_combo.currentData()
-        if new_theme:
-            self.cfg.theme = new_theme
-            self.core.set_theme(new_theme)
-
-        # Switch Style
-        new_switch_style = self.switch_combo.currentData()
-        if new_switch_style:
-            self.cfg.switch_style = new_switch_style
-            if hasattr(self.core, "set_switch_style"):
-                self.core.set_switch_style(new_switch_style)
+        # Appearance: store every id first so the core setters apply the final look once
+        new_skin = self.skin_combo.currentData() or self.cfg.ui_skin
+        new_frame = self.frame_combo.currentData() or self.cfg.chassis_frame
+        new_theme = self.theme_combo.currentData() or self.cfg.theme
+        new_switch_style = self.switch_combo.currentData() or self.cfg.switch_style
+        self.cfg.ui_skin, self.cfg.chassis_frame = new_skin, new_frame
+        self.cfg.theme, self.cfg.switch_style = new_theme, new_switch_style
+        self.core.set_ui_skin(new_skin)
+        self.core.set_chassis_frame(new_frame)
+        self.core.set_theme(new_theme)
+        self.core.set_switch_style(new_switch_style)
 
         # Normalizer
         if hasattr(self, "norm_en"):
@@ -4223,32 +2662,26 @@ class SettingsDialog(QDialog):
         if hasattr(self, "api_en"):
             self.core.set_api_enabled(self.api_en.isChecked(), int(self.api_port_spin.value()))
 
-        apply_theme(
-            QApplication.instance(),
-            self.cfg.theme,
-            self.cfg.ui_skin,
-            self.cfg.chassis_frame,
-        )
-
     def _launch_setup_assistant(self):
         dlg = SetupAssistantDialog(self.core, self)
         if dlg.exec():
             # Refresh audio controls if wizard updated devices
             self._fill_drivers(self.cfg.audio)
 
+    def _preview_look(self) -> Look:
+        return look_for(self.theme_combo.currentData() or "scarlet",
+                        self.skin_combo.currentData() or "skeuomorphic",
+                        self.frame_combo.currentData() or "auto",
+                        self.switch_combo.currentData() if hasattr(self, "switch_combo") else None)
+
     def _on_appearance_preview_changed(self, _=None):
-        theme = self.theme_combo.currentData() or "scarlet"
-        skin = self.skin_combo.currentData() or "skeuomorphic"
-        frame = self.frame_combo.currentData() or "auto"
-        apply_theme(QApplication.instance(), theme, skin, frame)
+        look = self._preview_look()
+        if look != current_look():
+            set_look(look)
 
     def reject(self):
-        apply_theme(
-            QApplication.instance(),
-            self._orig_theme,
-            self._orig_skin,
-            self._orig_frame,
-        )
+        if current_look() != self._orig_look:
+            set_look(self._orig_look)
         super().reject()
 
 
@@ -4667,7 +3100,6 @@ class MainWindow(QMainWindow):
         self._editor_event: threading.Event | None = None
         self._quitting = False
         self.setWindowTitle("Mandible")
-        theme_cur = getattr(self.cfg, "theme", "scarlet")
         self.setWindowIcon(branding.app_icon())
         self.resize(1020, 660)
 
@@ -4697,7 +3129,7 @@ class MainWindow(QMainWindow):
         mb_left.setSpacing(10)
         mb_left.addWidget(RackScrew(16))
 
-        self.pilot_lamp = PilotLamp(active=False, color="#10b981", size=18)
+        self.pilot_lamp = PilotLamp(active=False, size=18)
         mb_left.addWidget(self.pilot_lamp)
 
         self.power = QPushButton("MASTER POWER")
@@ -4808,9 +3240,8 @@ class MainWindow(QMainWindow):
 
         pfx_lay.addStretch()
 
-        sw_style = getattr(self.cfg, "switch_style", "bat_toggle")
         pfx_active = bool(self.cfg.prefx.rnnoise_enabled or self.cfg.prefx.noise_gate_enabled)
-        self.prefx_switch = HardwareSwitch(active=pfx_active, style=sw_style, compact=False)
+        self.prefx_switch = HardwareSwitch(active=pfx_active, compact=False)
         self.prefx_switch.toggled.connect(lambda on: self._toggle_prefx_quick(on))
         pfx_lay.addWidget(self.prefx_switch)
 
@@ -4913,7 +3344,7 @@ class MainWindow(QMainWindow):
         lim_lay.addWidget(self.limiter_thresh_lbl)
 
         lim_active = bool(self.cfg.limiter.enabled)
-        self.limiter_switch = HardwareSwitch(active=lim_active, style=sw_style, compact=False)
+        self.limiter_switch = HardwareSwitch(active=lim_active, compact=False)
         self.limiter_switch.toggled.connect(lambda on: self._toggle_limiter_quick(on))
         lim_lay.addWidget(self.limiter_switch)
 
@@ -5053,7 +3484,8 @@ class MainWindow(QMainWindow):
         # ---- tray
         self._tray_on = False
         self._tray_light = branding.taskbar_is_light()
-        self.tray = QSystemTrayIcon(branding.tray_icon(False, get_theme_dict(theme_cur)["accent"]), self)
+        self.tray = QSystemTrayIcon(branding.tray_icon(False), self)
+        look_bus().lookChanged.connect(self._on_look_changed)
         menu = QMenu()
         act_show = QAction("Show Mandible", self)
         act_wizard = QAction("Audio Setup Assistant…", self)
@@ -5190,7 +3622,6 @@ class MainWindow(QMainWindow):
     def refresh_chains(self):
         row = self.chain_list.currentRow()
         target = self.core.target()
-        cur_theme = getattr(self.cfg, "theme", "scarlet")
         self.chain_list.blockSignals(True)
         self.chain_list.clear()
         for c in self.cfg.chains:
@@ -5198,7 +3629,7 @@ class MainWindow(QMainWindow):
             it = QListWidgetItem()
             it.setSizeHint(QSize(260, 68))
             self.chain_list.addItem(it)
-            card = ChainCardWidget(c, is_active, cur_theme, self)
+            card = ChainCardWidget(c, is_active, self)
             self.chain_list.setItemWidget(it, card)
 
         self.chain_list.blockSignals(False)
@@ -5221,7 +3652,6 @@ class MainWindow(QMainWindow):
 
     def refresh_active(self):
         target = self.core.target()
-        cur_theme = getattr(self.cfg, "theme", "scarlet")
         cur_row = self.chain_list.currentRow()
         for i, c in enumerate(self.cfg.chains):
             it = self.chain_list.item(i)
@@ -5251,7 +3681,7 @@ class MainWindow(QMainWindow):
             self.flow_strip.refresh(target, text)
 
         self._tray_on = on
-        self.tray.setIcon(branding.tray_icon(on, get_theme_dict(cur_theme)["accent"]))
+        self.tray.setIcon(branding.tray_icon(on))
         self.tray.setToolTip(f"Mandible — {text}")
         if self.editor.chain is not None:
             is_live = (self.editor.chain.id == target)
@@ -5601,15 +4031,10 @@ class MainWindow(QMainWindow):
         self.status.setText(f"[OFFLINE] {reason}")
         self._update_status()
 
-    def refresh_switch_style(self, style_name: str = None):
-        style = style_name or getattr(self.cfg, "switch_style", "bat_toggle")
-        self.cfg.switch_style = style
-        if hasattr(self, "prefx_switch"):
-            self.prefx_switch.set_style(style)
-        if hasattr(self, "limiter_switch"):
-            self.limiter_switch.set_style(style)
-        if hasattr(self, "editor") and hasattr(self.editor, "refresh_plugins"):
-            self.editor.refresh_plugins()
+    def _on_look_changed(self):
+        """Look switched: the tray follows the accent (widgets repaint themselves)."""
+        if hasattr(self, "tray"):
+            self.tray.setIcon(branding.tray_icon(self._tray_on))
 
     def _settings(self):
         dlg = SettingsDialog(self.core, self.core.engine.running, self)
@@ -5620,14 +4045,13 @@ class MainWindow(QMainWindow):
             if self.core.engine.running or self.cfg.autostart_audio:
                 self.start_audio()
             self._update_limiter_ui()
-            self.refresh_switch_style()
 
     def _update_status(self):
         e = self.core.engine
         light = branding.taskbar_is_light()
         if light != getattr(self, "_tray_light", light) and hasattr(self, "tray"):
             self._tray_light = light
-            self.tray.setIcon(branding.tray_icon(self._tray_on, get_theme_dict(self.cfg.theme)["accent"]))
+            self.tray.setIcon(branding.tray_icon(self._tray_on))
         state_changed = getattr(self, "_status_running", None) != e.running
         self._status_running = e.running
         if hasattr(self, "pilot_lamp"):
@@ -5821,10 +4245,7 @@ def main():
         return 0
 
     cfg = load_config()
-    cur_theme = getattr(cfg, "theme", "scarlet")
-    cur_skin = getattr(cfg, "ui_skin", "skeuomorphic")
-    cur_frame = getattr(cfg, "chassis_frame", "auto")
-    apply_theme(app, cur_theme, cur_skin, cur_frame)
+    apply_theme(app, look_from_config(cfg))
 
     first_run = not cfg.audio.driver
     if first_run:

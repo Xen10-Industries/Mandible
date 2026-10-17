@@ -6,6 +6,7 @@ slot plus shape tokens. Widgets read ``current_look()`` and repaint on
 """
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -21,7 +22,7 @@ if TYPE_CHECKING:
 __all__ = [
     "PALETTE_TOKENS", "SKIN_SLOTS", "SHAPE_TOKENS", "Palette", "Skin", "Look",
     "BUILTIN_PALETTES", "BUILTIN_SKINS", "LookBus", "space", "font_px",
-    "current_look", "set_look", "look_bus",
+    "current_look", "set_look", "look_bus", "with_elements", "look_for", "look_from_config",
 ]
 
 SKIN_SLOTS = ("frame", "switch", "knob", "meter", "panel", "screws", "density")
@@ -272,6 +273,42 @@ def set_look(look: Look, app: "QApplication | None" = None) -> None:
     if app is not None:
         app.setStyleSheet(qss)
     look_bus().lookChanged.emit()
+
+
+# ------------------------------------------------------ config ids -> Look
+
+def with_elements(look: Look, **overrides: str) -> Look:
+    """``look`` with some skin element slots replaced; the skin keeps its id and name."""
+    if all(look.skin.elements.get(slot) == variant for slot, variant in overrides.items()):
+        return look
+    skin = dataclasses.replace(look.skin, elements={**look.skin.elements, **overrides})
+    return Look(look.palette, skin)
+
+
+def look_for(theme: str, skin: str, frame: str = "auto", switch_style: str | None = None) -> Look:
+    """The Look for config ids. Unknown ids fall back to ``scarlet`` / ``skeuomorphic``.
+
+    ``frame`` and ``switch_style`` are the old ``chassis_frame`` / ``switch_style`` settings
+    (Task 18 migrates them into user skins): a frame other than ``"auto"`` overrides the
+    skin's frame; the switch style only ever applied to the skeuomorphic skin, so it
+    overrides the switch there and is ignored elsewhere, as before.
+    """
+    from .elements import registry
+
+    palette = BUILTIN_PALETTES.get(theme, BUILTIN_PALETTES["scarlet"])
+    base = BUILTIN_SKINS.get(skin, BUILTIN_SKINS["skeuomorphic"])
+    overrides: dict[str, str] = {}
+    if frame in registry.variants("frame"):
+        overrides["frame"] = frame
+    if base.id == "skeuomorphic" and switch_style in registry.variants("switch"):
+        overrides["switch"] = switch_style
+    return with_elements(Look(palette, base), **overrides)
+
+
+def look_from_config(cfg) -> Look:
+    """The Look an ``AppConfig`` selects (``theme``, ``ui_skin``, ``chassis_frame``, ``switch_style``)."""
+    return look_for(getattr(cfg, "theme", "scarlet"), getattr(cfg, "ui_skin", "skeuomorphic"),
+                    getattr(cfg, "chassis_frame", "auto"), getattr(cfg, "switch_style", None))
 
 
 # ------------------------------------------------------------- spacing and type
