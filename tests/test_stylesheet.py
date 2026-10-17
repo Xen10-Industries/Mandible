@@ -227,3 +227,25 @@ def test_set_look_applies_the_real_stylesheet(qapp, restore_look):
     look = Look(BUILTIN_PALETTES["cyan"], BUILTIN_SKINS["vintage"])
     set_look(look)
     assert qapp.styleSheet() == build_qss(look)
+
+
+INFO_TEXT_SELECTORS = ("QLabel#flowBusLabel", "QLabel#flowArrow", "QLabel#chainSub",
+                       "QLabel#rackSlotIndex", "QLabel#latencyChip", "QLabel#rackBayLabel")
+
+
+@pytest.mark.parametrize("look", ALL_LOOKS)
+def test_informational_text_is_readable_not_disabled_colour(look):
+    """Live informational labels use text.secondary (>= 4.5:1), never text.disabled."""
+    from mandible.ui.palette_gen import contrast_ratio
+
+    qss = build_qss(look)
+    pal = look.palette
+    for selector in INFO_TEXT_SELECTORS:
+        body = " ".join(rule_blocks(qss, selector))
+        colour = re.search(r"(?<![-\w])color:\s*(#[0-9a-fA-F]{6})", body)
+        assert colour, selector
+        colour = colour.group(1).lower()
+        assert colour != pal.color("text.disabled").lower(), selector
+        for surface in ("bg.panel", "bg.raised", "bg.inset"):
+            ratio = contrast_ratio(colour, pal.color(surface))
+            assert ratio >= 4.5, (selector, surface, round(ratio, 2))

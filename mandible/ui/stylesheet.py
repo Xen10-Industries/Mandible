@@ -222,13 +222,13 @@ QFrame#signalFlowStrip {{
     border-radius: {r_pnl};
 }}
 QLabel#flowBusLabel {{
-    color: {dim};
+    color: {muted};
     font-size: 7.5pt;
     font-weight: bold;
     font-family: Consolas, monospace;
 }}
 QLabel#flowArrow {{
-    color: {dim};
+    color: {muted};
     font-size: 8.5pt;
     font-weight: bold;
 }}
@@ -337,7 +337,7 @@ QLabel#chainName[active="true"] {{
     font-weight: 800;
 }}
 QLabel#chainSub {{
-    color: {dim};
+    color: {muted};
     font-size: 7.5pt;
     padding-left: 17px;
 }}
@@ -456,7 +456,7 @@ QLabel#rackSlotIndex {{
     font-family: Consolas, monospace;
     font-size: 10.5pt;
     font-weight: bold;
-    color: {dim};
+    color: {muted};
 }}
 QLabel#formatBadge {{
     background-color: {inset};
@@ -482,7 +482,7 @@ QLabel#rackSlotError {{
     font-weight: bold;
 }}
 QLabel#latencyChip {{
-    color: {dim};
+    color: {muted};
     font-family: Consolas, monospace;
     font-size: 7.5pt;
     font-weight: bold;
@@ -491,7 +491,7 @@ QLabel#rackBayLabel {{
     font-family: Consolas, monospace;
     font-size: 6.5pt;
     font-weight: bold;
-    color: {dim};
+    color: {muted};
     letter-spacing: 0.5px;
     border: none;
     background: transparent;
