@@ -58,6 +58,18 @@ def _scrollable_content(w: QWidget) -> bool:
     return isinstance(view, QAbstractScrollArea) and view.viewport() is parent
 
 
+def _unscrollable_item_widget_overflow(w: QWidget) -> bool:
+    """An item view's item widget wider than the viewport of a view that cannot scroll
+    sideways: the part past the right edge is simply cut off (Task 9b's shrunk plugin cards)."""
+    viewport = w.parentWidget()
+    view = viewport.parentWidget() if viewport is not None else None
+    if not (isinstance(view, QAbstractItemView) and view.viewport() is viewport):
+        return False
+    if view.horizontalScrollBarPolicy() != Qt.ScrollBarAlwaysOff:
+        return False
+    return w.geometry().right() > viewport.rect().right() + 1
+
+
 def _describe(w: QWidget) -> str:
     name = w.objectName()
     text = ""
@@ -82,12 +94,19 @@ def find_overflow(root: QWidget) -> list[Overflow]:
 
     The content roots of scroll areas and item views (direct children of a viewport) are
     skipped, since they legitimately exceed the visible rect; their own children are not.
+    The exception: an item widget wider than the viewport of an item view whose horizontal
+    scroll bar is always off is reported, since nothing can bring its right part into view.
     Zero-size widgets are skipped.
     """
     found: list[Overflow] = []
     for w in _visible_widgets(root):
         parent = w.parentWidget()
-        if parent is None or not parent.isVisible() or _scrollable_content(w):
+        if parent is None or not parent.isVisible():
+            continue
+        if _scrollable_content(w):
+            if _unscrollable_item_widget_overflow(w):
+                found.append(Overflow(type(w).__name__, w.objectName(), w.geometry().right(),
+                                      parent.rect().right()))
             continue
         geo, rect = w.geometry(), parent.rect()
         if geo.right() > rect.right() + 1 or geo.bottom() > rect.bottom() + 1:

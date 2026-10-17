@@ -446,3 +446,61 @@ def test_status_zone_controls_and_settings_stay_in_sync(qapp, main_window, sampl
     assert win.idle.currentData() == "dry"
     assert win.hk_enabled.isChecked()
     assert "F12" in win.panic_key_action.text()
+
+
+# ------------------------------------------------------------------ shrinking (Task 9b)
+# The sweeps above only ever grow the window; shrinking used to leave plugin cards at their
+# old width, with their action buttons past the rack list's right edge.
+from test_skins import SKINS as STANDARD_SKINS  # noqa: E402
+
+DESCENDING = [(w, h) for h in sorted(HEIGHTS, reverse=True) for w in sorted(WIDTHS, reverse=True)]
+
+
+def _assert_steps_fit(report, skin, label):
+    steps = report["skins"][skin]["steps"]
+    assert steps, (label, skin)
+    for m in steps:
+        assert m["cards_past_viewport"] == [], (label, skin, m["step"], m["cards_past_viewport"])
+        if m["plugin_cards"]:
+            vw = m["rack_viewport_width"]
+            for card in m["plugin_cards"]:
+                assert card["right"] <= vw - 1, (label, skin, m["step"], card, vw)
+                assert card.get("actions_right", 0) <= vw - 1, (label, skin, m["step"], card, vw)
+        if WIN32:
+            assert m["size"] == [int(v) for v in m["step"].split("x")], (label, skin, m["step"])
+            assert m["overflow"] == [], (label, skin, m["step"], m["overflow"])
+            assert m["clipped_text"] == [], (label, skin, m["step"], m["clipped_text"])
+
+
+@pytest.mark.parametrize("skin", STANDARD_SKINS)
+def test_shrink_sweep_no_overflow(tmp_path, skin):
+    """2560 -> 1920 -> 1600 -> 1280 -> 1024 at each height (1080, 900, 720, 640), settling
+    after every resize: no overflow or clipped text, and every plugin card (with its action
+    cluster) stays inside the rack list's viewport."""
+    assert set(STANDARD_SKINS) == set(SKINS)
+    proc, report = run_probe(tmp_path, DESCENDING, skins=(skin,))
+    assert report is not None and proc.returncode == 0, proc.stdout + proc.stderr
+    assert [m["step"] for m in report["skins"][skin]["steps"]] == [f"{w}x{h}" for w, h in DESCENDING]
+    _assert_steps_fit(report, skin, "shrink")
+
+
+@pytest.mark.parametrize("skin", STANDARD_SKINS)
+def test_shrink_sweep_many_knobs(tmp_path, skin):
+    """A card with the most knobs a card shows, shrunk from 1920 down to 1024."""
+    sizes = [(1920, 1080), (1600, 900), (1280, 720), (1024, 640)]
+    proc, report = run_probe(tmp_path, sizes, scenario="many_knobs", skins=(skin,))
+    assert report is not None and proc.returncode == 0, proc.stdout + proc.stderr
+    _assert_steps_fit(report, skin, "many_knobs")
+
+
+@pytest.mark.parametrize("skin", STANDARD_SKINS)
+def test_shrink_then_grow_round_trip(tmp_path, skin):
+    """1920 -> 1024 -> 1920 ends with the same card widths as a 1920 window that never shrank
+    (the cards refill the space when it comes back)."""
+    proc, report = run_probe(tmp_path, [(1920, 1080), (1024, 1080), (1920, 1080)], skins=(skin,))
+    assert report is not None and proc.returncode == 0, proc.stdout + proc.stderr
+    fresh, small, back = report["skins"][skin]["steps"]
+    widths = [c["width"] for c in fresh["plugin_cards"]]
+    assert widths and [c["width"] for c in back["plugin_cards"]] == widths, (fresh, back)
+    assert all(c["width"] < w for c, w in zip(small["plugin_cards"], widths)), small
+    _assert_steps_fit(report, skin, "round trip")

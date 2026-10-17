@@ -10,7 +10,7 @@ import numpy as np
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout,
-                               QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem,
+                               QInputDialog, QLabel, QLineEdit, QListWidgetItem,
                                QMainWindow, QMenu, QMessageBox, QSplitter,
                                QSystemTrayIcon, QVBoxLayout, QWidget)
 
@@ -38,6 +38,7 @@ from .widgets.header import (AUDITION_IDLE_TEXT, POWER_OFF_TEXT, POWER_ON_TEXT,
                              STRIPS_COLLAPSE_BELOW_H, HeaderBar)
 from .widgets.knobs import HardwareKnob
 from .widgets.labels import ElidedLabel
+from .widgets.lists import CardListWidget
 from .widgets.meters import LevelMeter, ThinLevelMeter
 from .widgets.plugin_card import PluginRackCard
 from .widgets.sliders import GainSlider
@@ -177,7 +178,8 @@ class ChainEditor(QWidget):
         rb_lay.addWidget(insp_box)
 
         # The 1U Modular Effects Rack List
-        self.plugins = QListWidget()
+        # Cards re-fit whenever the viewport width changes, in both directions (Task 9b).
+        self.plugins = CardListWidget()
         self.plugins.setObjectName("rackList")
         self.plugins.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         rb_lay.addWidget(self.plugins, 1)
@@ -591,7 +593,7 @@ class MainWindow(QMainWindow):
         lib_row.addStretch()
         pb_lay.addLayout(lib_row)
 
-        self.chain_list = QListWidget()
+        self.chain_list = CardListWidget()   # chain cards track the panel width
         self.chain_list.setObjectName("chainList")
         self.chain_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.chain_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)

@@ -69,6 +69,32 @@ def test_find_overflow_checks_inside_list_item_widgets(qapp):
     assert [(o.widget, o.object_name) for o in found] == [("QPushButton", "spill")]
 
 
+def test_find_overflow_reports_item_widget_wider_than_unscrollable_view(qapp):
+    """Task 9b: an item widget left wider than a view that cannot scroll sideways is cut
+    off at the right edge; with a horizontal scroll bar available it is legitimate content."""
+    from PySide6.QtCore import QSize
+    from PySide6.QtWidgets import QListWidget, QListWidgetItem
+
+    def build(policy):
+        root = QWidget()
+        view = QListWidget(root)
+        view.setHorizontalScrollBarPolicy(policy)
+        view.setGeometry(0, 0, 200, 100)
+        item = QListWidgetItem()
+        item.setSizeHint(QSize(1, 40))
+        view.addItem(item)
+        card = QWidget()
+        card.setObjectName("card")
+        view.setItemWidget(item, card)
+        _shown(qapp, root)
+        card.setGeometry(0, 0, view.viewport().width() + 50, 40)
+        return root
+
+    found = ins.find_overflow(build(Qt.ScrollBarAlwaysOff))
+    assert [(o.widget, o.object_name) for o in found] == [("QWidget", "card")]
+    assert ins.find_overflow(build(Qt.ScrollBarAsNeeded)) == []
+
+
 def test_find_clipped_text_flags_narrow_label_and_honours_tooltip(qapp):
     root = QWidget()
     narrow = QLabel("A rather long caption", root)

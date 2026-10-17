@@ -14,7 +14,16 @@ with real Windows font metrics (``QT_QPA_PLATFORM=windows``) in a subprocess. Th
         "elided": [...], "elided_without_tooltip": [...],
         "flow_mode": "full|icons|hidden", "actions_folded": bool,
         "strips_collapsed": bool, "header_left_width": int,
-        "flow_entry_points": {"prefx": [...], "sb": [...], "lim": [...]}}}}}}
+        "flow_entry_points": {"prefx": [...], "sb": [...], "lim": [...]},
+        "rack_viewport_width": int, "plugin_cards": [{"width", "right", "actions_right"}],
+        "cards_past_viewport": [...]}},
+        "steps": [{"step": "<WxH>", ...same keys...}, ...]}}}
+
+``--sizes`` are visited in the order given (repeats allowed), each measured after the layout
+settles, so a descending list checks that the window also survives shrinking (Task 9b: cards
+used to keep their old width). ``sizes`` keeps the last measurement per size; ``steps`` all of
+them in order. ``cards_past_viewport`` lists plugin and chain cards (or a plugin card's action
+cluster) whose right edge lies past their list's viewport.
 
 ``--scenario long_names`` renames the first chain to 60 characters, gives its first plugin a
 long display name and sets a non-Latin input device name before the window is built.
@@ -135,12 +144,44 @@ def _elided(win) -> tuple[list[str], list[str]]:
     return elided, missing
 
 
+def _cards_fit(win) -> dict:
+    """Card geometry relative to the rack and chain lists' viewports."""
+    from PySide6.QtCore import QPoint
+    from PySide6.QtWidgets import QWidget
+
+    out = {"rack_viewport_width": 0, "plugin_cards": [], "cards_past_viewport": []}
+    for list_name, view in (("rack", win.editor.plugins), ("chains", win.chain_list)):
+        vp = view.viewport()
+        vw = vp.width()
+        if list_name == "rack":
+            out["rack_viewport_width"] = vw
+        for i in range(view.count()):
+            card = view.itemWidget(view.item(i))
+            if card is None:
+                continue
+            right = card.geometry().right()
+            entry = {"width": card.width(), "right": right}
+            actions = getattr(card, "actions", None)   # PluginRackCard's action cluster
+            if isinstance(actions, QWidget) and actions.isVisible():
+                entry["actions_right"] = actions.mapTo(vp, QPoint(actions.width() - 1, 0)).x()
+            if list_name == "rack":
+                out["plugin_cards"].append(entry)
+            limit = vw - 1
+            if right > limit or entry.get("actions_right", 0) > limit:
+                out["cards_past_viewport"].append(
+                    f"{list_name}[{i}] right={right} actions_right={entry.get('actions_right')}"
+                    f" viewport_width={vw}")
+    return out
+
+
 def measure(win, app, w: int, h: int) -> dict:
     from mandible.ui import inspect as ins
 
     win.resize(w, h)
-    for _ in range(3):
-        app.processEvents()
+    sys.path.insert(0, str(ROOT / "tools"))
+    from ui_gallery import settle
+
+    settle(win)
     hint = win.minimumSizeHint().expandedTo(win.minimumSize())
     elided, missing = _elided(win)
     header = win.header
@@ -156,6 +197,7 @@ def measure(win, app, w: int, h: int) -> dict:
         "strips_collapsed": bool(win.faders_collapsed),
         "header_left_width": header.left.width(),
         "flow_entry_points": header.flow_entry_points(),
+        **_cards_fit(win),
     }
 
 
@@ -183,9 +225,11 @@ def run(skins: list[str], theme: str, sizes: list[tuple[int, int]], scenario: st
                 apply_window_scenario(win, scenario)
                 app.processEvents()
                 hint = win.minimumSizeHint().expandedTo(win.minimumSize())
-                entry = {"min_size": [hint.width(), hint.height()], "sizes": {}}
+                entry = {"min_size": [hint.width(), hint.height()], "sizes": {}, "steps": []}
                 for w, h in sizes:
-                    entry["sizes"][f"{w}x{h}"] = measure(win, app, w, h)
+                    m = measure(win, app, w, h)
+                    entry["sizes"][f"{w}x{h}"] = m
+                    entry["steps"].append({"step": f"{w}x{h}", **m})
                 report["skins"][skin] = entry
             finally:
                 gallery.dispose_main_window(win)
@@ -317,11 +361,13 @@ def run_standard(skin: str, themes: list[str], sizes: list[tuple[int, int]],
 def problems(report: dict) -> list[str]:
     found = []
     for skin, entry in report["skins"].items():
-        for size, m in entry["sizes"].items():
+        for m in entry["steps"]:
+            size = m["step"]
             want = [int(v) for v in size.split("x")]
             if m["size"] != want:
                 found.append(f"{skin} {size}: window is {m['size']}")
-            for name in ("overflow", "clipped_text", "elided_without_tooltip"):
+            for name in ("overflow", "clipped_text", "elided_without_tooltip",
+                         "cards_past_viewport"):
                 if m[name]:
                     found.append(f"{skin} {size}: {name} {m[name]}")
             for key, where in m["flow_entry_points"].items():

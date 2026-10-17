@@ -12,8 +12,9 @@ page with the images and a table of report counts) and ``DIR/report.json``::
     {"<screen>|<skin>|<theme>|<WxH>": {"min_size": [w, h], "overflow": [...],
      "clipped_text": [...], "untiered_buttons": [...], "contrast": [...]}}
 
-Screens are ``main`` plus one per dialog. Sizes apply to the main window; dialogs are
-captured at their default size. Nothing is ever shown on the desktop (WA_DontShowOnScreen),
+Screens are ``main`` plus one per dialog. Sizes apply to the main window, captured from the
+largest down (so all but the first capture follow a shrink); dialogs are captured at their
+default size. Nothing is ever shown on the desktop (WA_DontShowOnScreen),
 and %APPDATA% is pointed at a temp dir before ``mandible`` is imported. QT_QPA_PLATFORM
 defaults to ``offscreen``; set it to ``windows`` on Windows for real font metrics (minimum
 sizes differ between the two because the offscreen platform substitutes fonts). ``--strict`` exits 1
@@ -232,7 +233,9 @@ def run_gallery(out: pathlib.Path, skins: list[str], themes: list[str],
                     win.chain_list.setCurrentRow(0)
                     app.processEvents()
                 hint = win.minimumSizeHint().expandedTo(win.minimumSize())
-                for w, h in sizes:
+                # Largest first, so every later capture comes after a shrink: layouts that only
+                # re-fit when growing (Task 9b: plugin cards kept their old width) show up.
+                for w, h in sorted(sizes, key=lambda s: (s[0] * s[1], s), reverse=True):
                     win.resize(w, h)
                     settle(win)
                     key = f"main|{skin}|{theme}|{w}x{h}"
