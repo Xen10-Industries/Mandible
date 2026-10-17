@@ -33,7 +33,7 @@ from .widgets.base import SpacedLayouts, _follow_look, reserve_text_width, set_s
 from .widgets.buttons import make_button, set_button_icon, set_button_state
 from .widgets.chain_card import ChainCardWidget
 from .widgets.channel_strip import ChannelDot, ChannelStripCard
-from .widgets.chassis import ChassisWrapperFrame, RackScrew
+from .widgets.chassis import ChassisWrapperFrame
 from .widgets.header import (AUDITION_IDLE_TEXT, POWER_OFF_TEXT, POWER_ON_TEXT,
                              STRIPS_COLLAPSE_BELOW_H, HeaderBar)
 from .widgets.knobs import HardwareKnob
@@ -54,6 +54,9 @@ LIVE_ON_TEXT = "Live on mic"
 STANDBY_TEXT = "Standby"
 FADERS_COLLAPSE_TEXT = "Collapse faders"
 FADERS_EXPAND_TEXT = "Expand faders"
+# Channel marker colours: identification only, so the output channel is neutral (a status
+# colour there read as an error).
+CHANNEL_TOKENS = {"in": "status.ok", "out": "text.primary", "mon": "readout.text"}
 
 
 # =============================================================== chain editor
@@ -75,7 +78,6 @@ class ChainEditor(QWidget):
 
         # Rack Bay Header
         rb_hdr = self._spaced.add(QHBoxLayout(), spacing=2, margins=0)
-        rb_hdr.addWidget(RackScrew(14))
         self.hdr_static = QLabel("EFFECTS RACK  //  BUS:")
         self.hdr_static.setObjectName("rackBusLabel")
         rb_hdr.addWidget(self.hdr_static)
@@ -95,7 +97,6 @@ class ChainEditor(QWidget):
                                    tooltip="Add a VST3 plugin or built-in effect to this preset")
         self.add_btn.setObjectName("rackInsertBtn")
         rb_hdr.addWidget(self.add_btn)
-        rb_hdr.addWidget(RackScrew(14))
         rb_lay.addLayout(rb_hdr)
 
         # One-row inspector: each caption sits above its control so the row stays narrow.
@@ -563,15 +564,14 @@ class MainWindow(QMainWindow):
         # 2. Middle: VOICE PRESET BANK (Recessed / Inset 500-Series Modular Bay)
         self.preset_bay = QFrame()
         self.preset_bay.setObjectName("presetModularBay")
-        pb_lay = self._spaced.add(QVBoxLayout(self.preset_bay), spacing=2, margins=2)
+        # 12 px inset, like the module strips above and below, so the three titles line up.
+        pb_lay = self._spaced.add(QVBoxLayout(self.preset_bay), spacing=2, margins=3)
 
         # Title on its own row; factory / import / export share one menu button below it.
         chain_head = self._spaced.add(QHBoxLayout(), spacing=2, margins=0)
-        chain_head.addWidget(RackScrew(12))
         chain_title = ElidedLabel("VOICE PRESET BANK", min_chars=6)
         chain_title.setObjectName("bankTitle")
         chain_head.addWidget(chain_title, 1)
-        chain_head.addWidget(RackScrew(12))
         pb_lay.addLayout(chain_head)
 
         self.library_btn = make_button("Library", "secondary", tooltip="Factory presets, import and export")
@@ -682,7 +682,8 @@ class MainWindow(QMainWindow):
 
         # 1. Full Faders View (Meters + Faders)
         self.full_faders_widget = QWidget()
-        meters = self._spaced.add(QHBoxLayout(self.full_faders_widget), spacing=2, margins=0)
+        # Same 12 px gutter as between the body columns (the splitter handle).
+        meters = self._spaced.add(QHBoxLayout(self.full_faders_widget), spacing=3, margins=0)
 
         self.m_in = LevelMeter("CH 01  PRE-FX MIC IN")
         self.m_out = LevelMeter("CH 02  POST-FX BROADCAST")
@@ -693,9 +694,10 @@ class MainWindow(QMainWindow):
         self.g_mon = GainSlider("Phones", self.cfg.monitor_gain_db)
 
         in_name = self.cfg.audio.input_device or "No input"
-        strip_in = ChannelStripCard(f"CH 01  MIC IN ({in_name})", "status.ok", self.m_in, self.g_in)
-        strip_out = ChannelStripCard("CH 02  MAIN OUT (DISCORD / LOOPBACK)", "status.danger", self.m_out, self.g_out)
-        strip_mon = ChannelStripCard("CH 03  HEADPHONES (MONITOR)", "readout.text", self.m_mon, self.g_mon)
+        strip_in = ChannelStripCard(f"CH 01  MIC IN ({in_name})", CHANNEL_TOKENS["in"], self.m_in, self.g_in)
+        strip_out = ChannelStripCard("CH 02  MAIN OUT (DISCORD / LOOPBACK)", CHANNEL_TOKENS["out"], self.m_out,
+                                     self.g_out)
+        strip_mon = ChannelStripCard("CH 03  HEADPHONES (MONITOR)", CHANNEL_TOKENS["mon"], self.m_mon, self.g_mon)
 
         meters.addWidget(strip_in, 1)
         meters.addWidget(strip_out, 1)
@@ -722,9 +724,9 @@ class MainWindow(QMainWindow):
             b_lay.addWidget(tm, 1)
             return box, tm
 
-        c_box_in, self.thin_m_in = _make_condensed_strip(f"CH 01 MIC ({in_name})", "status.ok")
-        c_box_out, self.thin_m_out = _make_condensed_strip("CH 02 MAIN OUT", "status.danger")
-        c_box_mon, self.thin_m_mon = _make_condensed_strip("CH 03 PHONES", "readout.text")
+        c_box_in, self.thin_m_in = _make_condensed_strip(f"CH 01 MIC ({in_name})", CHANNEL_TOKENS["in"])
+        c_box_out, self.thin_m_out = _make_condensed_strip("CH 02 MAIN OUT", CHANNEL_TOKENS["out"])
+        c_box_mon, self.thin_m_mon = _make_condensed_strip("CH 03 PHONES", CHANNEL_TOKENS["mon"])
 
         cond_lay.addWidget(c_box_in, 1)
         cond_lay.addWidget(c_box_out, 1)

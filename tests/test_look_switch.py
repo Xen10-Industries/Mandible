@@ -388,7 +388,7 @@ def test_chassis_margins_follow_frame(qapp, restore_look):
     try:
         set_look(_look("skeuomorphic", "scarlet"))
         frame.update_frame_margins()
-        assert frame.layout().contentsMargins().left() == 28
+        assert frame.layout().contentsMargins().left() == 24
         set_look(_look("minimal", "scarlet"))   # lookChanged updates the margins
         m = frame.layout().contentsMargins()
         assert (m.left(), m.top(), m.right(), m.bottom()) == (2, 2, 2, 2)

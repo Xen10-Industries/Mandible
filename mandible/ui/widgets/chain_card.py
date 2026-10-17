@@ -5,7 +5,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout
 
 from ...config import Chain
-from .base import set_style_property
+from .base import SpacedLayouts, _follow_look, set_style_property
 from .labels import ElidedLabel
 from .lamps import PilotLamp
 
@@ -19,25 +19,24 @@ class ChainCardWidget(QFrame):
         self.is_selected = False
         self.setObjectName("chainCard")
 
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(10, 8, 10, 8)
-        lay.setSpacing(7)
+        self._spaced = SpacedLayouts()
+        lay = self._spaced.add(QVBoxLayout(self), spacing=1, margins=(3, 2, 3, 2))
 
         # Row 1: lamp + name + hotkey badge
-        row1 = QHBoxLayout()
-        row1.setSpacing(7)
+        row1 = self._spaced.add(QHBoxLayout(), spacing=2, margins=0)
         row1.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
         self.lamp = PilotLamp(active=is_active, size=10)
         row1.addWidget(self.lamp)
 
-        self.name_lbl = ElidedLabel(chain.name.upper(), min_chars=6)
+        # Names keep the case the user typed (as in the header and tray).
+        self.name_lbl = ElidedLabel(chain.name, min_chars=6)
         self.name_lbl.setObjectName("chainName")
         row1.addWidget(self.name_lbl, 1)
 
         self.hk_lbl = None
         if chain.hotkey.is_set():
-            self.hk_lbl = QLabel(chain.hotkey.label.upper())
+            self.hk_lbl = QLabel(chain.hotkey.label)
             self.hk_lbl.setObjectName("cardHotkey")
             self.hk_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.hk_lbl.setFixedHeight(18)
@@ -45,9 +44,10 @@ class ChainCardWidget(QFrame):
         lay.addLayout(row1)
 
         # Row 2: info subtitle
-        row2 = QHBoxLayout()
-        row2.setSpacing(6)
+        row2 = self._spaced.add(QHBoxLayout(), spacing=2, margins=0)
         row2.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+        # The subtitle starts under the name: an empty column as wide as the lamp.
+        row2.addSpacing(self.lamp.width())
         self.sub_lbl = ElidedLabel(min_chars=8)
         self.sub_lbl.setObjectName("chainSub")
         row2.addWidget(self.sub_lbl, 1)
@@ -60,6 +60,10 @@ class ChainCardWidget(QFrame):
 
         lay.addLayout(row2)
         self.set_active_state(is_active)
+        _follow_look(self)
+
+    def _on_look_changed(self):
+        self._spaced.apply()
 
     def set_active_state(self, on: bool):
         self.is_active = on
@@ -67,8 +71,8 @@ class ChainCardWidget(QFrame):
         set_style_property(self, "active", "true" if on else "false")
 
         n = len(self.chain.plugins)
-        plug_txt = f"{n} Insert{'s' if n != 1 else ''}"
-        status_txt = "LIVE ON MIC" if on else "STANDBY"
+        plug_txt = f"{n} insert{'s' if n != 1 else ''}"
+        status_txt = "Live on mic" if on else "Standby"
         self.sub_lbl.setText(f"{plug_txt} · {status_txt}")
 
         # The card's own ``active`` property styles the card; the labels carry it too so their

@@ -6,6 +6,8 @@ import re
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QSlider, QStackedWidget, QWidget
 
+from ..look import space
+
 
 def parse_audio_value(text: str, default: float, min_val: float, max_val: float) -> float:
     """Parses a numeric value from text input, handling dB, %, s, +/-, and -inf."""
@@ -67,7 +69,7 @@ class GainSlider(QWidget):
         super().__init__()
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(6)
+        lay.setSpacing(space(2))
         lbl = QLabel(label)
         lbl.setObjectName("gainLabel")
         lay.addWidget(lbl)

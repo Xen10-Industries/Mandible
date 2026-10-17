@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from ... import devices as D
-from ..look import font_px
+from ..look import font_px, space
 from ..widgets.base import _follow_look, look_color, set_style_property
 from ..widgets.buttons import make_button
 
@@ -86,8 +86,8 @@ class SetupAssistantDialog(QDialog):
         self.setObjectName("setupAssistant")
 
         main_lay = QVBoxLayout(self)
-        main_lay.setContentsMargins(24, 20, 24, 20)
-        main_lay.setSpacing(16)
+        main_lay.setContentsMargins(space(5), space(4), space(5), space(4))
+        main_lay.setSpacing(space(4))
 
         # Header
         head_box = QHBoxLayout()
@@ -149,7 +149,8 @@ class SetupAssistantDialog(QDialog):
     def _build_step1_mic(self) -> QWidget:
         w = QWidget()
         lay = QVBoxLayout(w)
-        lay.setSpacing(14)
+        lay.setSpacing(space(3))
+        lay.setContentsMargins(0, 0, 0, 0)   # flush with the header and nav row
 
         desc = QLabel(
             "Choose the microphone you speak into. If you have an audio interface (Focusrite, Motu, etc.), "
@@ -249,7 +250,8 @@ class SetupAssistantDialog(QDialog):
     def _build_step2_cable(self) -> QWidget:
         w = QWidget()
         lay = QVBoxLayout(w)
-        lay.setSpacing(14)
+        lay.setSpacing(space(3))
+        lay.setContentsMargins(0, 0, 0, 0)   # flush with the header and nav row
 
         desc = QLabel(
             "Mandible modifies your voice in real time, then sends the audio to a Virtual Audio Cable "
@@ -341,7 +343,8 @@ class SetupAssistantDialog(QDialog):
     def _build_step3_monitor(self) -> QWidget:
         w = QWidget()
         lay = QVBoxLayout(w)
-        lay.setSpacing(14)
+        lay.setSpacing(space(3))
+        lay.setContentsMargins(0, 0, 0, 0)   # flush with the header and nav row
 
         desc = QLabel(
             "Select your headphones or speakers so you can monitor your voice in real time and audition "
@@ -416,12 +419,13 @@ class SetupAssistantDialog(QDialog):
     def _build_step4_guide(self) -> QWidget:
         w = QWidget()
         lay = QVBoxLayout(w)
-        lay.setSpacing(14)
+        lay.setSpacing(space(3))
+        lay.setContentsMargins(0, 0, 0, 0)   # flush with the header and nav row
 
         guide_card = QFrame()
         guide_card.setObjectName("wizardGuideCard")
         g_lay = QVBoxLayout(guide_card)
-        g_lay.setSpacing(10)
+        g_lay.setSpacing(space(2))
 
         g_title = QLabel("CONNECTING TO DISCORD, OBS & GAMES:")
         g_title.setObjectName("wizardGuideTitle")

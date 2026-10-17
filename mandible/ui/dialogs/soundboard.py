@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (QCheckBox, QDialog, QFileDialog, QFrame, QHBoxLay
 from ...config import SoundboardClipConfig
 from ...core import Core
 from ...waveform_widget import SoundboardWaveformWidget
+from ..look import space
 from ..widgets.base import _follow_look, reserve_text_width
 from ..widgets.buttons import make_button
 from .hotkey import HotkeyDialog
@@ -46,8 +47,8 @@ class SoundboardDialog(QDialog):
         duck_strip = QFrame()
         duck_strip.setObjectName("duckStrip")
         duck_lay = QHBoxLayout(duck_strip)
-        duck_lay.setContentsMargins(6, 4, 6, 4)
-        duck_lay.setSpacing(10)
+        duck_lay.setContentsMargins(space(2), space(1), space(2), space(1))
+        duck_lay.setSpacing(space(2))
 
         self.duck_en = QCheckBox("Duck microphone during soundboard playback")
         self.duck_en.setChecked(getattr(self.core.cfg, "soundboard_ducking_enabled", False))

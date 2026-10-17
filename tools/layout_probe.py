@@ -21,8 +21,20 @@ long display name and sets a non-Latin input device name before the window is bu
 ``--scenario running`` fills the header with run-time texts after the window is built, as
 if audio had started: the widest reserved readout texts (sample rate, buffer, latency, every
 driver name) with the power button's on text and Stop loop, then oversize values that must elide.
+``--scenario many_knobs`` maps twelve parameters onto the first chain's first plugin (a stub
+instance with twelve parameters), so its card shows the most knobs a card can hold.
 ``--strict`` exits 1 when any size reports overflow, clipped text, an elided label without
 its full text in the tooltip, or a window that could not shrink to the requested size.
+
+``--mode standard`` measures one skin (the first of ``--skins``) against the spec's "same
+standard" checklist instead: for every theme in ``--themes``, the main window at every size
+and every dialog (each tab / wizard page), contrast, and the live switch into the skin::
+
+    {"platform": ..., "skin": id, "themes": {"<theme>": {"contrast": [...],
+        "screens": {"main|<WxH>" | "<dialog>": {"size", "min_size", "overflow",
+            "clipped_text", "elided_without_tooltip", "untiered_buttons", "off_scale_spacing",
+            "unnamed_icon_controls", "small_painted_text", "painted_text_count"}}}},
+     "switch": {"ms": [...], "errors": [...]}}
 """
 from __future__ import annotations
 
@@ -41,12 +53,38 @@ LONG_PLUGIN_NAME = "Very Long Plugin Name With Many Words Version 3"
 NON_LATIN_DEVICE = "Микрофон (USB Audio CODEC)"
 
 
+MANY_KNOBS = 12   # more parameters than a card shows knobs (plugin_card.MAX_CARD_KNOBS)
+
+
+class _StubParam:
+    def __init__(self, i: int):
+        self.name = f"Parameter {i + 1}"
+        self.raw_value = 0.5
+        self.string_value = f"{i * 10} %"
+        self.units = ""
+
+
+class _StubPlugin:
+    """Stands in for a loaded VST3 instance with ``MANY_KNOBS`` parameters (never processed:
+    the probe's engine is stopped)."""
+
+    reported_latency_samples = 0
+
+    def __init__(self):
+        self.parameters = {f"param_{i}": _StubParam(i) for i in range(MANY_KNOBS)}
+
+
 def apply_scenario(core, scenario: str) -> None:
     if scenario == "long_names":
         chain = core.cfg.chains[0]
         chain.name = LONG_CHAIN_NAME
         chain.plugins[0].display_name = LONG_PLUGIN_NAME
         core.cfg.audio.input_device = NON_LATIN_DEVICE
+    elif scenario == "many_knobs":
+        slot = core.cfg.chains[0].plugins[0]
+        stub = _StubPlugin()
+        slot._instance = stub
+        slot.mapped_params = list(stub.parameters)
     elif scenario not in ("sample", "running"):
         raise ValueError(f"unknown scenario {scenario!r}")
 
@@ -156,6 +194,126 @@ def run(skins: list[str], theme: str, sizes: list[tuple[int, int]], scenario: st
     return report
 
 
+def _standard_lists(widget, allowed) -> dict:
+    from mandible.ui import inspect as ins
+
+    _elided_texts, missing = _elided(widget)
+    painted = ins.painted_text_sizes(widget)
+    return {
+        "overflow": [dataclasses.asdict(o) for o in ins.find_overflow(widget)],
+        "clipped_text": ins.find_clipped_text(widget),
+        "elided_without_tooltip": missing,
+        "untiered_buttons": ins.untiered_buttons(widget),
+        "off_scale_spacing": ins.off_scale_spacing(widget, allowed),
+        "unnamed_icon_controls": ins.unnamed_icon_controls(widget),
+        "small_painted_text": sorted({f"{cls} {text!r} {px:g}px" for cls, text, px in painted
+                                      if px < ins.MIN_TEXT_PX}),
+        "painted_text_count": len(painted),
+    }
+
+
+def _merge_lists(into: dict, more: dict) -> None:
+    for key, value in more.items():
+        if isinstance(value, list):
+            have = into.setdefault(key, [])
+            have.extend(v for v in value if v not in have)
+        elif key == "painted_text_count":
+            into[key] = into.get(key, 0) + value
+
+
+def _time_switch(app, core, gallery, skin: str, themes: list[str], rounds: int = 3) -> dict:
+    """Switch live into ``skin`` from every other built-in skin, in every theme, on a shown
+    main window: milliseconds per switch, layout and repaint included."""
+    import time
+
+    from mandible.ui.look import BUILTIN_PALETTES, BUILTIN_SKINS, Look, set_look
+
+    result: dict = {"ms": [], "errors": []}
+    win = gallery.build_main_window(core)
+    try:
+        win.resize(1280, 720)
+        gallery.settle(win)
+        others = [s for s in BUILTIN_SKINS if s != skin] or [skin]
+        for _ in range(rounds):
+            for theme in themes:
+                for other in others:
+                    try:
+                        set_look(Look(BUILTIN_PALETTES[theme], BUILTIN_SKINS[other]))
+                        app.sendPostedEvents()
+                        t0 = time.perf_counter()
+                        set_look(Look(BUILTIN_PALETTES[theme], BUILTIN_SKINS[skin]))
+                        app.sendPostedEvents()   # layout + repaint, no timers
+                        result["ms"].append(round((time.perf_counter() - t0) * 1000.0, 2))
+                    except Exception as exc:  # noqa: BLE001 - reported
+                        result["errors"].append(
+                            f"{other}->{skin} ({theme}): {type(exc).__name__}: {exc}")
+    finally:
+        gallery.dispose_main_window(win)
+    return result
+
+
+def run_standard(skin: str, themes: list[str], sizes: list[tuple[int, int]],
+                 scenario: str) -> dict:
+    sys.path.insert(0, str(ROOT / "tools"))
+    import ui_gallery as gallery
+    from PySide6.QtCore import QCoreApplication, QEvent, Qt
+    from PySide6.QtGui import QGuiApplication
+    from PySide6.QtWidgets import QApplication
+
+    from mandible.ui import inspect as ins
+    from mandible.ui.look import BUILTIN_SKINS
+    from mandible.ui.sample_setup import build_sample_core
+
+    compact = BUILTIN_SKINS[skin].elements.get("density") == "compact"
+    allowed = ins.COMPACT_SPACING_SCALE if compact else ins.SPACING_SCALE
+    app = QApplication.instance() or QApplication([])
+    report: dict = {"platform": QGuiApplication.platformName(), "skin": skin, "themes": {}}
+    core = build_sample_core()
+    try:
+        core.cfg.close_to_tray = False
+        apply_scenario(core, scenario)
+        for theme in themes:
+            gallery._apply(app, skin, theme)
+            entry: dict = {"contrast": gallery._contrast(theme), "screens": {}}
+            win = gallery.build_main_window(core)
+            try:
+                if core.cfg.chains:
+                    win.chain_list.setCurrentRow(0)
+                    app.processEvents()
+                for w, h in sizes:
+                    win.resize(w, h)
+                    gallery.settle(win)
+                    hint = win.minimumSizeHint().expandedTo(win.minimumSize())
+                    m = {"size": [win.width(), win.height()],
+                         "min_size": [hint.width(), hint.height()]}
+                    m.update(_standard_lists(win, allowed))
+                    entry["screens"][f"main|{w}x{h}"] = m
+            finally:
+                gallery.dispose_main_window(win)
+            for name, build in gallery.dialog_builders(core).items():
+                dlg = build()
+                try:
+                    dlg.setAttribute(Qt.WA_DontShowOnScreen)
+                    dlg.show()
+                    app.processEvents()
+                    hint = dlg.minimumSizeHint().expandedTo(dlg.minimumSize())
+                    m = {"size": [dlg.width(), dlg.height()],
+                         "min_size": [hint.width(), hint.height()]}
+                    for _suffix, _label in gallery._states(dlg):
+                        app.processEvents()
+                        _merge_lists(m, _standard_lists(dlg, allowed))
+                    entry["screens"][name] = m
+                finally:
+                    dlg.close()
+                    dlg.deleteLater()
+                    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+            report["themes"][theme] = entry
+        report["switch"] = _time_switch(app, core, gallery, skin, themes)
+    finally:
+        core.shutdown()
+    return report
+
+
 def problems(report: dict) -> list[str]:
     found = []
     for skin, entry in report["skins"].items():
@@ -178,7 +336,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--skins", default="skeuomorphic,vintage,minimal")
     ap.add_argument("--theme", default="scarlet")
     ap.add_argument("--sizes", default="1024x640")
-    ap.add_argument("--scenario", default="sample", choices=("sample", "long_names", "running"))
+    ap.add_argument("--scenario", default="sample",
+                    choices=("sample", "long_names", "running", "many_knobs"))
+    ap.add_argument("--mode", default="layout", choices=("layout", "standard"))
+    ap.add_argument("--themes", default="scarlet,cyan,stealth,amber",
+                    help="--mode standard: the themes to measure")
     ap.add_argument("--strict", action="store_true")
     args = ap.parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):
@@ -193,10 +355,15 @@ def main(argv: list[str] | None = None) -> int:
 
     code = 1
     try:
-        report = run(args.skins.split(","), args.theme, parse_sizes(args.sizes), args.scenario)
+        if args.mode == "standard":
+            report = run_standard(args.skins.split(",")[0], args.themes.split(","),
+                                  parse_sizes(args.sizes), args.scenario)
+            found = []
+        else:
+            report = run(args.skins.split(","), args.theme, parse_sizes(args.sizes), args.scenario)
+            found = problems(report)
         pathlib.Path(args.out).write_text(json.dumps(report, indent=1, ensure_ascii=False),
                                           encoding="utf-8")
-        found = problems(report)
         for line in found:
             print(line)
         code = 1 if (args.strict and found) else 0

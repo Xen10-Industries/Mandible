@@ -1,14 +1,15 @@
 """Two-state switch variants: ``bat_toggle``, ``rocker`` and ``pill``.
 
-``state.active`` is "on". Sizes follow today's ``HardwareSwitch``: 68x24 normally,
-50x24 ``compact`` and 46x28 ``vertical`` (the vertical one swings its lever up/down).
+``state.active`` is "on". Sizes follow ``HardwareSwitch``: 72x24 normally (room for the
+11 px IN / BYP label), 50x24 ``compact`` and 46x28 ``vertical`` (the vertical one swings its
+lever up/down).
 """
 from __future__ import annotations
 
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt
 from PySide6.QtGui import QBrush, QLinearGradient, QPainter, QPen, QRadialGradient
 
-from ..look import Look
+from ..look import Look, font_px
 from . import registry
 from .base import Element, ElementState, alpha, metal, mix, tok
 
@@ -25,7 +26,7 @@ class _Switch(Element):
             return QSize(46, 28)
         if self.compact:
             return QSize(50, 24)
-        return QSize(68, 24)
+        return QSize(72, 24)
 
     @property
     def _small(self) -> bool:
@@ -58,11 +59,11 @@ class _Switch(Element):
     def _state_text(self, p: QPainter, x: float, h: float, state: ElementState, look: Look) -> None:
         f = p.font()
         f.setFamily("Consolas")
-        f.setPointSizeF(6.5)
+        f.setPixelSize(font_px("readout"))
         f.setBold(True)
         p.setFont(f)
         p.setPen(tok(look, "status.ok") if state.active else tok(look, "status.danger"))
-        p.drawText(QRectF(x, 0, 18, h), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+        p.drawText(QRectF(x, 0, 20, h), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                    "IN" if state.active else "BYP")
 
 

@@ -10,7 +10,6 @@ from ...core import Core, inst, slot_error
 from ...internal_dsp import is_internal_plugin
 from .base import SpacedLayouts, _follow_look, reserve_text_width
 from .buttons import StatusPill, make_button
-from .chassis import RackScrew
 from .knobs import PluginParamKnob
 from .labels import ElidedLabel
 from .meters import PluginPrePostMeter
@@ -18,6 +17,16 @@ from .switches import HardwareSwitch
 
 
 MAX_CARD_KNOBS = 8
+
+
+def map_label(mapped: int) -> str:
+    """The map button's text: ``Map``, ``Map 1`` .. ``Map 8``, then ``Map 8+`` (a card shows
+    at most ``MAX_CARD_KNOBS`` knobs, and the label's width is reserved for the widest text)."""
+    if mapped <= 0:
+        return "Map"
+    if mapped > MAX_CARD_KNOBS:
+        return f"Map {MAX_CARD_KNOBS}+"
+    return f"Map {mapped}"
 
 
 class PluginRackCard(QFrame):
@@ -51,9 +60,6 @@ class PluginRackCard(QFrame):
 
         # ---- Top Row: 1U Module Faceplate Header
         lay = self._spaced.add(QHBoxLayout(), spacing=1, margins=0)
-
-        # Left Rack Screw
-        lay.addWidget(RackScrew(12))
 
         # Slot index label
         idx = chain.plugins.index(slot) + 1 if slot in chain.plugins else 1
@@ -162,11 +168,15 @@ class PluginRackCard(QFrame):
         self.knobs_btn.setVisible(bool(mapped_keys))
         btn_row.addWidget(self.knobs_btn)
 
-        map_txt = f"Map {len(mapped_keys)}" if mapped_keys else "Map"
-        self.map_btn = make_button(map_txt, "quiet", icon="map",
-                                   tooltip=(f"{len(mapped_keys)} parameters on macro knobs: change the mapping"
-                                            if mapped_keys else
-                                            "Map plugin parameters to macro knobs on this module"))
+        n_mapped = len(mapped_keys)
+        if n_mapped > MAX_CARD_KNOBS:
+            map_tip = (f"{n_mapped} parameters mapped; the first {MAX_CARD_KNOBS} show as knobs: "
+                       "change the mapping")
+        elif n_mapped:
+            map_tip = f"{n_mapped} parameters on macro knobs: change the mapping"
+        else:
+            map_tip = "Map plugin parameters to macro knobs on this module"
+        self.map_btn = make_button(map_label(n_mapped), "quiet", icon="map", tooltip=map_tip)
         self.map_btn.setProperty("small", "true")
         self.map_btn.setObjectName("rackMapBtn")
         self.map_btn.setProperty("mapped", "true" if mapped_keys else "false")
@@ -200,10 +210,8 @@ class PluginRackCard(QFrame):
 
         lay.addWidget(self.actions)
 
-        # Right Rack Screw
-        lay.addWidget(RackScrew(12))
         outer_lay.addLayout(lay)
-        reserve_text_width(self.map_btn, f"Map {MAX_CARD_KNOBS}")
+        reserve_text_width(self.map_btn, map_label(MAX_CARD_KNOBS + 1))
         self._fix_actions_width()
 
         # ---- Bottom Row: Recessed Hardware Macro Knob Strip (when parameters are mapped & not collapsed)

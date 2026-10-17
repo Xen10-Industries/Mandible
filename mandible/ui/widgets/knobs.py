@@ -9,10 +9,22 @@ from ... import plugins as P
 from ...config import PluginSlot
 from ...core import Core, inst
 from ..elements.base import ElementState
+from ..elements.knobs import COMPACT_KNOB_SIZE, KNOB_SIZE, READOUT_H
 from ..look import current_look
 from ..text import abbreviate_title
 from .base import _follow_look, look_element
 from .sliders import InlineValueEdit, parse_audio_value
+
+
+def _readout_rect(knob: QWidget) -> tuple[int, int, int, int]:
+    """Where the value readout (and its inline editor) sits: the knob's bottom row."""
+    h = int(READOUT_H)
+    return 1, knob.height() - h, knob.width() - 2, h
+
+
+def _over_readout(knob: QWidget, y: float) -> bool:
+    """True when ``y`` is on the readout row (type a value) rather than the dial (drag)."""
+    return y >= knob.height() - READOUT_H - 1
 
 
 class HardwareKnob(QWidget):
@@ -31,7 +43,7 @@ class HardwareKnob(QWidget):
         self.suffix = suffix
         self.decimals = decimals
 
-        self.setFixedSize(54, 62)
+        self.setFixedSize(*KNOB_SIZE)
         self.setMouseTracking(True)
         self.setCursor(Qt.PointingHandCursor)
         self._dragging = False
@@ -41,7 +53,7 @@ class HardwareKnob(QWidget):
 
         # Inline value editor for typing custom values
         self.edit = InlineValueEdit(self)
-        self.edit.setGeometry(1, 43, 52, 18)
+        self.edit.setGeometry(*_readout_rect(self))
         self.edit.setAlignment(Qt.AlignCenter)
         self.edit.hide()
         self.edit.committed.connect(self._commit_edit)
@@ -78,7 +90,7 @@ class HardwareKnob(QWidget):
             self._commit_edit(self.edit.text())
         if ev.button() == Qt.LeftButton:
             pos_y = ev.position().y() if hasattr(ev, "position") else ev.pos().y()
-            if pos_y < 42:
+            if not _over_readout(self, pos_y):
                 self._dragging = True
                 pos = ev.globalPosition() if hasattr(ev, "globalPosition") else ev.globalPos()
                 self._drag_y = float(pos.y())
@@ -93,7 +105,7 @@ class HardwareKnob(QWidget):
             self.setValue(new_val)
         else:
             pos_y = ev.position().y() if hasattr(ev, "position") else ev.pos().y()
-            if pos_y >= 42 and not self.edit.isVisible():
+            if _over_readout(self, pos_y) and not self.edit.isVisible():
                 self.setCursor(Qt.IBeamCursor)
                 self._update_tooltip(over_value=True)
             else:
@@ -111,7 +123,7 @@ class HardwareKnob(QWidget):
 
     def mouseDoubleClickEvent(self, ev):
         pos_y = ev.position().y() if hasattr(ev, "position") else ev.pos().y()
-        if pos_y >= 42:
+        if _over_readout(self, pos_y):
             self._start_edit()
         else:
             self.setValue(self.default_val)
@@ -179,7 +191,7 @@ class PluginParamKnob(QWidget):
         self.default_raw = float(defaults.get(param_key, cur_raw))
         self.raw_val = max(0.0, min(1.0, cur_raw))
 
-        self.setFixedSize(64, 58)
+        self.setFixedSize(*COMPACT_KNOB_SIZE)
         _follow_look(self)
         self.setMouseTracking(True)
         self.setCursor(Qt.PointingHandCursor)
@@ -189,7 +201,7 @@ class PluginParamKnob(QWidget):
 
         # Inline value editor for typing custom values on double-click
         self.edit = InlineValueEdit(self)
-        self.edit.setGeometry(2, 41, 60, 16)
+        self.edit.setGeometry(*_readout_rect(self))
         self.edit.setAlignment(Qt.AlignCenter)
         self.edit.hide()
         self.edit.committed.connect(self._commit_edit)
@@ -257,7 +269,7 @@ class PluginParamKnob(QWidget):
             self._commit_edit(self.edit.text())
         if ev.button() == Qt.LeftButton:
             pos_y = ev.position().y() if hasattr(ev, "position") else ev.pos().y()
-            if pos_y < 40:
+            if not _over_readout(self, pos_y):
                 self._dragging = True
                 pos = ev.globalPosition() if hasattr(ev, "globalPosition") else ev.globalPos()
                 self._drag_y = float(pos.y())
@@ -272,7 +284,7 @@ class PluginParamKnob(QWidget):
             ev.accept()
         else:
             pos_y = ev.position().y() if hasattr(ev, "position") else ev.pos().y()
-            if pos_y >= 40 and not self.edit.isVisible():
+            if _over_readout(self, pos_y) and not self.edit.isVisible():
                 self.setCursor(Qt.IBeamCursor)
                 self._update_tooltip(over_value=True)
             else:
@@ -293,7 +305,7 @@ class PluginParamKnob(QWidget):
 
     def mouseDoubleClickEvent(self, ev):
         pos_y = ev.position().y() if hasattr(ev, "position") else ev.pos().y()
-        if pos_y >= 40:
+        if _over_readout(self, pos_y):
             self._start_edit()
         else:
             self._set_raw(self.default_raw, persist_now=True)

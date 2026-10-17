@@ -229,24 +229,19 @@ class SettingsDialog(QDialog):
         gl = QVBoxLayout(tab_gen)
 
         theme_box = QGroupBox("Interface Appearance")
-        theme_lay = QVBoxLayout(theme_box)
-        theme_lay.setSpacing(8)
+        # A form, so the four pickers share one left edge.
+        theme_lay = QFormLayout(theme_box)
 
         # 1. UI Skin / Style
-        skin_row = QHBoxLayout()
-        skin_row.addWidget(QLabel("UI Skin / Style:"))
         self.skin_combo = QComboBox()
         for skin in BUILTIN_SKINS.values():
             self.skin_combo.addItem(skin.name, skin.id)
         cur_skin = getattr(self.cfg, "ui_skin", "skeuomorphic")
         self.skin_combo.setCurrentIndex(max(0, self.skin_combo.findData(cur_skin)))
         self.skin_combo.currentIndexChanged.connect(self._on_appearance_preview_changed)
-        skin_row.addWidget(self.skin_combo, 1)
-        theme_lay.addLayout(skin_row)
+        theme_lay.addRow("UI Skin / Style:", self.skin_combo)
 
         # 2. Outer Chassis Frame
-        frame_row = QHBoxLayout()
-        frame_row.addWidget(QLabel("Outer Chassis Frame:"))
         self.frame_combo = QComboBox()
         self.frame_combo.addItem("Auto (Matched to UI Style)", "auto")
         self.frame_combo.addItem("19\" Brushed Steel Rack Ears", "metal_rack")
@@ -255,36 +250,28 @@ class SettingsDialog(QDialog):
         cur_frame = getattr(self.cfg, "chassis_frame", "auto")
         self.frame_combo.setCurrentIndex(max(0, self.frame_combo.findData(cur_frame)))
         self.frame_combo.currentIndexChanged.connect(self._on_appearance_preview_changed)
-        frame_row.addWidget(self.frame_combo, 1)
-        theme_lay.addLayout(frame_row)
+        theme_lay.addRow("Outer Chassis Frame:", self.frame_combo)
 
         # 3. Color Theme
-        t_row = QHBoxLayout()
-        t_row.addWidget(QLabel("Color Theme:"))
         self.theme_combo = QComboBox()
         for palette in BUILTIN_PALETTES.values():
             self.theme_combo.addItem(palette.name, palette.id)
         cur_t = getattr(self.cfg, "theme", "scarlet")
         self.theme_combo.setCurrentIndex(max(0, self.theme_combo.findData(cur_t)))
         self.theme_combo.currentIndexChanged.connect(self._on_appearance_preview_changed)
-        t_row.addWidget(self.theme_combo, 1)
-        theme_lay.addLayout(t_row)
+        theme_lay.addRow("Color Theme:", self.theme_combo)
 
         # 4. Hardware Switch Style
-        sw_row = QHBoxLayout()
-        sw_row.addWidget(QLabel("Hardware Switch Style:"))
         self.switch_combo = QComboBox()
         self.switch_combo.addItem("Bat-Handle Metal Toggle (Classic Studio)", "bat_toggle")
         self.switch_combo.addItem("Studio Beveled Rocker (80s/90s Rackmount)", "rocker")
         cur_sw = getattr(self.cfg, "switch_style", "bat_toggle")
         self.switch_combo.setCurrentIndex(max(0, self.switch_combo.findData(cur_sw)))
         self.switch_combo.currentIndexChanged.connect(self._on_appearance_preview_changed)
-        sw_row.addWidget(self.switch_combo, 1)
-        theme_lay.addLayout(sw_row)
+        theme_lay.addRow("Hardware Switch Style:", self.switch_combo)
 
         gl.addWidget(theme_box)
 
-        gl.addSpacing(6)
         self.launch_startup = QCheckBox("Launch Mandible automatically when Windows starts")
         self.autostart = QCheckBox("Start audio automatically when Mandible opens")
         self.tray = QCheckBox("Closing the window keeps Mandible running in the tray")

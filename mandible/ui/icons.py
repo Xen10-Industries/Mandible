@@ -219,12 +219,18 @@ _TIER_TOKEN = {"primary": "text.on_accent", "secondary": "text.primary",
                "quiet": "text.primary", "danger": "status.danger"}
 # Status states (flow steps, toggles) colour the icon like their text.
 _STATE_TOKEN = {"on": "status.ok", "warn": "status.warn", "danger": "status.danger"}
+# A checked toggle's text colour per tier (the stylesheet's ``:checked`` rules).
+_CHECKED_TOKEN = {"primary": "text.on_accent", "secondary": "status.ok",
+                  "quiet": "accent.hover", "danger": "status.danger"}
 
 
-def icon_token(tier: str | None, state: str | None = None) -> str:
-    """The colour token for an icon on a button of ``tier`` in ``state``."""
+def icon_token(tier: str | None, state: str | None = None, checked: bool = False) -> str:
+    """The colour token for an icon on a button of ``tier`` in ``state`` (``checked``: the
+    button is a checked toggle, such as Power while audio runs)."""
     if state in _STATE_TOKEN:
         return _STATE_TOKEN[state]
+    if checked:
+        return _CHECKED_TOKEN.get(tier or "secondary", "status.ok")
     return _TIER_TOKEN.get(tier or "secondary", "text.primary")
 
 
@@ -262,10 +268,15 @@ def bind_button_icon(button, name: str | None, token: str | None = None) -> None
         if name is None:
             button.setIcon(QIcon())
         else:
+            checked = button.isCheckable() and button.isChecked()
             button.setIcon(icon(name, token or icon_token(button.property("tier"),
-                                                          button.property("state"))))
+                                                          button.property("state"), checked)))
 
     _binding(button, apply)
+    # A toggle's icon follows its checked state, like its text (connected once per button).
+    if not getattr(button, "_icon_follows_toggle", False) and hasattr(button, "toggled"):
+        button._icon_follows_toggle = True
+        button.toggled.connect(button._icon_binding.refresh)
 
 
 def bind_label_icon(label, name: str, token: str = "text.secondary", px: int = 16) -> None:

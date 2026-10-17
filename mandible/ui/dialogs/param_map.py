@@ -11,6 +11,7 @@ from ... import plugins as P
 from ...config import PluginSlot
 from ...core import Core, inst
 from ...internal_dsp import is_internal_plugin
+from ..look import space
 from ..widgets.buttons import make_button, tier_button_box
 
 
@@ -37,8 +38,8 @@ class PluginParamMapDialog(QDialog):
         self.selected_keys: list[str] = list(P.resolve_slot_mapped_params(slot, core.cfg))[: self.MAX_KNOBS]
 
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(14, 14, 14, 14)
-        lay.setSpacing(10)
+        lay.setContentsMargins(*(space(3),) * 4)
+        lay.setSpacing(space(3))
 
         # Header
         hdr_row = QHBoxLayout()
@@ -61,7 +62,7 @@ class PluginParamMapDialog(QDialog):
 
         # Search filter bar + Quick action buttons
         filter_row = QHBoxLayout()
-        filter_row.setSpacing(8)
+        filter_row.setSpacing(space(2))
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText(f"Search {len(self.usable_params)} parameters (e.g. Threshold, Mix, Macro, Gain, Decay)…")
         self.search_edit.textChanged.connect(self._populate_available)
@@ -82,7 +83,7 @@ class PluginParamMapDialog(QDialog):
 
         # Two-column body: Available Parameters (left) | Mapped Module Knobs (right)
         cols = QHBoxLayout()
-        cols.setSpacing(12)
+        cols.setSpacing(space(3))
 
         left_box = QGroupBox(f"Available {self.kind} ({len(self.usable_params)})")
         left_lay = QVBoxLayout(left_box)
@@ -97,7 +98,7 @@ class PluginParamMapDialog(QDialog):
         right_lay.addWidget(self.mapped_list, 1)
 
         order_row = QHBoxLayout()
-        order_row.setSpacing(6)
+        order_row.setSpacing(space(2))
         btn_up = make_button("Move left", "quiet", icon="chevron_left",
                              tooltip="Move the selected knob one place left")
         btn_dn = make_button("Move right", "quiet", icon="chevron_right",

@@ -25,7 +25,7 @@ class HardwareSwitch(QWidget):
         elif self.compact:
             self.setFixedSize(50, 24)
         else:
-            self.setFixedSize(68, 24)
+            self.setFixedSize(72, 24)
         self.setCursor(Qt.PointingHandCursor)
         self.setToolTip("Click to toggle ON / BYPASS")
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)

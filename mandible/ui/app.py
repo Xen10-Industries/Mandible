@@ -5,20 +5,44 @@ import os
 import sys
 
 from PySide6.QtCore import QLockFile, QTimer
-from PySide6.QtWidgets import QApplication, QMessageBox, QProgressDialog
+from PySide6.QtWidgets import QApplication, QMessageBox, QProgressDialog, QProxyStyle, QStyle
 
 from .. import branding
 from .. import devices as D
 from ..config import APP_DIR, Chain, load_config
 from ..core import Core
-from .look import Look, current_look, look_from_config, set_look
+from .look import Look, current_look, look_from_config, set_look, space
 from .main_window import MainWindow
 
 
+class ScaleStyle(QProxyStyle):
+    """Fusion whose default layout margins and spacing come from the spacing scale (spec
+    7.7): a layout that sets neither gets ``space(3)`` margins in a window (dialogs),
+    ``space(2)`` inside child widgets (tab pages, group boxes) and ``space(2)`` spacing,
+    instead of Fusion's 11 / 9 px margins and 6 px spacing. Read live, so a density change
+    reaches every default layout."""
+
+    _MARGINS = frozenset({QStyle.PM_LayoutLeftMargin, QStyle.PM_LayoutTopMargin,
+                          QStyle.PM_LayoutRightMargin, QStyle.PM_LayoutBottomMargin})
+    _SPACING = frozenset({QStyle.PM_LayoutHorizontalSpacing, QStyle.PM_LayoutVerticalSpacing})
+
+    def pixelMetric(self, metric, option=None, widget=None):  # noqa: N802
+        if metric in self._MARGINS:
+            return space(3) if widget is not None and widget.isWindow() else space(2)
+        if metric in self._SPACING:
+            return space(2)
+        return super().pixelMetric(metric, option, widget)
+
+
+_STYLE_PROPERTY = "mandibleScaleStyle"
+
+
 def apply_theme(app: QApplication, look: Look | None = None) -> None:
-    """Fusion style and the app icon, then ``set_look`` (stylesheet, native palette, ``lookChanged``)."""
-    if app.style().name().lower() != "fusion":
-        app.setStyle("Fusion")
+    """Fusion (as ``ScaleStyle``) and the app icon, then ``set_look`` (stylesheet, native
+    palette, ``lookChanged``). The style is installed once; later calls only switch the look."""
+    if not app.property(_STYLE_PROPERTY):
+        app.setStyle(ScaleStyle("Fusion"))
+        app.setProperty(_STYLE_PROPERTY, True)
     app.setWindowIcon(branding.app_icon())
     set_look(look or current_look(), app)
 

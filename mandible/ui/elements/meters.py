@@ -106,7 +106,8 @@ class LedSegments(Element):
 
 
 class SmoothBar(Element):
-    """Continuous ribbon bar: accent into green, amber and red at the loud end."""
+    """Continuous ribbon bar: green (``meter.low``) from the quiet end, amber and red only at
+    the loud end. Never the accent, which reads as a warning in red palettes."""
 
     def __init__(self, corner: float = 2.5, size: tuple[int, int] = (140, 13)) -> None:
         self.corner = float(corner)
@@ -142,9 +143,9 @@ class SmoothBar(Element):
 
         if frac > 0.01:
             grad = QLinearGradient(0, 0, w, 0)
-            grad.setColorAt(0.0, tok(look, "accent"))
-            grad.setColorAt(0.75, tok(look, "meter.low"))
-            grad.setColorAt(0.9, tok(look, "meter.mid"))
+            grad.setColorAt(0.0, tok(look, "meter.low"))
+            grad.setColorAt(0.7, tok(look, "meter.low"))
+            grad.setColorAt(0.85, tok(look, "meter.mid"))
             grad.setColorAt(1.0, tok(look, "meter.high"))
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(grad)

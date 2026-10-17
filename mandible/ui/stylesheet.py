@@ -4,7 +4,8 @@
 Widgets never set inline styles; they set an ``objectName`` or one of the dynamic
 properties below and let this sheet style them:
 
-* ``tier``    on QPushButton: ``primary`` | ``secondary`` | ``quiet`` | ``danger``
+* ``tier``    on QPushButton: ``primary`` | ``secondary`` | ``quiet`` | ``danger``;
+  on QToolButton (split buttons such as the header's Hotkeys): ``secondary``
 * ``state``   on ``QLabel#statusPill``: ``off`` | ``on`` | ``warn`` | ``danger``
 * ``surface`` on QFrame: ``panel`` | ``raised`` | ``inset``
 
@@ -178,28 +179,42 @@ QComboBox#idleCombo {{
     font-size: {f_small};
     padding: 2px 6px;
 }}
-QToolButton#hotkeysToggle {{
-    background: {card};
-    border: {bw} solid {line};
-    border-radius: {r_sm};
-    color: {muted};
-    font-size: {f_small};
-    font-weight: bold;
-    padding: 2px 6px;
-    padding-right: 16px;
-}}
-QToolButton#hotkeysToggle:hover {{
-    border-color: {strong};
+QToolButton[tier="secondary"] {{
+    background-color: transparent;
+    border: {bw} solid {strong};
+    border-radius: {r_ctl};
     color: {text};
+    font-weight: 500;
+    padding: 3px 8px;
+    padding-right: 20px;
 }}
-QToolButton#hotkeysToggle:checked {{
-    background: {ok_bg};
+QToolButton[small="true"] {{
+    font-size: {f_small};
+}}
+QToolButton[tier="secondary"]::menu-button {{
+    border-left: {bw} solid {strong};
+    width: 16px;
+}}
+QToolButton[tier="secondary"]:checked {{
+    background-color: {ok_bg};
     border-color: {ok};
     color: {ok};
 }}
-QToolButton#hotkeysToggle::menu-button {{
-    border-left: {bw} solid {line};
-    width: 14px;
+QToolButton[tier="secondary"]:hover {{
+    background-color: {alt};
+    border-color: {accent_hover};
+}}
+QToolButton[tier="secondary"]:pressed {{
+    background-color: {accent_subtle};
+    border-color: {accent};
+}}
+QToolButton[tier="secondary"]:focus {{
+    border: {bw2} solid {ring};
+}}
+QToolButton[tier="secondary"]:disabled {{
+    background-color: transparent;
+    border-color: {line};
+    color: {dim};
 }}
 QLabel#rackPluginName {{
     font-weight: bold;
@@ -280,7 +295,6 @@ QLabel#chainName[active="true"] {{
 QLabel#chainSub {{
     color: {muted};
     font-size: {f_small};
-    padding-left: 17px;
 }}
 QLabel#chainSub[active="true"] {{
     color: {ok};
@@ -607,34 +621,30 @@ QPushButton[tier="danger"]:disabled {{
 
 QLabel#statusPill {{
     background-color: {inset};
-    border: {bw} solid {line};
+    border: none;
     border-radius: 10px;
-    padding: 2px 8px;
+    padding: 3px 9px;
     font-size: {f_small};
     font-weight: 600;
     color: {muted};
 }}
 QLabel#statusPill[iconOnly="true"] {{
-    padding: 2px 6px;
+    padding: 3px 7px;
 }}
 QLabel#statusPill[state="off"] {{
     background-color: {inset};
-    border-color: {line};
     color: {muted};
 }}
 QLabel#statusPill[state="on"] {{
     background-color: {ok_bg};
-    border-color: {ok};
     color: {ok};
 }}
 QLabel#statusPill[state="warn"] {{
     background-color: {warn_bg};
-    border-color: {warn};
     color: {warn};
 }}
 QLabel#statusPill[state="danger"] {{
     background-color: {danger_bg};
-    border-color: {danger};
     color: {danger};
 }}
 
@@ -661,7 +671,7 @@ QSlider::groove:horizontal {{
     border-radius: 3px;
 }}
 QSlider::sub-page:horizontal {{
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {accent_hover}, stop:1 {accent});
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {muted}, stop:1 {strong});
     border-radius: 3px;
 }}
 QSlider::handle:horizontal {{
@@ -885,11 +895,15 @@ QFrame#settingsSeparator {{
     color: {line};
     margin: 8px 0;
 }}
-QFrame#duckStrip, QFrame#duckStrip QCheckBox, QFrame#duckStrip QLabel, QFrame#duckStrip QSlider {{
+QFrame#duckStrip {{
     background-color: {inset};
     border: {bw} solid {line};
-    border-radius: {r_sm};
-    padding: 4px 8px;
+    border-radius: {r_pnl};
+}}
+QFrame#duckStrip QCheckBox, QFrame#duckStrip QLabel {{
+    background: transparent;
+    border: none;
+    padding: 4px 0px;
 }}
 QLabel#duckLabel {{
     color: {muted};

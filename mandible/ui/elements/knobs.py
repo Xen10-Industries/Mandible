@@ -11,14 +11,20 @@ import math
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPen
 
-from ..look import Look
+from ..look import Look, font_px
 from . import registry
 from .base import Element, ElementState, alpha, metal, mix, tok
 
-__all__ = ["Machined", "VintageBakelite", "FlatRing"]
+__all__ = ["Machined", "VintageBakelite", "FlatRing", "TITLE_H", "READOUT_H", "KNOB_SIZE",
+           "COMPACT_KNOB_SIZE"]
 
 _SWEEP = 270.0
 _START = 225.0
+# Title and readout use the type scale's small / readout sizes (11 px; nothing below 10 px).
+TITLE_H = 15.0       # title row at the top
+READOUT_H = 15.0     # value readout box at the bottom
+KNOB_SIZE = (56, 64)           # inspector knobs
+COMPACT_KNOB_SIZE = (64, 62)   # plugin macro knobs (wider: parameter values run longer)
 
 
 class _Knob(Element):
@@ -26,33 +32,45 @@ class _Knob(Element):
         self.compact = bool(compact)
 
     def size_hint(self, look: Look) -> QSize:
-        return QSize(64, 58) if self.compact else QSize(54, 62)
+        return QSize(*COMPACT_KNOB_SIZE) if self.compact else QSize(*KNOB_SIZE)
 
     # ----------------------------------------------------------- shared pieces
     def _geometry(self, w: float) -> tuple[float, float, float]:
-        cx = w / 2.0
-        cy = 26.0 if self.compact else 27.5
+        """Dial centre and radius: the tick ring (radius + 4) sits between the title row and
+        the readout box."""
         radius = 10.8 if self.compact else 11.8
-        return cx, cy, radius
+        return w / 2.0, TITLE_H + radius + 4.5, radius
+
+    @staticmethod
+    def _fit(p: QPainter, text: str, width: float) -> str:
+        """``text`` elided to ``width`` in the painter's font (the widgets show it in full in
+        their tooltip)."""
+        return p.fontMetrics().elidedText(text, Qt.TextElideMode.ElideRight, int(width))
 
     def _title(self, p: QPainter, w: float, title: str, color: QColor) -> None:
         f = p.font()
         f.setFamily("Segoe UI")
-        f.setPointSizeF(6.5 if self.compact else 7.0)
+        f.setPixelSize(font_px("small"))
         f.setBold(True)
         p.setFont(f)
         p.setPen(color)
-        p.drawText(QRectF(0, 0, w, 11.5), Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop, title)
+        p.drawText(QRectF(0, 0, w, TITLE_H), Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
+                   self._fit(p, title, w))
 
-    def _readout(self, p: QPainter, w: float, h: float, text: str, color: QColor, bold: bool) -> None:
+    @staticmethod
+    def _readout_font(p: QPainter, bold: bool) -> None:
         f = p.font()
         f.setFamily("Consolas")
-        f.setPointSizeF(7.0 if self.compact else 7.5)
+        f.setPixelSize(font_px("readout"))
         f.setBold(bold)
         p.setFont(f)
+
+    def _readout(self, p: QPainter, w: float, h: float, text: str, color: QColor, bold: bool) -> None:
+        self._readout_font(p, bold)
         p.setPen(color)
-        p.drawText(QRectF(0, h - 14, w, 14),
-                   Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, text)
+        p.drawText(QRectF(0, h - READOUT_H, w, READOUT_H),
+                   Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
+                   self._fit(p, text, w - 2.0))
 
     @staticmethod
     def _pointer(p: QPainter, cx: float, cy: float, angle_rad: float, r_in: float, r_out: float,
@@ -121,17 +139,13 @@ class Machined(_Knob):
 
         # Recessed LCD readout box
         if state.readout:
-            lcd = QRectF(3.0, h - 14.5, w - 6.0, 13.5)
+            lcd = QRectF(1.0, h - READOUT_H, w - 2.0, READOUT_H - 0.5)
             p.setPen(QPen(tok(look, "line.subtle"), 0.9))
             p.setBrush(tok(look, "bg.inset").darker(130))
             p.drawRoundedRect(lcd, 2.5, 2.5)
-            f = p.font()
-            f.setFamily("Consolas")
-            f.setPointSizeF(6.8 if self.compact else 7.2)
-            f.setBold(False)
-            p.setFont(f)
+            self._readout_font(p, False)
             p.setPen(tok(look, "readout.text"))
-            p.drawText(lcd, Qt.AlignmentFlag.AlignCenter, state.readout)
+            p.drawText(lcd, Qt.AlignmentFlag.AlignCenter, self._fit(p, state.readout, lcd.width() - 2.0))
 
 
 class VintageBakelite(_Knob):

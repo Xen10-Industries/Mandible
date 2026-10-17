@@ -8,7 +8,7 @@ from PySide6.QtGui import QPainter, QPen
 from PySide6.QtWidgets import QWidget
 
 from ..elements.base import ElementState
-from ..look import current_look
+from ..look import current_look, font_px
 from .base import _follow_look, look_color, look_element
 
 
@@ -56,12 +56,13 @@ class LevelMeter(QWidget):
         p.setPen(look_color("text.secondary"))
         f = p.font()
         f.setFamily("Segoe UI")
-        f.setPointSize(8)
+        f.setPixelSize(font_px("small"))
         f.setBold(True)
         p.setFont(f)
         p.drawText(r.left(), 12, self.label)
 
         f.setFamily("Consolas")
+        f.setPixelSize(font_px("readout"))
         f.setBold(False)
         p.setFont(f)
         p.setPen(look_color("readout.text"))
@@ -74,14 +75,14 @@ class LevelMeter(QWidget):
 
         # Calibrated scale marks below the bar
         p.setPen(look_color("text.disabled"))
-        f.setPointSize(7)
-        p.setFont(f)
         scale_y = seg_y + seg_h + 3
         ticks = [(-60, "-60"), (-36, "-36"), (-18, "-18"), (-6, "-6"), (0, "0"), (6, "+6")]
         for db, txt in ticks:
             tx = r.left() + _meter_frac(db) * (total_w - 6.0)
             p.drawLine(QPointF(tx + 3.0, scale_y), QPointF(tx + 3.0, scale_y + 2))
-            p.drawText(QRectF(tx - 12, scale_y + 2, 24, 10), Qt.AlignHCenter | Qt.AlignTop, txt)
+            # Centred under the tick, but kept inside the widget (the -60 / +6 end labels).
+            lx = min(max(float(r.left()), tx + 3.0 - 12.0), r.left() + total_w - 24.0)
+            p.drawText(QRectF(lx, scale_y + 2, 24, 13), Qt.AlignHCenter | Qt.AlignTop, txt)
         p.end()
 
 
@@ -141,7 +142,7 @@ class PluginPrePostMeter(QWidget):
         self.post_db = -85.0
         self.pre_peak_db = -85.0
         self.post_peak_db = -85.0
-        self.setFixedSize(112, 34)
+        self.setFixedSize(112, 36)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self._update_tooltip()
         _follow_look(self)
@@ -201,18 +202,18 @@ class PluginPrePostMeter(QWidget):
 
         f = p.font()
         f.setFamily("Consolas")
-        f.setPointSize(6)
+        f.setPixelSize(font_px("readout"))
         f.setBold(True)
         p.setFont(f)
 
         label_w = 26.0
-        bar_x = label_w + 3.0
+        bar_x = label_w + 4.0
         bar_w = w - bar_x - 5.0
-        row_h = 9.0
+        row_h = 13.0
         meter = self.element()
-        bar_h = min(row_h, float(meter.size_hint(look).height()))
-        for (lbl, state), ry in zip(self.row_states(), (5.0, 19.0)):
+        bar_h = min(9.0, float(meter.size_hint(look).height()))
+        for (lbl, state), ry in zip(self.row_states(), (4.0, 19.0)):
             p.setPen(look_color("text.secondary" if state.enabled else "text.disabled"))
-            p.drawText(QRectF(4.0, ry - 0.5, label_w, row_h + 1.0), Qt.AlignLeft | Qt.AlignVCenter, lbl)
+            p.drawText(QRectF(4.0, ry, label_w, row_h), Qt.AlignLeft | Qt.AlignVCenter, lbl)
             meter.paint(p, QRectF(bar_x, ry + (row_h - bar_h) / 2.0, bar_w, bar_h), state, look)
         p.end()

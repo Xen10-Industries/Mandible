@@ -11,13 +11,20 @@ from PySide6.QtWidgets import (
 )
 
 from .soundboard import SoundboardEngine
-from .ui.look import current_look
+from .ui.look import current_look, font_px, space
 from .ui.widgets.base import _follow_look, look_color
 from .ui.widgets.buttons import make_button
 
 if TYPE_CHECKING:
     from .config import SoundboardClipConfig
     from .core import Core
+
+
+def _px_font(family: str, px: int, bold: bool = False) -> QFont:
+    f = QFont(family)
+    f.setPixelSize(px)
+    f.setBold(bold)
+    return f
 
 
 class WaveformCanvas(QWidget):
@@ -123,7 +130,7 @@ class WaveformCanvas(QWidget):
 
         if not self.peaks or self.duration_s <= 0.01:
             p.setPen(look_color("text.secondary"))
-            p.setFont(QFont("Consolas", 8))
+            p.setFont(_px_font("Consolas", font_px("readout")))
             p.drawText(QRectF(0, 0, w, h), Qt.AlignmentFlag.AlignCenter, "Select a sound clip to view waveform")
             return
 
@@ -166,8 +173,8 @@ class WaveformCanvas(QWidget):
         p.setBrush(start_col)
         p.drawRoundedRect(QRectF(xs - 5, 0, 10, 14), 2, 2)
         p.setPen(look_color("bg.window"))
-        p.setFont(QFont("Consolas", 6, QFont.Bold))
-        p.drawText(QRectF(xs - 5, 1, 10, 12), Qt.AlignmentFlag.AlignCenter, "S")
+        p.setFont(_px_font("Consolas", font_px("readout"), bold=True))
+        p.drawText(QRectF(xs - 5, 0, 10, 14), Qt.AlignmentFlag.AlignCenter, "S")
 
         # End handle (accent)
         end_col = look_color("accent.hover")
@@ -176,8 +183,8 @@ class WaveformCanvas(QWidget):
         p.setBrush(end_col)
         p.drawRoundedRect(QRectF(xe - 5, h - 14, 10, 14), 2, 2)
         p.setPen(look_color("text.on_accent"))
-        p.setFont(QFont("Consolas", 6, QFont.Bold))
-        p.drawText(QRectF(xe - 5, h - 13, 10, 12), Qt.AlignmentFlag.AlignCenter, "E")
+        p.setFont(_px_font("Consolas", font_px("readout"), bold=True))
+        p.drawText(QRectF(xe - 5, h - 14, 10, 14), Qt.AlignmentFlag.AlignCenter, "E")
 
 
 class SoundboardWaveformWidget(QFrame):
@@ -191,8 +198,8 @@ class SoundboardWaveformWidget(QFrame):
 
 
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(8, 6, 8, 6)
-        lay.setSpacing(6)
+        lay.setContentsMargins(space(2), space(1), space(2), space(1))
+        lay.setSpacing(space(2))
 
         # Header info row
         head_row = QHBoxLayout()
@@ -214,7 +221,7 @@ class SoundboardWaveformWidget(QFrame):
 
         # Buttons row: [Play trimmed] [Stop] [Reset trim]
         btn_row = QHBoxLayout()
-        btn_row.setSpacing(8)
+        btn_row.setSpacing(space(2))
 
         self.play_btn = make_button("Play trimmed", icon="play")
         self.play_btn.setObjectName("waveformPlayBtn")
@@ -254,7 +261,7 @@ class SoundboardWaveformWidget(QFrame):
             self.reset_btn.setEnabled(False)
             return
 
-        self.clip_name_lbl.setText(clip.name.upper())
+        self.clip_name_lbl.setText(clip.name)
         self.play_btn.setEnabled(True)
         self.stop_btn.setEnabled(True)
         self.reset_btn.setEnabled(True)

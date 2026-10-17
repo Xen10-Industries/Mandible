@@ -1,6 +1,6 @@
 """Main window header: three zones (spec 7.6).
 
-* **left** (fixed): rack screw, pilot lamp, power, the brand mark (``branding.render_mark``
+* **left** (fixed): pilot lamp, power, the brand mark (``branding.render_mark``
   in the look's ``text.primary``) and the status zone: the DSP readout over the idle-mode
   dropdown and the hotkeys switch (whose menu sets the all-off key).
 * **middle** (flexible): the signal-flow strip; its steps drop to icons below
@@ -24,7 +24,6 @@ from ...core import Core
 from ..look import current_look
 from .base import SpacedLayouts, _follow_look, reserve_text_width
 from .buttons import make_button
-from .chassis import RackScrew
 from .flow_strip import SignalFlowStrip
 from .labels import ElidedLabel
 from .lamps import PilotLamp
@@ -76,6 +75,7 @@ class BrandMark(QLabel):
         self.setObjectName("brandMark")
         self.setFixedSize(px, px)
         self.setToolTip("Mandible")
+        self.setAccessibleName("Mandible")
         self._render()
         _follow_look(self)
 
@@ -117,7 +117,6 @@ class HeaderBar(QFrame):
         # ------------------------------------------------------------ left zone
         self.left = _zone("headerLeft")
         left = self._spaced.add(QHBoxLayout(self.left), spacing=2, margins=0)
-        left.addWidget(RackScrew(16))
         self.pilot_lamp = PilotLamp(active=False, size=18)
         left.addWidget(self.pilot_lamp)
 
@@ -166,6 +165,8 @@ class HeaderBar(QFrame):
 
         self.hotkeys_toggle = QToolButton()
         self.hotkeys_toggle.setObjectName("hotkeysToggle")
+        self.hotkeys_toggle.setProperty("tier", "secondary")   # styled like the button tier
+        self.hotkeys_toggle.setProperty("small", "true")
         self.hotkeys_toggle.setText("Hotkeys")
         self.hotkeys_toggle.setCheckable(True)
         self.hotkeys_toggle.setChecked(cfg.hotkeys_enabled)
@@ -245,8 +246,6 @@ class HeaderBar(QFrame):
         self.help_menu = QMenu(self.help_btn)
         self.help_btn.setMenu(self.help_menu)
         right.addWidget(self.help_btn)
-        self._right_screw = RackScrew(16)
-        right.addWidget(self._right_screw)
         top.addWidget(self.right)
 
         # Header actions use the small type size (the zones are tight at 1024 px).
@@ -360,8 +359,7 @@ class HeaderBar(QFrame):
         m = top.contentsMargins()
         right = self.right.layout()
         rm = right.contentsMargins()
-        folded = (self.more_btn, self.panic_btn, self.settings_btn, self.help_btn,
-                  self._right_screw)
+        folded = (self.more_btn, self.panic_btn, self.settings_btn, self.help_btn)
         right_w = (rm.left() + rm.right() + right.spacing() * (len(folded) - 1)
                    + sum(max(w.sizeHint().width(), w.minimumWidth()) for w in folded))
         s.setWidth(m.left() + m.right() + 2 * top.spacing()

@@ -9,13 +9,11 @@ whose substitute fonts are wider, and only looser checks apply.
 """
 from __future__ import annotations
 
-import json
-import os
 import pathlib
-import subprocess
 import sys
 
 import pytest
+from _probe import run_probe
 
 from mandible.ui.text import abbreviate_title
 
@@ -27,26 +25,6 @@ SIZES = [(w, h) for w in WIDTHS for h in HEIGHTS]
 SKINS = ("skeuomorphic", "vintage", "minimal")
 # Offscreen substitutes fonts that measure up to ~1.5x wider than Segoe UI.
 LOOSE = 1.5
-
-
-def run_probe(out_dir: pathlib.Path, sizes, scenario: str = "sample", scale: float | None = None,
-              strict: bool = False, skins=SKINS):
-    env = dict(os.environ)
-    env["QT_QPA_PLATFORM"] = "windows" if WIN32 else "offscreen"
-    env.pop("QT_SCALE_FACTOR", None)
-    if scale is not None:
-        env["QT_SCALE_FACTOR"] = str(scale)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out = out_dir / "probe.json"
-    cmd = [sys.executable, str(ROOT / "tools" / "layout_probe.py"), "--out", str(out),
-           "--skins", ",".join(skins), "--sizes", ",".join(f"{w}x{h}" for w, h in sizes),
-           "--scenario", scenario]
-    if strict:
-        cmd.append("--strict")
-    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", env=env, timeout=600)
-    report = json.loads(out.read_text(encoding="utf-8")) if out.is_file() else None
-    return proc, report
 
 
 @pytest.fixture(scope="module")

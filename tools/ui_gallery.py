@@ -106,6 +106,30 @@ def _states(dialog):
                 break
 
 
+def dialog_builders(core) -> dict:
+    """``screen name -> zero-argument callable`` building that dialog on the sample core."""
+    from mandible.ui.dialogs.about import AboutDialog
+    from mandible.ui.dialogs.add_plugin import AddPluginDialog
+    from mandible.ui.dialogs.hotkey import HotkeyDialog
+    from mandible.ui.dialogs.param_map import PluginParamMapDialog
+    from mandible.ui.dialogs.prefx import PreFXDialog
+    from mandible.ui.dialogs.settings import SettingsDialog
+    from mandible.ui.dialogs.setup_assistant import SetupAssistantDialog
+    from mandible.ui.dialogs.soundboard import SoundboardDialog
+
+    slot = core.cfg.chains[0].plugins[0]
+    return {
+        "settings": lambda: SettingsDialog(core, False, None),
+        "prefx": lambda: PreFXDialog(core, None),
+        "soundboard": lambda: SoundboardDialog(core, None),
+        "hotkey": lambda: HotkeyDialog(core, None, "Set hotkey"),
+        "add_plugin": lambda: AddPluginDialog([], None),
+        "param_map": lambda: PluginParamMapDialog(slot, core, None),
+        "setup_assistant": lambda: SetupAssistantDialog(core, None),
+        "about": lambda: AboutDialog(None),
+    }
+
+
 def build_main_window(core):
     """A MainWindow that never touches the desktop: shown with WA_DontShowOnScreen and with no
     system tray icon (``show_tray=False``; a shown tray icon ignores WA_DontShowOnScreen and
@@ -179,14 +203,6 @@ def run_gallery(out: pathlib.Path, skins: list[str], themes: list[str],
     from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QApplication
 
-    from mandible.ui.dialogs.about import AboutDialog
-    from mandible.ui.dialogs.add_plugin import AddPluginDialog
-    from mandible.ui.dialogs.hotkey import HotkeyDialog
-    from mandible.ui.dialogs.param_map import PluginParamMapDialog
-    from mandible.ui.dialogs.prefx import PreFXDialog
-    from mandible.ui.dialogs.settings import SettingsDialog
-    from mandible.ui.dialogs.setup_assistant import SetupAssistantDialog
-    from mandible.ui.dialogs.soundboard import SoundboardDialog
     from mandible.ui.sample_setup import build_sample_core
 
     app = QApplication.instance() or QApplication([])
@@ -196,7 +212,7 @@ def run_gallery(out: pathlib.Path, skins: list[str], themes: list[str],
     try:
         # Closing the main window must never hide to the tray and raise a toast.
         core.cfg.close_to_tray = False
-        slot = core.cfg.chains[0].plugins[0]
+        builders = dialog_builders(core)
 
         def snap(widget, name: str) -> str:
             app.processEvents()
@@ -208,17 +224,6 @@ def run_gallery(out: pathlib.Path, skins: list[str], themes: list[str],
             widget.setAttribute(Qt.WA_DontShowOnScreen)
             widget.show()
             app.processEvents()
-
-        builders = {
-            "settings": lambda: SettingsDialog(core, False, None),
-            "prefx": lambda: PreFXDialog(core, None),
-            "soundboard": lambda: SoundboardDialog(core, None),
-            "hotkey": lambda: HotkeyDialog(core, None, "Set hotkey"),
-            "add_plugin": lambda: AddPluginDialog([], None),
-            "param_map": lambda: PluginParamMapDialog(slot, core, None),
-            "setup_assistant": lambda: SetupAssistantDialog(core, None),
-            "about": lambda: AboutDialog(None),
-        }
 
         def capture_main(skin: str, theme: str, contrast: list[dict]) -> None:
             win = build_main_window(core)

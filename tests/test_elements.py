@@ -91,15 +91,15 @@ def test_size_hints_match_todays_widgets(qapp):
     from mandible.ui.elements.switches import BatToggle, Pill, Rocker
 
     look = look_mod.current_look()
-    assert BatToggle().size_hint(look).width() == 68 and BatToggle().size_hint(look).height() == 24
+    assert BatToggle().size_hint(look).width() == 72 and BatToggle().size_hint(look).height() == 24
     assert BatToggle(compact=True).size_hint(look).width() == 50
     assert BatToggle(vertical=True).size_hint(look).width() == 46
     assert BatToggle(vertical=True).size_hint(look).height() == 28
-    assert Rocker().size_hint(look).width() == 68
-    assert Pill().size_hint(look).width() == 68
-    assert (Machined().size_hint(look).width(), Machined().size_hint(look).height()) == (54, 62)
+    assert Rocker().size_hint(look).width() == 72
+    assert Pill().size_hint(look).width() == 72
+    assert (Machined().size_hint(look).width(), Machined().size_hint(look).height()) == (56, 64)
     assert (Machined(compact=True).size_hint(look).width(),
-            Machined(compact=True).size_hint(look).height()) == (64, 58)
+            Machined(compact=True).size_hint(look).height()) == (64, 62)
 
 
 def test_density_placeholders_are_not_painted():
@@ -120,10 +120,12 @@ def test_resolve_frame_follows_the_skin_unless_overridden():
 
 
 def test_frame_margins_match_the_old_chassis():
+    """The metal rack's margins sit on the spacing scale (Task 12); the others are as before
+    until their skins' standard tasks."""
     from mandible.ui.elements.frames import Frameless, MetalRack, WoodCheeks
 
     look = look_mod.current_look()
-    assert MetalRack().content_margins(look) == (28, 14, 28, 14)
+    assert MetalRack().content_margins(look) == (24, 12, 24, 12)
     assert WoodCheeks().content_margins(look) == (28, 14, 28, 18)
     assert Frameless().content_margins(look) == (2, 2, 2, 2)
 
@@ -346,3 +348,31 @@ def test_inactive_smooth_bar_row_draws_only_the_track(qapp):
     assert paint(ElementState(enabled=False, value=0.9, peak=0.5)) == \
         paint(ElementState(enabled=False, value=0.0))
     assert paint(ElementState(value=0.9)) != paint(ElementState(value=0.0))
+
+
+def test_metal_rack_keeps_only_its_four_corner_screws(qapp, monkeypatch):
+    """The skeuomorphic frame paints exactly four screws, through the skin's screws element
+    (one per corner, none with ``screws: none``)."""
+    from mandible.ui.elements import screws
+    from mandible.ui.elements.frames import MetalRack
+
+    painted = []
+    real = screws.CornersOnly.draw
+    monkeypatch.setattr(screws.CornersOnly, "draw",
+                        lambda self, p, w, h, st, lk: (painted.append((w, h)), real(self, p, w, h, st, lk)))
+    from PySide6.QtCore import QRectF
+    from PySide6.QtGui import QImage, QPainter
+
+    img = QImage(400, 300, QImage.Format.Format_ARGB32)
+    img.fill(0)
+    frame = MetalRack()
+    for skin, want in (("skeuomorphic", 4), ("minimal", 0)):
+        painted.clear()
+        look = look_mod.Look(look_mod.BUILTIN_PALETTES["scarlet"], look_mod.BUILTIN_SKINS[skin])
+        p = QPainter(img)
+        frame.paint(p, QRectF(0, 0, 400, 300), ElementState(), look)
+        p.end()
+        assert len(painted) == want, skin
+    corners = frame.corner_screws(400, 300)
+    assert len(corners) == 4
+    assert {round(c.x()) for c in corners} == {12, 388} and {round(c.y()) for c in corners} == {24, 276}

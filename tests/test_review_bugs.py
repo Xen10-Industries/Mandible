@@ -262,7 +262,7 @@ def test_soundboard_rows_fit_their_cell_widgets_and_start_unselected(sample_core
         assert dlg.waveform_widget.clip_name_lbl.text() == "No clip selected"
         # choosing a row shows its clip; clearing the selection goes back to the empty state
         table.selectRow(1)
-        assert dlg.waveform_widget.clip_name_lbl.text() == sample_core.cfg.soundboard[1].name.upper()
+        assert dlg.waveform_widget.clip_name_lbl.text() == sample_core.cfg.soundboard[1].name
         table.clearSelection()
         assert dlg.waveform_widget.clip_name_lbl.text() == "No clip selected"
         # a refresh (e.g. after playing a clip) keeps the user's selection, and adds none

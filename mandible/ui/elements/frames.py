@@ -39,13 +39,23 @@ def _wood(look: Look):
 
 
 class MetalRack(Element):
-    """19-inch brushed anodized steel rack ears with EIA oval slots and silver bolts."""
+    """19-inch brushed anodized steel rack ears with EIA oval slots; the skin's ``screws``
+    element bolts the four corners (spec: the skeuomorphic skin keeps only its corner screws)."""
 
-    EAR_W = 26.0
-    RAIL_H = 12.0
+    EAR_W = 22.0
+    RAIL_H = 10.0
+    SCREW_PX = 12.0
+    CORNER_Y = 24.0   # corner screw centre from the top / bottom edge
 
     def content_margins(self, look: Look) -> tuple[int, int, int, int]:
-        return (28, 14, 28, 14)
+        # On the spacing scale (24 / 12), clear of the ears and rails.
+        return (24, 12, 24, 12)
+
+    def corner_screws(self, w: float, h: float) -> list[QPointF]:
+        """Centres of the four corner screws (one per ear, top and bottom)."""
+        xs = (1.0 + self.EAR_W / 2.0, w - 1.0 - self.EAR_W / 2.0)
+        ys = (self.CORNER_Y, h - self.CORNER_Y)
+        return [QPointF(x, y) for y in ys for x in xs]
 
     def draw(self, p: QPainter, w: float, h: float, state: ElementState, look: Look) -> None:
         m = metal(look)
@@ -63,7 +73,7 @@ class MetalRack(Element):
         p.setBrush(base_grad)
         p.drawRoundedRect(QRectF(0.5, 0.5, w - 1.0, h - 1.0), 9.0, 9.0)
 
-        # Top and bottom cross-rail extrusions with light silver machine screws
+        # Top and bottom cross-rail extrusions (plain: no bolts)
         for ry in (1.0, h - rail_h - 1.0):
             rg = QLinearGradient(0, ry, 0, ry + rail_h)
             rg.setColorAt(0.0, mix(body_top, m.mid, 0.35))
@@ -72,10 +82,6 @@ class MetalRack(Element):
             p.setPen(QPen(m.black, 1.0))
             p.setBrush(rg)
             p.drawRect(QRectF(ear_w, ry, w - 2 * ear_w, rail_h))
-            num_bolts = 6
-            for bi in range(num_bolts):
-                bx = ear_w + 36.0 + bi * ((w - 2 * ear_w - 72.0) / max(1, num_bolts - 1))
-                draw_silver_screw(p, bx, ry + rail_h / 2.0, look, r=3.3, angle_deg=25.0 + bi * 20.0)
 
         # Left and right brushed steel rack ears
         for ex in (1.0, w - ear_w - 1.0):
@@ -93,25 +99,27 @@ class MetalRack(Element):
             for gx in range(int(ex + 4), int(ex + ear_w - 3), 3):
                 p.drawLine(QPointF(gx, 6.0), QPointF(gx, h - 6.0))
 
-            # EIA mounting oval slots, silver rack bolts on the outer and middle slots
+            # EIA mounting slots: the corner ones hold the screws, the inner pair stays empty
             ec_x = ex + ear_w / 2.0
-            slot_ys = [28.0, 82.0, h / 2.0 - 28.0, h / 2.0 + 28.0, h - 82.0, h - 28.0]
-            for idx_s, sy in enumerate(slot_ys):
-                if sy < 20.0 or sy > h - 20.0:
+            for sy in (self.CORNER_Y, self.CORNER_Y + 48.0, h - self.CORNER_Y - 48.0,
+                       h - self.CORNER_Y):
+                if sy < 16.0 or sy > h - 16.0:
                     continue
                 p.setPen(QPen(m.black, 1.0))
                 p.setBrush(m.black.darker(120))
-                p.drawRoundedRect(QRectF(ec_x - 7.5, sy - 4.8, 15.0, 9.6), 4.5, 4.5)
-                if idx_s in (0, 2, 3, 5):
-                    p.setPen(QPen(m.dark, 0.8))
-                    p.setBrush(m.mid)
-                    p.drawEllipse(QPointF(ec_x, sy), 6.5, 6.5)
-                    draw_silver_screw(p, ec_x, sy, look, r=5.0, angle_deg=35.0 + idx_s * 25.0)
+                p.drawRoundedRect(QRectF(ec_x - 6.5, sy - 4.5, 13.0, 9.0), 4.0, 4.0)
 
         # Inner recessed faceplate well
         p.setPen(QPen(m.black.darker(120), 1.6))
         p.setBrush(win)
         p.drawRect(QRectF(ear_w, rail_h, w - 2 * ear_w, h - 2 * rail_h))
+
+        # The four corner screws, drawn by the skin's screws element (none: no screws)
+        screw = registry.get("screws", registry.resolve(look.skin.elements)[0]["screws"])()
+        half = self.SCREW_PX / 2.0
+        for c in self.corner_screws(w, h):
+            screw.paint(p, QRectF(c.x() - half, c.y() - half, self.SCREW_PX, self.SCREW_PX),
+                        ElementState(), look)
 
 
 class WoodCheeks(Element):

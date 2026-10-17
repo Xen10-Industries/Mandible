@@ -70,6 +70,7 @@ class SignalFlowStrip(QFrame):
             if i:
                 arrow = QLabel()
                 arrow.setObjectName("flowArrow")
+                arrow.setAccessibleName("then")   # read between steps: "Mic in, then Pre-FX"
                 bind_label_icon(arrow, "chevron_right", "text.secondary", ARROW_PX)
                 self._arrows.append(arrow)
                 lay.addWidget(arrow)
@@ -87,6 +88,7 @@ class SignalFlowStrip(QFrame):
                 icon = StatusPill()
                 icon.setProperty("iconOnly", "true")
                 icon.setToolTip(what)
+                icon.setAccessibleName(what)
                 bind_label_icon(icon, icon_name, "text.secondary", ICON_PX)
             for w in (full, icon):
                 w.setProperty("flowStep", key)
@@ -204,6 +206,9 @@ class SignalFlowStrip(QFrame):
             else:
                 extra = f"\n{full.toolTip()}" if isinstance(full, QPushButton) and full.toolTip() else ""
                 icon.setToolTip(f"{what}: {text}{extra}")
+            if isinstance(icon, StatusPill):
+                # An icon-only pill says what it shows to a screen reader.
+                icon.setAccessibleName(f"{what}: {text}")
             if key in active:
                 self._set_step_state(key, "on" if active[key] else "off")
 
