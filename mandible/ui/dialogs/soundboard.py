@@ -6,14 +6,15 @@ from functools import partial
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QCheckBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QHeaderView,
-                               QLabel, QPushButton, QSlider,
+                               QLabel, QSlider,
                                QTableWidget, QTableWidgetItem,
                                QVBoxLayout)
 
 from ...config import SoundboardClipConfig
 from ...core import Core
 from ...waveform_widget import SoundboardWaveformWidget
-from ..widgets.base import _follow_look
+from ..widgets.base import _follow_look, reserve_text_width
+from ..widgets.buttons import make_button
 from .hotkey import HotkeyDialog
 
 
@@ -68,19 +69,20 @@ class SoundboardDialog(QDialog):
 
         self.duck_val_lbl = QLabel(f"{self.duck_slider.value()} dB")
         self.duck_val_lbl.setObjectName("duckValue")
-        self.duck_val_lbl.setFixedWidth(45)
         duck_lay.addWidget(self.duck_val_lbl)
+        # Measured in place: the duck strip's stylesheet pads its labels.
+        reserve_text_width(self.duck_val_lbl, "-30 dB")
+        self.duck_val_lbl.setFixedWidth(self.duck_val_lbl.minimumWidth())
 
         lay.addWidget(duck_strip)
 
         bottom = QHBoxLayout()
-        add_btn = QPushButton("+ Add sound clip…")
-        stop_all_btn = QPushButton("Stop all sounds")
-        stop_all_btn.setObjectName("testButton")
+        add_btn = make_button("Add sound clip…", icon="plus")
+        stop_all_btn = make_button("Stop all sounds", icon="stop")
         bottom.addWidget(add_btn)
         bottom.addWidget(stop_all_btn)
         bottom.addStretch()
-        close_btn = QPushButton("Close")
+        close_btn = make_button("Close")
         bottom.addWidget(close_btn)
         lay.addLayout(bottom)
 
@@ -121,7 +123,8 @@ class SoundboardDialog(QDialog):
             self.table.setItem(row, 0, QTableWidgetItem(clip.name))
 
             # Hotkey button
-            hk_btn = QPushButton(clip.hotkey.label if clip.hotkey.is_set() else "Set key…")
+            hk_btn = make_button(clip.hotkey.label if clip.hotkey.is_set() else "Set key…", "quiet",
+                                 icon="hotkey", tooltip="Hotkey that plays this clip")
             hk_btn.clicked.connect(partial(self._set_hotkey, clip))
             self.table.setCellWidget(row, 1, hk_btn)
 
@@ -145,7 +148,10 @@ class SoundboardDialog(QDialog):
             self.table.setCellWidget(row, 4, mon_cb)
 
             # Play / Stop button
-            action_btn = QPushButton("STOP" if self.core.engine.soundboard.is_playing(clip.id) else "PLAY")
+            playing = self.core.engine.soundboard.is_playing(clip.id)
+            action_btn = make_button("Stop" if playing else "Play", "quiet",
+                                     icon="stop" if playing else "play",
+                                     tooltip="Stop this clip" if playing else "Play this clip")
             action_btn.clicked.connect(partial(self._toggle_play, clip))
             self.table.setCellWidget(row, 5, action_btn)
 

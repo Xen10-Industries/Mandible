@@ -7,12 +7,13 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import QRectF, Qt, Signal
 from PySide6.QtGui import QBrush, QFont, QLinearGradient, QPainter, QPen
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+    QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 )
 
 from .soundboard import SoundboardEngine
 from .ui.look import current_look
 from .ui.widgets.base import _follow_look, look_color
+from .ui.widgets.buttons import make_button
 
 if TYPE_CHECKING:
     from .config import SoundboardClipConfig
@@ -211,21 +212,21 @@ class SoundboardWaveformWidget(QFrame):
         self.canvas.trimChanged.connect(self._on_canvas_trim_changed)
         lay.addWidget(self.canvas)
 
-        # Buttons row: [ PLAY TRIMMED ] [ STOP ] [ RESET TRIM ]
+        # Buttons row: [Play trimmed] [Stop] [Reset trim]
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
 
-        self.play_btn = QPushButton("PLAY TRIMMED")
+        self.play_btn = make_button("Play trimmed", icon="play")
         self.play_btn.setObjectName("waveformPlayBtn")
 
         self.play_btn.clicked.connect(self._play_trimmed)
         btn_row.addWidget(self.play_btn)
 
-        self.stop_btn = QPushButton("STOP")
+        self.stop_btn = make_button("Stop", icon="stop")
         self.stop_btn.clicked.connect(self._stop_clip)
         btn_row.addWidget(self.stop_btn)
 
-        self.reset_btn = QPushButton("RESET TRIM")
+        self.reset_btn = make_button("Reset trim", "quiet")
         self.reset_btn.setObjectName("waveformResetBtn")
         self.reset_btn.clicked.connect(self._reset_trim)
         btn_row.addWidget(self.reset_btn)

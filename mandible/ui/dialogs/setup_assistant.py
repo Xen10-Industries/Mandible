@@ -12,11 +12,13 @@ from PySide6.QtCore import QTimer
 from PySide6.QtGui import QFont, QPainter, QLinearGradient
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QFrame, QHBoxLayout, QLabel,
-    QPushButton, QStackedWidget, QVBoxLayout, QWidget, QMessageBox
+    QStackedWidget, QVBoxLayout, QWidget, QMessageBox
 )
 
 from ... import devices as D
+from ..look import font_px
 from ..widgets.base import _follow_look, look_color, set_style_property
+from ..widgets.buttons import make_button
 
 if TYPE_CHECKING:
     from ...core import Core
@@ -64,7 +66,9 @@ class LiveVuBar(QWidget):
 
         # Scale markings
         p.setPen(look_color("text.secondary"))
-        p.setFont(QFont("Consolas", 6))
+        f = QFont("Consolas")
+        f.setPixelSize(font_px("readout"))
+        p.setFont(f)
         for frac, label in [(0.5, "-12dB"), (0.75, "-6dB"), (0.9, "0dB")]:
             x = int(w * frac)
             p.drawLine(x, 0, x, 3)
@@ -108,13 +112,13 @@ class SetupAssistantDialog(QDialog):
 
         # Bottom navigation
         nav_box = QHBoxLayout()
-        self.back_btn = QPushButton("< BACK")
+        self.back_btn = make_button("Back", "secondary", icon="chevron_left")
         self.back_btn.clicked.connect(self._prev_step)
         self.back_btn.setEnabled(False)
         nav_box.addWidget(self.back_btn)
         nav_box.addStretch()
 
-        self.next_btn = QPushButton("NEXT: OUTPUT ROUTING >")
+        self.next_btn = make_button("Next: output routing", "primary")
         self.next_btn.setObjectName("wizardNextBtn")
         self.next_btn.clicked.connect(self._next_step)
         nav_box.addWidget(self.next_btn)
@@ -270,12 +274,13 @@ class SetupAssistantDialog(QDialog):
 
         # Download / Refresh buttons
         action_row = QHBoxLayout()
-        self.download_cable_btn = QPushButton("DOWNLOAD FREE VB-AUDIO CABLE")
+        self.download_cable_btn = make_button("Download the free VB-Audio Cable", icon="open_window",
+                                              tooltip="Opens vb-audio.com in your browser")
         self.download_cable_btn.setObjectName("wizardDownloadBtn")
         self.download_cable_btn.clicked.connect(lambda: webbrowser.open("https://vb-audio.com/Cable/"))
         action_row.addWidget(self.download_cable_btn)
 
-        self.rescan_btn = QPushButton("REFRESH DEVICE LIST")
+        self.rescan_btn = make_button("Refresh the device list")
         self.rescan_btn.clicked.connect(self._rescan_cable_devices)
         action_row.addWidget(self.rescan_btn)
         lay.addLayout(action_row)
@@ -328,8 +333,8 @@ class SetupAssistantDialog(QDialog):
             self._set_cable_state("warn")
             self.cable_card_title.setText("NOTE: No Virtual Audio Cable Detected")
             self.cable_card_desc.setText(
-                "Windows doesn't have a virtual cable installed. Click 'Download Free VB-Audio Cable' below, "
-                "run the installer, and click 'Refresh Device List'."
+                "Windows doesn't have a virtual cable installed. Click 'Download the free VB-Audio Cable' "
+                "below, run the installer, and click 'Refresh the device list'."
             )
 
     # ------------------------------------------------------------- Step 3: Monitor
@@ -368,7 +373,7 @@ class SetupAssistantDialog(QDialog):
 
         # Test headphone monitor button
         test_box = QHBoxLayout()
-        self.test_audio_btn = QPushButton("TEST HEADPHONES (PLAY AUDIO CHIME)")
+        self.test_audio_btn = make_button("Test headphones (play a chime)", icon="play")
         self.test_audio_btn.clicked.connect(self._test_headphones)
         test_box.addWidget(self.test_audio_btn)
         lay.addLayout(test_box)
@@ -474,11 +479,11 @@ class SetupAssistantDialog(QDialog):
         ]
         self.main_title.setText(titles[idx])
         if idx == 3:
-            self.next_btn.setText("FINISH && APPLY ROUTING")   # && is one literal ampersand
+            self.next_btn.setText("Finish && apply routing")   # && is one literal ampersand
             set_style_property(self.next_btn, "final", True)
         else:
-            next_titles = ["OUTPUT ROUTING >", "HEADPHONE MONITOR >", "CONNECTION GUIDE >"]
-            self.next_btn.setText(f"NEXT: {next_titles[idx]}")
+            next_titles = ["output routing", "headphone monitor", "connection guide"]
+            self.next_btn.setText(f"Next: {next_titles[idx]}")
             set_style_property(self.next_btn, "final", False)
 
     def _finish_and_apply(self):

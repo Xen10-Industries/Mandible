@@ -79,8 +79,10 @@ def build_qss(look: "Look") -> str:
     head_bg = card if flat else f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {alt}, stop:1 {win})"
     bay_bg = card if flat else win
     raised_bg = alt if flat else f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {alt}, stop:1 {card})"
-    toggle_bg = f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {alt}, stop:1 {inset})"
 
+    # Button tiers: rules of equal specificity go base, checked, status state, hover, pressed,
+    # focus, disabled, so focus and disabled always show whatever else is set. No button has
+    # an object-name rule (an ID selector would out-rank the tier's state rules).
     return f"""
 QWidget {{
     font-family: "Segoe UI", -apple-system, system-ui, Roboto, sans-serif;
@@ -149,73 +151,6 @@ QFrame#prefxModule[active="false"]:hover, QFrame#limiterModule[active="false"]:h
     background: {alt};
 }}
 
-QPushButton#hardwareMasterToggle, QPushButton#powerButton {{
-    background: {toggle_bg};
-    border: {bw2} solid {line};
-    border-radius: {r_ctl};
-    color: {text};
-    font-weight: 800;
-    font-size: {f_small};
-    letter-spacing: 0.5px;
-    padding: 6px 14px;
-}}
-QPushButton#hardwareMasterToggle:hover, QPushButton#powerButton:hover {{
-    border-color: {ok};
-    background: {alt};
-}}
-QPushButton#hardwareMasterToggle:checked, QPushButton#powerButton:checked {{
-    background: {ok};
-    border: {bw2} solid {ok};
-    color: {win};
-}}
-
-QPushButton#hardwareMonitorToggle, QPushButton#monitorButton {{
-    background: {toggle_bg};
-    border: {bw2} solid {line};
-    border-radius: {r_ctl};
-    color: {text};
-    font-weight: 700;
-    font-size: {f_small};
-    padding: 6px 14px;
-}}
-QPushButton#hardwareMonitorToggle:hover, QPushButton#monitorButton:hover {{
-    border-color: {accent};
-}}
-QPushButton#hardwareMonitorToggle:checked, QPushButton#monitorButton:checked {{
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {accent}, stop:1 {accent_pressed});
-    border: {bw2} solid {accent_hover};
-    color: {on_accent};
-}}
-
-QPushButton#hardwarePanicCut, QPushButton#panicTopButton {{
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {danger_bg}, stop:1 {inset});
-    border: {bw2} solid {danger};
-    border-radius: {r_ctl};
-    color: {danger};
-    font-weight: 800;
-    font-size: {f_small};
-    letter-spacing: 0.5px;
-    padding: 6px 14px;
-}}
-QPushButton#hardwarePanicCut:hover, QPushButton#panicTopButton:hover {{
-    background: {danger};
-    color: {win};
-}}
-
-QPushButton#hardwareConfigBtn {{
-    background: {card};
-    border: {bw2} solid {line};
-    color: {muted};
-    font-weight: bold;
-    font-size: {f_small};
-    padding: 6px 12px;
-    border-radius: {r_ctl};
-}}
-QPushButton#hardwareConfigBtn:hover {{
-    background: {alt};
-    color: {text};
-}}
-
 QFrame#signalFlowStrip {{
     background-color: {card};
     border: {bw} solid {line};
@@ -223,50 +158,14 @@ QFrame#signalFlowStrip {{
 }}
 QLabel#flowBusLabel {{
     color: {muted};
-    font-size: 7.5pt;
+    font-size: {f_small};
     font-weight: bold;
     font-family: Consolas, monospace;
 }}
 QLabel#flowArrow {{
     color: {muted};
-    font-size: 8.5pt;
+    font-size: {f_small};
     font-weight: bold;
-}}
-QLabel#flowPill {{
-    background-color: {win};
-    border: {bw} solid {line};
-    border-radius: {r_ctl};
-    padding: 4px 10px;
-    font-weight: 600;
-    font-size: {f_small};
-    color: {text};
-}}
-QLabel#flowPill[state="on"] {{
-    background-color: {ok_bg};
-    border: {bw} solid {ok};
-    color: {ok};
-}}
-QPushButton#flowBtn {{
-    background-color: {win};
-    border: {bw} solid {line};
-    border-radius: {r_ctl};
-    padding: 4px 10px;
-    font-weight: 600;
-    font-size: {f_small};
-    color: {text};
-}}
-QPushButton#flowBtn:hover {{
-    background-color: {alt};
-    border-color: {accent};
-    color: {text};
-}}
-QPushButton#flowBtn[state="on"] {{
-    background-color: {ok_bg};
-    border: {bw} solid {ok};
-    color: {ok};
-}}
-QLabel#flowPill[compact="true"], QPushButton#flowBtn[compact="true"] {{
-    padding: 2px 4px;
 }}
 QFrame#signalFlowStrip[mode="hidden"] {{
     background: transparent;
@@ -359,7 +258,7 @@ QLabel#cardHotkey {{
     border-radius: {r_sm};
     padding: 0px 6px;
     font-family: Consolas, monospace;
-    font-size: 7.5pt;
+    font-size: {f_small};
     font-weight: bold;
     color: {muted};
     min-height: 18px;
@@ -380,7 +279,7 @@ QLabel#chainName[active="true"] {{
 }}
 QLabel#chainSub {{
     color: {muted};
-    font-size: 7.5pt;
+    font-size: {f_small};
     padding-left: 17px;
 }}
 QLabel#chainSub[active="true"] {{
@@ -389,7 +288,7 @@ QLabel#chainSub[active="true"] {{
 }}
 QLabel#chainWet {{
     color: {muted};
-    font-size: 7.5pt;
+    font-size: {f_small};
     font-weight: bold;
     font-family: Consolas, monospace;
     margin: 0px;
@@ -431,23 +330,6 @@ QFrame#pluginRackCard[error="true"] {{
     background-color: {danger_bg};
 }}
 
-QPushButton#rackPowerBtn {{
-    background-color: {alt};
-    border: {bw} solid {line};
-    border-radius: 15px;
-    font-weight: bold;
-    font-size: {f_title};
-    color: {muted};
-}}
-QPushButton#rackPowerBtn:checked {{
-    background: {ok};
-    border: {bw} solid {ok};
-    color: {win};
-}}
-QPushButton#rackPowerBtn:hover {{
-    border-color: {ok};
-}}
-
 QLabel#vendorBadge {{
     background-color: {win};
     border: {bw} solid {line};
@@ -457,46 +339,9 @@ QLabel#vendorBadge {{
     font-weight: 600;
     color: {muted};
 }}
-QPushButton#rackHotkeyBtn {{
-    background-color: {win};
-    border: {bw} solid {line};
-    border-radius: {r_sm};
-    padding: 2px 6px;
-    font-family: Consolas, monospace;
-    font-size: {f_small};
-    color: {chip_text};
-}}
-QPushButton#rackHotkeyBtn:hover {{
-    border-color: {accent};
-    color: {text};
-}}
-QPushButton#rackKnobsBtn {{
-    background-color: {card};
-    border: {bw} solid {strong};
-    border-radius: {r_sm};
-    padding: 3px 7px;
-    font-family: Consolas, monospace;
-    font-size: 7.5pt;
-    font-weight: bold;
-    color: {text};
-}}
-QPushButton#rackMapBtn {{
-    background-color: {inset};
-    border: {bw} solid {strong};
-    border-radius: {r_sm};
-    padding: 3px 7px;
-    font-family: Consolas, monospace;
-    font-size: 7.5pt;
-    font-weight: bold;
-    color: {muted};
-}}
-QPushButton#rackMapBtn[mapped="true"] {{
-    border-color: {readout};
-    color: {readout};
-}}
 QLabel#rackSlotIndex {{
     font-family: Consolas, monospace;
-    font-size: 10.5pt;
+    font-size: {f_title};
     font-weight: bold;
     color: {muted};
 }}
@@ -505,7 +350,7 @@ QLabel#formatBadge {{
     border: {bw} solid {readout};
     border-radius: {r_sm};
     padding: 1px 5px;
-    font-size: 7.5pt;
+    font-size: {f_small};
     font-weight: bold;
     color: {readout};
 }}
@@ -514,7 +359,7 @@ QLabel#builtinBadge {{
     border: {bw} solid {line};
     border-radius: {r_sm};
     padding: 1px 5px;
-    font-size: 7.5pt;
+    font-size: {f_small};
     font-weight: bold;
     color: {muted};
 }}
@@ -523,24 +368,24 @@ QLabel#awakeBadge {{
     border: {bw} solid {ok};
     border-radius: {r_sm};
     padding: 1px 5px;
-    font-size: 7.5pt;
+    font-size: {f_small};
     font-weight: bold;
     color: {ok};
 }}
 QLabel#rackSlotError {{
     color: {danger};
-    font-size: 8pt;
+    font-size: {f_small};
     font-weight: bold;
 }}
 QLabel#latencyChip {{
     color: {muted};
     font-family: Consolas, monospace;
-    font-size: 7.5pt;
+    font-size: {f_small};
     font-weight: bold;
 }}
 QLabel#rackBayLabel {{
     font-family: Consolas, monospace;
-    font-size: 6.5pt;
+    font-size: {f_small};
     font-weight: bold;
     color: {muted};
     letter-spacing: 0.5px;
@@ -552,49 +397,6 @@ QFrame#rackBaySeparator {{
     background: {line};
     max-width: 1px;
 }}
-QPushButton#rackUiBtn {{
-    background-color: {accent};
-    border: {bw} solid {accent_hover};
-    border-radius: {r_ctl};
-    padding: 5px 12px;
-    font-weight: bold;
-    font-size: {f_small};
-    color: {on_accent};
-}}
-QPushButton#rackUiBtn:hover {{
-    background-color: {accent_hover};
-}}
-QPushButton#rackToolBtn {{
-    background-color: {card};
-    border: {bw} solid {line};
-    border-radius: {r_sm};
-    color: {text};
-    font-size: {f_body};
-    padding: 0px;
-    margin: 0px;
-    min-width: 0px;
-    min-height: 0px;
-}}
-QPushButton#rackToolBtn:hover {{
-    background-color: {alt};
-    color: {text};
-}}
-QPushButton#rackRemoveBtn {{
-    background-color: {danger_bg};
-    border: {bw} solid {line};
-    border-radius: {r_sm};
-    color: {danger};
-    font-size: {f_body};
-    font-weight: bold;
-    padding: 0px;
-    margin: 0px;
-    min-width: 0px;
-    min-height: 0px;
-}}
-QPushButton#rackRemoveBtn:hover {{
-    background-color: {danger};
-    color: {win};
-}}
 
 QFrame#channelStripCard, QFrame#channelStrip {{
     background-color: {card};
@@ -604,17 +406,17 @@ QFrame#channelStripCard, QFrame#channelStrip {{
 
 QLabel#channelTitle {{
     font-weight: bold;
-    font-size: 8pt;
+    font-size: {f_small};
     color: {muted};
     letter-spacing: 0.5px;
 }}
 QLabel#gainLabel {{
-    font-size: 8.5pt;
+    font-size: {f_small};
     color: {muted};
 }}
 QLabel#gainValue {{
     font-family: Consolas, monospace;
-    font-size: 8.5pt;
+    font-size: {f_small};
     color: {text};
 }}
 QLineEdit#inlineValueEdit, QLineEdit#gainValueEdit {{
@@ -623,13 +425,13 @@ QLineEdit#inlineValueEdit, QLineEdit#gainValueEdit {{
     border-radius: {r_sm};
     color: {text};
     font-family: Consolas, monospace;
-    font-size: 8pt;
+    font-size: {f_small};
     font-weight: bold;
     padding: 0px 2px;
     selection-background-color: {accent};
 }}
 QLineEdit#gainValueEdit {{
-    font-size: 8.5pt;
+    font-size: {f_small};
     padding: 0px 3px;
 }}
 
@@ -659,11 +461,6 @@ QPushButton:disabled {{
     color: {dim};
     border-color: {line};
 }}
-QPushButton#testButton:pressed {{
-    background-color: {ok};
-    border-color: {ok};
-    color: {win};
-}}
 
 QPushButton[tier="primary"] {{
     background-color: {accent};
@@ -671,127 +468,154 @@ QPushButton[tier="primary"] {{
     color: {on_accent};
     font-weight: 600;
 }}
-QPushButton[tier="primary"]:hover {{
-    background-color: {accent_hover};
-    border-color: {accent_hover};
-}}
-QPushButton[tier="primary"]:pressed {{
-    background-color: {accent_pressed};
-    border-color: {accent_pressed};
-    color: {on_accent};
-}}
-QPushButton[tier="primary"]:focus {{
-    border: 3px double {ring};
-    background-clip: padding;
-    padding: 3px 10px;
-}}
-QPushButton[tier="primary"]:disabled {{
-    background-color: {alt};
-    border-color: {line};
-    color: {dim};
-}}
-QPushButton[tier="primary"]:checked {{
-    background-color: {accent_pressed};
-    border-color: {accent_hover};
-    color: {on_accent};
-}}
-
 QPushButton[tier="secondary"] {{
     background-color: transparent;
     border: {bw} solid {strong};
     color: {text};
 }}
-QPushButton[tier="secondary"]:hover {{
-    background-color: {alt};
-    border-color: {accent_hover};
-}}
-QPushButton[tier="secondary"]:pressed {{
-    background-color: {accent_subtle};
-    border-color: {accent};
-    color: {text};
-}}
-QPushButton[tier="secondary"]:focus {{
-    border: {bw2} solid {ring};
-}}
-QPushButton[tier="secondary"]:disabled {{
-    background-color: transparent;
-    border-color: {line};
-    color: {dim};
-}}
-QPushButton[tier="secondary"]:checked {{
-    background-color: {accent_subtle};
-    border-color: {accent};
-    color: {accent_hover};
-}}
-
 QPushButton[tier="quiet"] {{
     background-color: transparent;
     border: {bw} solid transparent;
-    color: {muted};
-}}
-QPushButton[tier="quiet"]:hover {{
-    background-color: {alt};
-    border-color: {line};
     color: {text};
 }}
-QPushButton[tier="quiet"]:pressed {{
-    background-color: {inset};
-    border-color: {line};
-    color: {text};
-}}
-QPushButton[tier="quiet"]:focus {{
-    border: {bw2} solid {ring};
-    color: {text};
-}}
-QPushButton[tier="quiet"]:disabled {{
-    background-color: transparent;
-    border-color: transparent;
-    color: {dim};
-}}
-QPushButton[tier="quiet"]:checked {{
-    background-color: {accent_subtle};
-    border-color: transparent;
-    color: {accent_hover};
-}}
-
 QPushButton[tier="danger"] {{
     background-color: transparent;
     border: {bw} solid {danger};
     color: {danger};
     font-weight: 600;
 }}
-QPushButton[tier="danger"]:hover {{
-    background-color: {danger};
-    border-color: {danger};
-    color: {win};
+QPushButton[small="true"] {{
+    font-size: {f_small};
+    padding: 3px 8px;
 }}
-QPushButton[tier="danger"]:pressed {{
-    background-color: {danger_bg};
-    border-color: {danger};
-    color: {danger};
+QPushButton[iconOnly="true"] {{
+    padding: 0px;
 }}
-QPushButton[tier="danger"]:focus {{
-    border: {bw2} solid {ring};
+QPushButton[iconOnly="true"]::menu-indicator {{
+    image: none;
+    width: 0px;
 }}
-QPushButton[tier="danger"]:disabled {{
-    background-color: transparent;
-    border-color: {line};
-    color: {dim};
+
+QPushButton[tier="primary"]:checked {{
+    background-color: {accent_pressed};
+    border-color: {accent_hover};
+    color: {on_accent};
+}}
+QPushButton[tier="secondary"]:checked, QPushButton[tier="secondary"][state="on"],
+QPushButton[tier="quiet"][state="on"] {{
+    background-color: {ok_bg};
+    border-color: {ok};
+    color: {ok};
+}}
+QPushButton[tier="quiet"]:checked {{
+    background-color: {accent_subtle};
+    border-color: transparent;
+    color: {accent_hover};
 }}
 QPushButton[tier="danger"]:checked {{
     background-color: {danger_bg};
     border-color: {danger};
     color: {danger};
 }}
+QPushButton[tier="secondary"][state="warn"], QPushButton[tier="quiet"][state="warn"] {{
+    background-color: {warn_bg};
+    border-color: {warn};
+    color: {warn};
+}}
+QPushButton[tier="secondary"][state="danger"], QPushButton[tier="quiet"][state="danger"] {{
+    background-color: {danger_bg};
+    border-color: {danger};
+    color: {danger};
+}}
+
+QPushButton[tier="primary"]:hover {{
+    background-color: {accent_hover};
+    border-color: {accent_hover};
+}}
+QPushButton[tier="secondary"]:hover {{
+    background-color: {alt};
+    border-color: {accent_hover};
+}}
+QPushButton[tier="quiet"]:hover {{
+    background-color: {alt};
+    border-color: {line};
+}}
+QPushButton[tier="danger"]:hover {{
+    background-color: {danger_bg};
+    border-color: {danger};
+}}
+
+QPushButton[tier="primary"]:pressed {{
+    background-color: {accent_pressed};
+    border-color: {accent_pressed};
+    color: {on_accent};
+}}
+QPushButton[tier="secondary"]:pressed {{
+    background-color: {accent_subtle};
+    border-color: {accent};
+}}
+QPushButton[tier="quiet"]:pressed {{
+    background-color: {inset};
+    border-color: {line};
+}}
+QPushButton[tier="danger"]:pressed {{
+    background-color: {danger_bg};
+    border-color: {text};
+}}
+
+QPushButton[tier="primary"]:focus {{
+    border: 3px double {ring};
+    background-clip: padding;
+    padding: 3px 10px;
+}}
+QPushButton[tier="secondary"]:focus {{
+    border: {bw2} solid {ring};
+}}
+QPushButton[tier="quiet"]:focus {{
+    border: {bw2} solid {ring};
+}}
+QPushButton[tier="danger"]:focus {{
+    border: {bw2} solid {ring};
+}}
+QPushButton[small="true"][tier="primary"]:focus {{
+    padding: 1px 6px;
+}}
+QPushButton[iconOnly="true"]:focus {{
+    padding: 0px;
+}}
+
+QPushButton[tier="primary"]:disabled {{
+    background-color: {alt};
+    border-color: {line};
+    color: {dim};
+}}
+QPushButton[tier="secondary"]:disabled {{
+    background-color: transparent;
+    border-color: {line};
+    color: {dim};
+}}
+QPushButton[tier="quiet"]:disabled {{
+    background-color: transparent;
+    border-color: transparent;
+    color: {dim};
+}}
+QPushButton[tier="danger"]:disabled {{
+    background-color: transparent;
+    border-color: {line};
+    color: {dim};
+}}
 
 QLabel#statusPill {{
     background-color: {inset};
     border: {bw} solid {line};
     border-radius: 10px;
-    padding: 2px 10px;
+    padding: 2px 8px;
     font-size: {f_small};
     font-weight: 600;
     color: {muted};
+}}
+QLabel#statusPill[iconOnly="true"] {{
+    padding: 2px 6px;
 }}
 QLabel#statusPill[state="off"] {{
     background-color: {inset};
@@ -919,53 +743,24 @@ QFrame#waveformPanel {{
 }}
 QLabel#waveformClipName {{
     font-weight: bold;
-    font-size: 8.5pt;
+    font-size: {f_small};
     color: {text};
 }}
 QLabel#waveformTiming {{
     font-family: Consolas, monospace;
-    font-size: 8pt;
+    font-size: {f_small};
     color: {muted};
-}}
-QPushButton#waveformPlayBtn {{
-    background: {ok_bg};
-    border: {bw} solid {ok};
-    color: {ok};
-    font-weight: bold;
-    padding: 4px 12px;
-    border-radius: {r_sm};
-}}
-QPushButton#waveformPlayBtn:hover {{
-    background: {alt};
-}}
-QPushButton#waveformResetBtn {{
-    color: {muted};
-    font-size: 8pt;
-    padding: 4px 10px;
 }}
 QLabel#waveformHint {{
     color: {muted};
-    font-size: 7.5pt;
+    font-size: {f_small};
     font-style: italic;
 }}
 QLabel#rackBusLabel {{
     font-weight: 800;
-    font-size: 8.5pt;
+    font-size: {f_small};
     color: {muted};
     letter-spacing: 0.8px;
-}}
-QPushButton#rackInsertBtn {{
-    background: {accent};
-    border: {bw} solid {accent_hover};
-    color: {on_accent};
-    font-weight: 800;
-    font-size: 8pt;
-    padding: 4px 12px;
-    border-radius: {r_sm};
-    letter-spacing: 0.5px;
-}}
-QPushButton#rackInsertBtn:hover {{
-    background: {accent_hover};
 }}
 QLineEdit#rackBusNameEdit {{
     background: {inset};
@@ -975,7 +770,7 @@ QLineEdit#rackBusNameEdit {{
     color: {text};
     font-family: "Segoe UI", sans-serif;
     font-weight: 800;
-    font-size: 9pt;
+    font-size: {f_body};
     letter-spacing: 0.5px;
 }}
 QLineEdit#rackBusNameEdit:hover {{
@@ -998,28 +793,13 @@ QFrame#inspectorSeparator {{
 QLabel#rackLatency {{
     color: {muted};
     font-family: Consolas, monospace;
-    font-size: 7.5pt;
+    font-size: {f_small};
     font-weight: bold;
-}}
-QFrame#inspectorBox QPushButton#rackLiveToggle {{
-    background: {card};
-    border: {bw} solid {strong};
-    color: {muted};
-    font-weight: bold;
-    font-size: 7.5pt;
-    padding: 4px 12px;
-    border-radius: {r_sm};
-}}
-QFrame#inspectorBox QPushButton#rackLiveToggle[live="true"] {{
-    background: {ok_bg};
-    border: {bw2} solid {ok};
-    color: {ok};
-    font-weight: 800;
 }}
 
 QLabel#vfdStat {{
     font-family: Consolas, monospace;
-    font-size: 7.5pt;
+    font-size: {f_small};
     font-weight: bold;
     color: {muted};
 }}
@@ -1028,69 +808,37 @@ QLabel#vfdStat[running="true"] {{
 }}
 QLabel#vfdValue {{
     font-family: Consolas, monospace;
-    font-size: 7.5pt;
+    font-size: {f_small};
     color: {muted};
 }}
 QLabel#vfdLatency {{
     font-family: Consolas, monospace;
-    font-size: 7.5pt;
+    font-size: {f_small};
     font-weight: bold;
     color: {readout};
 }}
 QLabel#vfdDriver {{
     font-family: Consolas, monospace;
-    font-size: 7.5pt;
+    font-size: {f_small};
     font-weight: bold;
     color: {text};
 }}
 QLabel#moduleTitle {{
     font-weight: 800;
-    font-size: 7.5pt;
+    font-size: {f_small};
     color: {muted};
     letter-spacing: 0.8px;
 }}
 QLabel#bankTitle {{
     font-weight: 800;
-    font-size: 8pt;
+    font-size: {f_small};
     color: {muted};
     letter-spacing: 0.8px;
-}}
-QPushButton#presetBankBtn, QPushButton#presetFactoryBtn {{
-    background: {card};
-    border: {bw} solid {line};
-    color: {muted};
-    font-family: Consolas, monospace;
-    font-size: 7pt;
-    font-weight: bold;
-    padding: 2px 6px;
-    border-radius: {r_sm};
-}}
-QPushButton#presetBankBtn:hover {{
-    background: {alt};
-    color: {readout};
-    border-color: {readout};
-}}
-QPushButton#presetFactoryBtn {{
-    color: {ok};
-}}
-QPushButton#presetFactoryBtn:hover {{
-    background: {ok_bg};
-    color: {ok};
-    border-color: {ok};
-}}
-QPushButton#presetActionBtn {{
-    background: {card};
-    border: {bw} solid {line};
-    color: {muted};
-    font-size: 7.5pt;
-    font-weight: bold;
-    padding: 5px 8px;
-    border-radius: {r_sm};
 }}
 QLabel#limiterThreshold {{
     color: {muted};
     font-family: Consolas, monospace;
-    font-size: 7.5pt;
+    font-size: {f_small};
     font-weight: bold;
     margin-right: 4px;
 }}
@@ -1101,20 +849,6 @@ QFrame#consoleFrame {{
     background: {inset};
     border-top: {bw} solid {line};
 }}
-QFrame#consoleFrame QPushButton#collapseFadersBtn {{
-    background: {card};
-    border: {bw} solid {line};
-    border-radius: {r_sm};
-    color: {muted};
-    font-size: 7.5pt;
-    font-weight: bold;
-    padding: 2px 8px;
-}}
-QFrame#consoleFrame QPushButton#collapseFadersBtn:hover {{
-    background: {alt};
-    color: {text};
-    border-color: {strong};
-}}
 QFrame#consoleFrame QFrame#condensedStrip {{
     background: {inset};
     border: {bw} solid {line};
@@ -1123,29 +857,17 @@ QFrame#consoleFrame QFrame#condensedStrip {{
 }}
 QLabel#condensedLabel {{
     font-weight: bold;
-    font-size: 7.5pt;
+    font-size: {f_small};
     color: {muted};
-}}
-QPushButton#hardwareAuditionBtn[audition="rec"] {{
-    background: {danger_bg};
-    border: {bw} solid {danger};
-    color: {danger};
-    font-weight: bold;
-}}
-QPushButton#hardwareAuditionBtn[audition="loop"] {{
-    background: {ok_bg};
-    border: {bw} solid {ok};
-    color: {ok};
-    font-weight: bold;
 }}
 
 QLabel#dialogInfo {{
     color: {muted};
-    font-size: 8.5pt;
+    font-size: {f_small};
 }}
 QLabel#paramMapTitle {{
     font-weight: 800;
-    font-size: 9.5pt;
+    font-size: {f_body};
     color: {text};
     letter-spacing: 0.6px;
 }}
@@ -1155,51 +877,9 @@ QLabel#paramMapBadge {{
     border-radius: {r_sm};
     color: {readout};
     font-family: Consolas, monospace;
-    font-size: 8pt;
+    font-size: {f_small};
     font-weight: bold;
     padding: 2px 8px;
-}}
-QPushButton#paramMapSmartBtn {{
-    background-color: {ok_bg};
-    border: {bw} solid {ok};
-    color: {ok};
-    font-weight: bold;
-    font-size: 7.5pt;
-    padding: 5px 10px;
-    border-radius: {r_sm};
-}}
-QPushButton#paramMapClearBtn {{
-    background-color: {inset};
-    border: {bw} solid {strong};
-    color: {text};
-    font-weight: bold;
-    font-size: 7.5pt;
-    padding: 5px 10px;
-    border-radius: {r_sm};
-}}
-QPushButton#paramMapOrderBtn {{
-    font-size: 7.5pt;
-    font-weight: bold;
-    padding: 4px 8px;
-}}
-QPushButton#audioWizardBtn {{
-    background-color: {ok_bg};
-    border: {bw} solid {ok};
-    color: {ok};
-    font-weight: bold;
-    padding: 6px 12px;
-    border-radius: {r_sm};
-}}
-QPushButton#audioWizardBtn:hover {{
-    background-color: {alt};
-}}
-QPushButton#midiLearnBtn {{
-    background-color: {inset};
-    border: {bw} solid {readout};
-    color: {readout};
-    font-weight: bold;
-    padding: 5px 12px;
-    border-radius: {r_sm};
 }}
 QFrame#settingsSeparator {{
     color: {line};
@@ -1213,12 +893,12 @@ QFrame#duckStrip, QFrame#duckStrip QCheckBox, QFrame#duckStrip QLabel, QFrame#du
 }}
 QLabel#duckLabel {{
     color: {muted};
-    font-size: 8pt;
+    font-size: {f_small};
 }}
 QLabel#duckValue {{
     color: {readout};
     font-family: Consolas, monospace;
-    font-size: 8pt;
+    font-size: {f_small};
     font-weight: bold;
 }}
 
@@ -1228,75 +908,34 @@ QDialog#setupAssistant QComboBox {{
     border-radius: {r_sm};
     padding: 6px 10px;
     color: {text};
-    font-size: 9pt;
+    font-size: {f_body};
 }}
 QDialog#setupAssistant QComboBox:hover {{
     border-color: {strong};
 }}
-QDialog#setupAssistant QPushButton {{
-    background-color: {card};
-    border: {bw} solid {strong};
-    color: {text};
-    padding: 7px 16px;
-    border-radius: {r_sm};
-    font-weight: bold;
-    font-size: 8.5pt;
-}}
-QDialog#setupAssistant QPushButton:hover {{
-    background-color: {alt};
-    border-color: {muted};
-}}
-QDialog#setupAssistant QPushButton#wizardDownloadBtn {{
-    background-color: {inset};
-    border: {bw} solid {readout};
-    color: {readout};
-}}
-QDialog#setupAssistant QPushButton#wizardDownloadBtn:hover {{
-    background-color: {readout};
-    color: {win};
-}}
-QDialog#setupAssistant QPushButton#wizardNextBtn {{
-    background-color: {accent};
-    border: {bw} solid {accent_hover};
-    color: {on_accent};
-    padding: 7px 20px;
-}}
-QDialog#setupAssistant QPushButton#wizardNextBtn:hover {{
-    background-color: {accent_hover};
-}}
-QDialog#setupAssistant QPushButton#wizardNextBtn[final="true"] {{
-    background-color: {ok};
-    border-color: {ok};
-    color: {win};
-    padding: 7px 22px;
-}}
-QDialog#setupAssistant QPushButton#wizardNextBtn[final="true"]:hover {{
-    background-color: {ok};
-    border-color: {text};
-}}
 QLabel#wizardStep {{
     color: {accent_hover};
     font-weight: 800;
-    font-size: 8pt;
+    font-size: {f_small};
     letter-spacing: 1px;
 }}
 QLabel#wizardTitle {{
-    font-size: 15pt;
+    font-size: {f_title};
     font-weight: bold;
     color: {text};
 }}
 QLabel#wizardDesc {{
     color: {muted};
-    font-size: 9pt;
+    font-size: {f_body};
 }}
 QLabel#wizardFieldLabel {{
     color: {muted};
-    font-size: 7.5pt;
+    font-size: {f_small};
     font-weight: bold;
 }}
 QLabel#wizardMicStatus {{
     color: {muted};
-    font-size: 7.5pt;
+    font-size: {f_small};
     font-family: Consolas, monospace;
 }}
 QLabel#wizardMicStatus[ok="true"] {{
@@ -1320,7 +959,7 @@ QFrame#wizardCard[state="warn"], QLabel#wizardCardTitle[state="warn"], QLabel#wi
 }}
 QLabel#wizardCardTitle {{
     font-weight: bold;
-    font-size: 10pt;
+    font-size: {f_body};
 }}
 QLabel#wizardCardTitle[state="ok"] {{
     color: {ok};
@@ -1330,7 +969,7 @@ QLabel#wizardCardTitle[state="warn"] {{
 }}
 QLabel#wizardCardDesc {{
     color: {muted};
-    font-size: 8.5pt;
+    font-size: {f_small};
 }}
 QFrame#wizardGuideCard, QFrame#wizardGuideCard QLabel {{
     background-color: {card};
@@ -1340,18 +979,18 @@ QFrame#wizardGuideCard, QFrame#wizardGuideCard QLabel {{
 }}
 QLabel#wizardGuideTitle {{
     font-weight: 800;
-    font-size: 8pt;
+    font-size: {f_small};
     color: {readout};
     letter-spacing: 0.8px;
 }}
 QLabel#wizardGuideNum {{
     font-weight: bold;
     color: {text};
-    font-size: 8.5pt;
+    font-size: {f_small};
 }}
 QLabel#wizardGuideText {{
     color: {muted};
-    font-size: 8.5pt;
+    font-size: {f_small};
 }}
 
 QGroupBox {{

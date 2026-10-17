@@ -8,7 +8,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
                                QFormLayout, QFrame, QGroupBox,
                                QHBoxLayout, QHeaderView, QLabel,
-                               QMessageBox, QPushButton, QSlider,
+                               QMessageBox, QSlider,
                                QSpinBox, QTabWidget, QTableWidget,
                                QVBoxLayout, QWidget)
 
@@ -17,8 +17,12 @@ from ...config import APP_DIR, MidiBinding, is_startup_enabled, set_startup_enab
 from ...core import Core
 from ...midi import list_midi_inputs
 from ..look import (BUILTIN_PALETTES, BUILTIN_SKINS, Look, current_look, look_for, set_look)
+from ..widgets.buttons import make_button, tier_button_box
 from .hotkey import HotkeyDialog
 from .setup_assistant import SetupAssistantDialog
+
+
+MIDI_LEARN_TEXT = "MIDI learn (new binding)…"
 
 
 class SettingsDialog(QDialog):
@@ -73,16 +77,17 @@ class SettingsDialog(QDialog):
         form.addRow("Buffer size", self.bs)
         form.addRow("", self.excl)
 
-        self.asio_panel_btn = QPushButton("Focusrite / ASIO Control Panel…")
+        self.asio_panel_btn = make_button("Focusrite / ASIO control panel…")
         self.asio_panel_btn.clicked.connect(self._open_asio_panel)
         form.addRow("", self.asio_panel_btn)
 
-        wizard_btn = QPushButton("RUN AUDIO SETUP ASSISTANT (UNIVERSAL WIZARD)...")
+        wizard_btn = make_button("Run the audio setup assistant…",
+                                 tooltip="Step-by-step microphone, virtual cable and headphone setup")
         wizard_btn.setObjectName("audioWizardBtn")
         wizard_btn.clicked.connect(self._launch_setup_assistant)
         form.addRow("", wizard_btn)
 
-        rescan = QPushButton("Rescan devices")
+        rescan = make_button("Rescan devices")
         rescan.setEnabled(not running)
         form.addRow("", rescan)
         tabs.addTab(tab_audio, "Audio Routing")
@@ -98,7 +103,7 @@ class SettingsDialog(QDialog):
 
         ptt_hk_row = QHBoxLayout()
         self.ptt_hk_lbl = QLabel(self.cfg.ptt.hotkey.label if self.cfg.ptt.hotkey.is_set() else "Not set")
-        self.ptt_hk_btn = QPushButton("Set PTT Key…")
+        self.ptt_hk_btn = make_button("Set PTT key…", icon="hotkey")
         self.ptt_hk_btn.clicked.connect(self._set_ptt_hotkey)
         ptt_hk_row.addWidget(self.ptt_hk_lbl, 1)
         ptt_hk_row.addWidget(self.ptt_hk_btn)
@@ -149,7 +154,7 @@ class SettingsDialog(QDialog):
         self.midi_dev.currentIndexChanged.connect(self._on_midi_dev_preview)
         m_top.addWidget(self.midi_dev, 1)
 
-        midi_rescan_btn = QPushButton("Rescan MIDI")
+        midi_rescan_btn = make_button("Rescan MIDI")
         midi_rescan_btn.clicked.connect(self._rescan_midi)
         m_top.addWidget(midi_rescan_btn)
         midi_lay.addLayout(m_top)
@@ -174,11 +179,11 @@ class SettingsDialog(QDialog):
         midi_lay.addWidget(self.midi_table, 1)
 
         midi_btn_row = QHBoxLayout()
-        add_midi_btn = QPushButton("+ Add MIDI Binding")
+        add_midi_btn = make_button("Add MIDI binding", icon="plus")
         add_midi_btn.clicked.connect(self._add_midi_binding)
         midi_btn_row.addWidget(add_midi_btn)
 
-        self.midi_learn_btn = QPushButton("MIDI Learn (New Binding)…")
+        self.midi_learn_btn = make_button(MIDI_LEARN_TEXT)
         self.midi_learn_btn.setObjectName("midiLearnBtn")
         self.midi_learn_btn.clicked.connect(self._start_midi_learn_new)
         midi_btn_row.addWidget(self.midi_learn_btn)
@@ -310,8 +315,8 @@ class SettingsDialog(QDialog):
         self.hotkeys_check.setChecked(bool(self.cfg.hotkeys_enabled))
         hk_form.addRow("", self.hotkeys_check)
         self._panic_hotkey_work = copy.deepcopy(self.cfg.panic_hotkey)
-        self.panic_key_btn = QPushButton()
-        self.panic_key_btn.setToolTip("Global hotkey that turns every chain off")
+        self.panic_key_btn = make_button("Not set", icon="hotkey",
+                                         tooltip="Global hotkey that turns every chain off")
         self.panic_key_btn.clicked.connect(self._pick_panic_hotkey)
         self._update_panic_key_btn()
         hk_form.addRow("All-off key", self.panic_key_btn)
@@ -319,7 +324,7 @@ class SettingsDialog(QDialog):
 
         gl.addSpacing(8)
         diag_row = QHBoxLayout()
-        open_appdata_btn = QPushButton("Open Config && Logs Folder…")
+        open_appdata_btn = make_button("Open config && logs folder…")
         open_appdata_btn.setToolTip(f"Open {APP_DIR} in Windows Explorer")
         open_appdata_btn.clicked.connect(lambda: os.startfile(APP_DIR) if os.path.isdir(APP_DIR) else None)
         diag_row.addWidget(open_appdata_btn)
@@ -347,12 +352,13 @@ class SettingsDialog(QDialog):
         api_info.setObjectName("dialogInfo")
         api_lay.addRow("", api_info)
 
-        self.api_test_btn = QPushButton("Test API in Web Browser (http://localhost:38420/api/status)")
+        self.api_test_btn = make_button("Test the API in a web browser",
+                                        tooltip="Opens http://127.0.0.1:<port>/api/status")
         self.api_test_btn.clicked.connect(lambda: webbrowser.open(f"http://127.0.0.1:{self.api_port_spin.value()}/api/status"))
         api_lay.addRow("", self.api_test_btn)
         tabs.addTab(tab_api, "Local API")
 
-        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb = tier_button_box(QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel))
         lay.addWidget(bb)
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
@@ -429,8 +435,7 @@ class SettingsDialog(QDialog):
             self.midi_table.setCellWidget(row, 3, act_cb)
 
             # 4: Remove
-            rm_btn = QPushButton("✕")
-            rm_btn.setFixedWidth(28)
+            rm_btn = make_button(tier="quiet", icon="remove", tooltip="Remove this binding")
             rm_btn.clicked.connect(lambda _, r=row: self._remove_midi_binding(r))
             self.midi_table.setCellWidget(row, 4, rm_btn)
 
@@ -470,10 +475,10 @@ class SettingsDialog(QDialog):
         self._on_midi_dev_preview()
         if self._midi_learning_row is not None:
             self._midi_learning_row = None
-            self.midi_learn_btn.setText("MIDI Learn (New Binding)…")
+            self.midi_learn_btn.setText(MIDI_LEARN_TEXT)
             return
         self._midi_learning_row = -1
-        self.midi_learn_btn.setText("Listening for MIDI Input… (Click to cancel)")
+        self.midi_learn_btn.setText("Listening for MIDI input… (click to cancel)")
 
     def _on_midi_learned(self, event_type: str, note_or_cc: int, channel: int):
         if self._midi_learning_row is None:

@@ -146,7 +146,7 @@ def test_surface_property_rules(surface, token):
 def test_legacy_object_names_and_new_hooks_are_present():
     qss = build_qss(SCARLET_SKEUO)
     for name in ("rackChassis", "masterHeadStrip", "modularBay", "pluginRackCard",
-                 "channelStrip", "statusPill", "chainCard", "flowPill", "rackList"):
+                 "channelStrip", "statusPill", "chainCard", "rackList"):
         assert f"#{name}" in qss, name
 
 
@@ -264,16 +264,20 @@ SMALL_TEXT_ON_SURFACE = {
     'QLabel#vfdStat[running="true"]': "bg.inset",
     "QLabel#vfdLatency": "bg.inset",
     "QLabel#vfdDriver": "bg.inset",
-    "QPushButton#presetFactoryBtn": "bg.panel",
-    "QPushButton#presetBankBtn": "bg.panel",
-    "QPushButton#presetActionBtn": "bg.panel",
-    "QFrame#inspectorBox QPushButton#rackLiveToggle": "bg.panel",
-    'QFrame#inspectorBox QPushButton#rackLiveToggle[live="true"]': "status.ok.subtle",
-    "QPushButton#waveformPlayBtn": "status.ok.subtle",
-    'QPushButton#hardwareAuditionBtn[audition="rec"]': "status.danger.subtle",
-    'QPushButton#hardwareAuditionBtn[audition="loop"]': "status.ok.subtle",
-    "QPushButton#rackInsertBtn": "accent",
-    "QFrame#consoleFrame QPushButton#collapseFadersBtn": "bg.panel",
+    # Button tiers (Task 11): each tier's text on the surface it sits on.
+    'QPushButton[tier="primary"]': "accent",
+    'QPushButton[tier="secondary"]': "bg.panel",
+    'QPushButton[tier="quiet"]': "bg.panel",
+    'QPushButton[tier="danger"]': "bg.panel",
+    'QPushButton[tier="secondary"][state="on"]': "status.ok.subtle",
+    'QPushButton[tier="secondary"][state="warn"]': "status.warn.subtle",
+    'QPushButton[tier="secondary"][state="danger"]': "status.danger.subtle",
+    'QPushButton[tier="quiet"]:checked': "accent.subtle",
+    'QPushButton[tier="danger"]:checked': "status.danger.subtle",
+    'QLabel#statusPill[state="off"]': "bg.inset",
+    'QLabel#statusPill[state="on"]': "status.ok.subtle",
+    'QLabel#statusPill[state="warn"]': "status.warn.subtle",
+    'QLabel#statusPill[state="danger"]': "status.danger.subtle",
     "QLabel#waveformClipName": "bg.inset",
     "QLabel#builtinBadge": "bg.window",
 }

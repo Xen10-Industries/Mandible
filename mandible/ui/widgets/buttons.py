@@ -1,119 +1,132 @@
-"""Rack buttons."""
+"""Buttons in tiers and status pills (spec 7.7).
+
+Every push button in the app comes from ``make_button`` (or is given a tier with
+``set_tier``): the stylesheet styles it by its ``tier`` property, so every tier shows the same
+hover / pressed / focus / disabled / checked states in every skin. Buttons carry no object
+name rules of their own; an ID rule would out-rank the tier's state rules.
+
+* ``primary``   filled accent; at most one per view (a top-level window or dock panel)
+* ``secondary`` outlined
+* ``quiet``     borderless until hover: row tools (move, remove, map, open UI)
+* ``danger``    ``status.danger`` (Panic, Delete)
+
+A ``state`` property (``on`` / ``warn`` / ``danger``) tints a secondary or quiet button with
+a status colour (live, recording, a flow step that is on). Status that is not clickable uses
+``StatusPill``: a different shape and no hover, so it never looks like a button.
+"""
 from __future__ import annotations
 
-from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import QPushButton
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QDialogButtonBox, QLabel, QPushButton, QWidget
 
-from ..elements.base import mix
-from ..look import current_look
-from .base import _follow_look, look_color
+from ..icons import bind_button_icon
+from .base import set_style_property
+from .labels import ElidedLabel
+
+TIERS = ("primary", "secondary", "quiet", "danger")
+BUTTON_STATES = ("", "on", "warn", "danger")
+PILL_STATES = ("off", "on", "warn", "danger")
+ICON_BUTTON_PX = 26   # square icon-only buttons (icons and meters may have fixed sizes)
 
 
-class RackToolButton(QPushButton):
-    """Hardware button with custom antialiased vector iconography and balanced borders."""
-    def __init__(self, kind: str, tooltip: str = "", parent=None):
-        super().__init__(parent)
-        self.kind = kind
-        self.setFixedSize(26, 26)
-        self.setToolTip(tooltip)
-        self.setCursor(Qt.PointingHandCursor)
-        _follow_look(self)
+def set_tier(button: QPushButton, tier: str) -> QPushButton:
+    """Give an existing button a tier (restyles it if it is already polished)."""
+    if tier not in TIERS:
+        raise ValueError(f"unknown button tier {tier!r} (expected one of {', '.join(TIERS)})")
+    if button.property("tier") != tier:
+        set_style_property(button, "tier", tier)
+    return button
 
-    def _on_look_changed(self):
-        self.update()
 
-    def paintEvent(self, _):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        w, h = self.width(), self.height()
-        r = QRectF(0.5, 0.5, w - 1.0, h - 1.0)
+def set_button_state(button: QPushButton, state: str) -> None:
+    """Status tint for a button: ``""`` (none), ``on``, ``warn`` or ``danger``. The icon
+    follows the state's colour."""
+    if state not in BUTTON_STATES:
+        raise ValueError(f"unknown button state {state!r}")
+    if (button.property("state") or "") == state:
+        return
+    set_style_property(button, "state", state)
+    name = button.property("iconName")
+    if name:
+        bind_button_icon(button, name)
 
-        is_hover = self.underMouse()
-        is_down = self.isDown()
 
-        if self.kind == "remove":
-            danger = look_color("status.danger")
-            danger_bg = look_color("status.danger.subtle")
-            if is_down:
-                bg = mix(danger_bg, danger, 0.3)
-            elif is_hover:
-                bg = mix(danger_bg, danger, 0.15)
-            else:
-                bg = danger_bg
-            border = danger if is_hover else mix(danger_bg, danger, 0.45)
-            icon_color = look_color("text.primary") if is_hover else danger
+def set_button_icon(button: QPushButton, name: str | None) -> None:
+    """Change a button's icon (kept in the look's colours for its tier and state)."""
+    bind_button_icon(button, name)
+
+
+def make_button(text: str = "", tier: str = "secondary", icon: str | None = None,
+                tooltip: str = "", parent: QWidget | None = None) -> QPushButton:
+    """A push button of ``tier`` with optional ``icon`` (a name from ``ui.icons``).
+
+    Raises ``ValueError`` for an unknown tier, and for an icon-only button without a
+    tooltip (the tooltip is its only label). Icon-only buttons are square and fixed-size.
+    """
+    if tier not in TIERS:
+        raise ValueError(f"unknown button tier {tier!r} (expected one of {', '.join(TIERS)})")
+    if icon and not text and not tooltip:
+        raise ValueError(f"icon-only button {icon!r} needs a tooltip")
+    btn = QPushButton(text, parent)
+    btn.setProperty("tier", tier)
+    if tooltip:
+        btn.setToolTip(tooltip)
+    if icon:
+        bind_button_icon(btn, icon)
+        if not text:
+            btn.setProperty("iconOnly", "true")
+            btn.setFixedSize(ICON_BUTTON_PX, ICON_BUTTON_PX)
+            btn.setAccessibleName(tooltip)
+    btn.setCursor(Qt.PointingHandCursor)
+    return btn
+
+
+def tier_button_box(box: QDialogButtonBox) -> QDialogButtonBox:
+    """Tier a dialog's standard buttons: the accept button (OK / Save) is primary,
+    destructive ones are danger, the rest secondary."""
+    primary_done = False
+    for button in box.buttons():
+        role = box.buttonRole(button)
+        if role in (QDialogButtonBox.AcceptRole, QDialogButtonBox.YesRole) and not primary_done:
+            set_tier(button, "primary")
+            primary_done = True
+        elif role == QDialogButtonBox.DestructiveRole:
+            set_tier(button, "danger")
         else:
-            if is_down:
-                bg = look_color("bg.window")
-            elif is_hover:
-                bg = look_color("bg.raised")
-            else:
-                bg = look_color("bg.panel")
-            border = look_color("line.strong" if is_hover else "line.subtle")
-            icon_color = (look_color("text.primary") if is_hover
-                          else mix(look_color("text.secondary"), look_color("text.primary"), 0.5))
+            set_tier(button, "secondary")
+    return box
 
-        p.setPen(QPen(border, 1.0))
-        p.setBrush(bg)
-        radius = min(4.0, float(current_look().skin.shape.get("radius.control", 4)))
-        p.drawRoundedRect(r, radius, radius)
 
-        cx, cy = w / 2.0, h / 2.0
-        p.setPen(Qt.NoPen)
-        p.setBrush(icon_color)
+class StatusPill(ElidedLabel):
+    """A status chip: ``set_state("off" | "on" | "warn" | "danger")``. Never focusable and
+    styled with no hover (``QLabel#statusPill`` in the stylesheet).
 
-        if self.kind == "up":
-            path = QPainterPath()
-            path.moveTo(cx, cy - 3.2)
-            path.lineTo(cx - 4.5, cy + 2.5)
-            path.lineTo(cx + 4.5, cy + 2.5)
-            path.closeSubpath()
-            p.drawPath(path)
-        elif self.kind == "down":
-            path = QPainterPath()
-            path.moveTo(cx, cy + 3.2)
-            path.lineTo(cx - 4.5, cy - 2.5)
-            path.lineTo(cx + 4.5, cy - 2.5)
-            path.closeSubpath()
-            p.drawPath(path)
-        elif self.kind == "remove":
-            pen = QPen(icon_color, 1.6, Qt.SolidLine, Qt.RoundCap)
-            p.setPen(pen)
-            d = 3.6
-            p.drawLine(QPointF(cx - d, cy - d), QPointF(cx + d, cy + d))
-            p.drawLine(QPointF(cx + d, cy - d), QPointF(cx - d, cy + d))
-        elif self.kind in ("expand", "collapse"):
-            # Chevron: down = expand (show more), up = collapse.
-            pen = QPen(icon_color, 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
-            p.setPen(pen)
-            p.setBrush(Qt.NoBrush)
-            d = 1.0 if self.kind == "expand" else -1.0
-            path = QPainterPath()
-            path.moveTo(cx - 4.0, cy - 2.0 * d)
-            path.lineTo(cx, cy + 2.0 * d)
-            path.lineTo(cx + 4.0, cy - 2.0 * d)
-            p.drawPath(path)
-        elif self.kind == "open":
-            # Open-window: a frame with an arrow leaving its top-right corner.
-            pen = QPen(icon_color, 1.4, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
-            p.setPen(pen)
-            p.setBrush(Qt.NoBrush)
-            frame = QPainterPath()
-            frame.moveTo(cx + 4.5, cy + 1.0)
-            frame.lineTo(cx + 4.5, cy + 5.0)
-            frame.lineTo(cx - 5.0, cy + 5.0)
-            frame.lineTo(cx - 5.0, cy - 4.5)
-            frame.lineTo(cx - 1.0, cy - 4.5)
-            p.drawPath(frame)
-            p.drawLine(QPointF(cx - 0.5, cy + 0.5), QPointF(cx + 5.0, cy - 5.0))
-            p.drawLine(QPointF(cx + 1.5, cy - 5.0), QPointF(cx + 5.0, cy - 5.0))
-            p.drawLine(QPointF(cx + 5.0, cy - 5.0), QPointF(cx + 5.0, cy - 1.5))
-        elif self.kind == "plus":
-            pen = QPen(icon_color, 1.6, Qt.SolidLine, Qt.RoundCap)
-            p.setPen(pen)
-            d = 4.0
-            p.drawLine(QPointF(cx - d, cy), QPointF(cx + d, cy))
-            p.drawLine(QPointF(cx, cy - d), QPointF(cx, cy + d))
+    ``elide=True`` lets layouts squeeze it to ``min_chars`` characters (full text in the
+    tooltip); otherwise it always shows its whole text.
+    """
 
-        p.end()
+    def __init__(self, text: str = "", state: str = "off", parent=None, *, elide: bool = False,
+                 min_chars: int = 3):
+        self._elides = elide
+        super().__init__(text, parent, min_chars=min_chars if elide else 10_000)
+        self.setObjectName("statusPill")
+        self.setFocusPolicy(Qt.NoFocus)
+        self.setAlignment(Qt.AlignCenter)
+        self.setProperty("state", "off")
+        self.set_state(state)
+
+    def set_state(self, state: str) -> None:
+        if state not in PILL_STATES:
+            raise ValueError(f"unknown pill state {state!r} (expected one of {', '.join(PILL_STATES)})")
+        if self.property("state") != state:
+            set_style_property(self, "state", state)
+
+    def state(self) -> str:
+        return self.property("state")
+
+    def _elide(self) -> None:
+        if self._elides:
+            super()._elide()
+        elif QLabel.text(self) != self._full:
+            QLabel.setText(self, self._full)
+            self._sync_tooltip()

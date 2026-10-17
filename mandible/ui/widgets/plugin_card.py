@@ -2,19 +2,22 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from ... import plugins as P
 from ...config import Chain, PluginSlot
 from ...core import Core, inst, slot_error
 from ...internal_dsp import is_internal_plugin
 from .base import SpacedLayouts, _follow_look, reserve_text_width
-from .buttons import RackToolButton
+from .buttons import StatusPill, make_button
 from .chassis import RackScrew
 from .knobs import PluginParamKnob
 from .labels import ElidedLabel
 from .meters import PluginPrePostMeter
 from .switches import HardwareSwitch
+
+
+MAX_CARD_KNOBS = 8
 
 
 class PluginRackCard(QFrame):
@@ -74,11 +77,11 @@ class PluginRackCard(QFrame):
         self.name_lbl = ElidedLabel(slot.display_name or slot.path, min_chars=4)
         self.name_lbl.setObjectName("rackPluginName")
         name_row.addWidget(self.name_lbl)
-        self._badges: list[QLabel] = []
+        self._badges: list[StatusPill] = []
 
-        def badge(text: str, name: str, tip: str = "") -> QLabel:
-            b = QLabel(text)
-            b.setObjectName(name)
+        def badge(text: str, kind: str, tip: str = "", state: str = "off") -> StatusPill:
+            b = StatusPill(text, state)
+            b.setProperty("badge", kind)
             if tip:
                 b.setToolTip(tip)
             b.setMinimumWidth(1)   # never part of the card's minimum width
@@ -89,17 +92,16 @@ class PluginRackCard(QFrame):
         # Mandible's own effects are not VST3 plugins: they have no plugin window and say so.
         self.is_builtin = is_internal_plugin(slot.path)
         if self.is_builtin:
-            badge("Built-in", "builtinBadge", "Built into Mandible; not a VST3 plugin")
+            badge("Built-in", "builtin", "Built into Mandible; not a VST3 plugin")
         else:
-            badge("VST3", "formatBadge", "VST3 plugin")
+            badge("VST3", "format", "VST3 plugin")
         v_name = P.guess_vendor(slot.path) if hasattr(P, "guess_vendor") else ""
         if v_name:
-            badge(v_name, "vendorBadge")
-        # Keep-Awake Badge (Serum 2 / persistent silence pump)
+            badge(v_name, "vendor")
+        # Keep-awake badge (Serum 2 / persistent silence pump)
         is_serum = "serum" in (slot.display_name or slot.path).lower()
         if is_serum or getattr(core.cfg, "keep_chains_awake", False):
-            badge("KEEP-AWAKE ACTIVE", "awakeBadge",
-                  "A silent signal keeps this plugin from suspending")
+            badge("Kept awake", "awake", "A silent signal keeps this plugin from suspending", "on")
         self.name_lbl.setBaseToolTip(" · ".join([slot.path] + [b.text() for b in self._badges]))
 
         if err:
@@ -122,10 +124,11 @@ class PluginRackCard(QFrame):
         sub_row.addWidget(lat_chip)
 
         # Bypass Hotkey chip
-        hk_txt = f"KEY: [{slot.bypass_hotkey.label.upper()}]" if slot.bypass_hotkey.is_set() else "+ BYPASS KEY"
-        hk_btn = QPushButton(hk_txt)
-        hk_btn.setObjectName("rackHotkeyBtn")
-        hk_btn.setToolTip("Assign a hotkey to toggle/bypass this plugin")
+        hk_txt = slot.bypass_hotkey.label if slot.bypass_hotkey.is_set() else "Bypass key"
+        hk_btn = make_button(hk_txt, "quiet", icon="hotkey",
+                             tooltip="Assign a hotkey to toggle/bypass this plugin")
+        hk_btn.setProperty("small", "true")
+        hk_btn.setObjectName("rackBypassKeyBtn")
         hk_btn.clicked.connect(self.hotkeyClicked.emit)
         sub_row.addWidget(hk_btn)
 
@@ -138,7 +141,7 @@ class PluginRackCard(QFrame):
         lay.addWidget(self.pre_post_meter)
 
         # 4. Actions: a right-aligned cluster of fixed width (the same on every card, so the
-        #    columns line up): knobs expand/collapse, MAP, open UI, move up/down, remove.
+        #    columns line up): knobs disclosure, map, open UI, move up/down, remove; all quiet.
         mapped_keys = P.resolve_slot_mapped_params(slot, core.cfg)
         is_collapsed = bool(getattr(slot, "macros_collapsed", False))
 
@@ -146,10 +149,11 @@ class PluginRackCard(QFrame):
         self.actions.setObjectName("rackActions")
         btn_row = self._spaced.add(QHBoxLayout(self.actions), spacing=1, margins=0)
 
-        self.knobs_btn = RackToolButton(
-            "expand" if is_collapsed else "collapse",
-            (f"Show the {len(mapped_keys)} macro knobs" if is_collapsed
-             else f"Hide the {len(mapped_keys)} macro knobs"))
+        # Disclosure chevron: right while the knobs are hidden, down while they show.
+        self.knobs_btn = make_button(
+            tier="quiet", icon="chevron_right" if is_collapsed else "chevron_down",
+            tooltip=(f"Show the {len(mapped_keys)} macro knobs" if is_collapsed
+                     else f"Hide the {len(mapped_keys)} macro knobs"))
         self.knobs_btn.clicked.connect(self._toggle_macros_collapsed)
         # Cards without mapped knobs keep the slot so every cluster has the same layout.
         policy = self.knobs_btn.sizePolicy()
@@ -158,15 +162,18 @@ class PluginRackCard(QFrame):
         self.knobs_btn.setVisible(bool(mapped_keys))
         btn_row.addWidget(self.knobs_btn)
 
-        map_txt = f"MAP ({len(mapped_keys)})" if mapped_keys else "MAP"
-        self.map_btn = QPushButton(map_txt)
+        map_txt = f"Map {len(mapped_keys)}" if mapped_keys else "Map"
+        self.map_btn = make_button(map_txt, "quiet", icon="map",
+                                   tooltip=(f"{len(mapped_keys)} parameters on macro knobs: change the mapping"
+                                            if mapped_keys else
+                                            "Map plugin parameters to macro knobs on this module"))
+        self.map_btn.setProperty("small", "true")
         self.map_btn.setObjectName("rackMapBtn")
         self.map_btn.setProperty("mapped", "true" if mapped_keys else "false")
-        self.map_btn.setToolTip("Map plugin parameters to macro knobs on this module")
         self.map_btn.clicked.connect(self.mapClicked.emit)
         btn_row.addWidget(self.map_btn)
 
-        self.ui_btn = RackToolButton("open", "Open the plugin window")
+        self.ui_btn = make_button(tier="quiet", icon="open_window", tooltip="Open the plugin window")
         self.ui_btn.clicked.connect(self.editClicked.emit)
         # Built-in effects have no plugin window; the slot stays so every cluster lines up.
         policy = self.ui_btn.sizePolicy()
@@ -179,15 +186,15 @@ class PluginRackCard(QFrame):
             self.ui_btn.setToolTip("The plugin is not loaded, so it has no window to open")
         btn_row.addWidget(self.ui_btn)
 
-        up_btn = RackToolButton("up", "Move earlier in signal chain")
+        up_btn = make_button(tier="quiet", icon="up", tooltip="Move earlier in signal chain")
         up_btn.clicked.connect(self.moveUpClicked.emit)
         btn_row.addWidget(up_btn)
 
-        dn_btn = RackToolButton("down", "Move later in signal chain")
+        dn_btn = make_button(tier="quiet", icon="down", tooltip="Move later in signal chain")
         dn_btn.clicked.connect(self.moveDownClicked.emit)
         btn_row.addWidget(dn_btn)
 
-        rm_btn = RackToolButton("remove", "Remove plugin from chain")
+        rm_btn = make_button(tier="quiet", icon="remove", tooltip="Remove plugin from chain")
         rm_btn.clicked.connect(self.removeClicked.emit)
         btn_row.addWidget(rm_btn)
 
@@ -196,7 +203,7 @@ class PluginRackCard(QFrame):
         # Right Rack Screw
         lay.addWidget(RackScrew(12))
         outer_lay.addLayout(lay)
-        reserve_text_width(self.map_btn, "MAP (88)")
+        reserve_text_width(self.map_btn, f"Map {MAX_CARD_KNOBS}")
         self._fix_actions_width()
 
         # ---- Bottom Row: Recessed Hardware Macro Knob Strip (when parameters are mapped & not collapsed)
@@ -205,8 +212,9 @@ class PluginRackCard(QFrame):
             knob_bay.setObjectName("pluginMacroBay")   # styled by the generated stylesheet
             kb_lay = self._spaced.add(QHBoxLayout(knob_bay), spacing=1, margins=(2, 1, 2, 1))
 
-            self.bay_lbl = QLabel("PLUGIN\nMACROS")
+            self.bay_lbl = QLabel("MACROS")
             self.bay_lbl.setObjectName("rackBayLabel")
+            self.bay_lbl.setToolTip("Plugin parameters mapped to knobs")
             kb_lay.addWidget(self.bay_lbl)
 
             vsep = QFrame()
@@ -214,7 +222,7 @@ class PluginRackCard(QFrame):
             vsep.setObjectName("rackBaySeparator")
             kb_lay.addWidget(vsep)
 
-            for pkey in mapped_keys[:8]:
+            for pkey in mapped_keys[:MAX_CARD_KNOBS]:
                 kn = PluginParamKnob(slot, pkey, core, knob_bay)
                 self.param_knobs.append(kn)
                 kb_lay.addWidget(kn)

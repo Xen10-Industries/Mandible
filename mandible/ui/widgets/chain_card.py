@@ -33,10 +33,6 @@ class ChainCardWidget(QFrame):
 
         self.name_lbl = ElidedLabel(chain.name.upper(), min_chars=6)
         self.name_lbl.setObjectName("chainName")
-        f = self.name_lbl.font()
-        f.setBold(True)
-        f.setPointSize(8.5)
-        self.name_lbl.setFont(f)
         row1.addWidget(self.name_lbl, 1)
 
         self.hk_lbl = None
@@ -59,7 +55,6 @@ class ChainCardWidget(QFrame):
         dw = int(round(getattr(chain, "dry_wet", 1.0) * 100))
         self.dw_lbl = QLabel(f"{dw}% WET")
         self.dw_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.dw_lbl.setFixedHeight(14)
         self.dw_lbl.setObjectName("chainWet")
         row2.addWidget(self.dw_lbl)
 

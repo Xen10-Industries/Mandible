@@ -46,8 +46,15 @@ class ElidedLabel(QLabel):
     def _elide(self) -> None:
         avail = self.contentsRect().width()
         shown = self._full
-        if self._full and avail > 0 and self.fontMetrics().horizontalAdvance(self._full) > avail:
-            shown = self.fontMetrics().elidedText(self._full, self._mode, avail)
+        fm = self.fontMetrics()
+        if self._full and avail > 0 and fm.horizontalAdvance(self._full) > avail:
+            shown = fm.elidedText(self._full, self._mode, avail)
+            # elidedText ignores the font's letter spacing (section labels use it): narrow
+            # the target until the elided text really fits.
+            target = avail
+            while shown and fm.horizontalAdvance(shown) > avail and target > 0:
+                target -= max(1, int(fm.horizontalAdvance(shown) - avail))
+                shown = fm.elidedText(self._full, self._mode, max(0, target))
         if QLabel.text(self) != shown:
             QLabel.setText(self, shown)
         self._sync_tooltip()

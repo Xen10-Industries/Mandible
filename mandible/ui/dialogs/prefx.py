@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QGroupBox, 
                                QSlider, QSpinBox, QVBoxLayout)
 
 from ...core import Core
+from ..widgets.buttons import tier_button_box
 
 
 class PreFXDialog(QDialog):
@@ -84,7 +85,7 @@ class PreFXDialog(QDialog):
         gate_lay.addLayout(g_row2)
         lay.addWidget(gate_box)
 
-        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb = tier_button_box(QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel))
         bb.accepted.connect(self._save)
         bb.rejected.connect(self.reject)
         lay.addWidget(bb)

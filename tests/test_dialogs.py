@@ -22,21 +22,21 @@ def _near(got: str, want: str, tol: int = 12) -> bool:
     return all(abs(int(got[i:i + 2], 16) - int(want[i:i + 2], 16)) <= tol for i in (1, 3, 5))
 
 
-def test_setup_assistant_next_button_turns_green_on_the_last_step(core, scarlet_look):
+def test_setup_assistant_next_button_is_primary_on_every_step(core, scarlet_look):
+    """Next (Finish on the last step) is the wizard's one primary button: accent fill."""
     from mandible.ui.dialogs.setup_assistant import SetupAssistantDialog
 
     dlg = SetupAssistantDialog(core, None)
     try:
         dlg.show()
-        dlg.next_btn.setAttribute(dlg.next_btn.testAttribute.__self__.__class__.WA_DontShowOnScreen, False) \
-            if False else None
-        assert not dlg.next_btn.property("final")
         accent = scarlet_look.palette.color("accent")
+        assert not dlg.next_btn.property("final")
+        assert dlg.next_btn.property("tier") == "primary"
         assert _pixel(dlg.next_btn, dlg.next_btn.width() // 2, 4).lower() == accent.lower()
         dlg._go_to_step(3)
         assert dlg.next_btn.property("final") is True
-        ok = scarlet_look.palette.color("status.ok")
-        assert _pixel(dlg.next_btn, dlg.next_btn.width() // 2, 4).lower() == ok.lower()
+        assert dlg.next_btn.text().startswith("Finish")
+        assert _pixel(dlg.next_btn, dlg.next_btn.width() // 2, 4).lower() == accent.lower()
         dlg._go_to_step(0)
         assert dlg.next_btn.property("final") is False
     finally:

@@ -20,7 +20,7 @@ with real Windows font metrics (``QT_QPA_PLATFORM=windows``) in a subprocess. Th
 long display name and sets a non-Latin input device name before the window is built.
 ``--scenario running`` fills the header with run-time texts after the window is built, as
 if audio had started: the widest reserved readout texts (sample rate, buffer, latency, every
-driver name) with AUDIO ACTIVE and STOP LOOP, then oversize values that must elide.
+driver name) with the power button's on text and Stop loop, then oversize values that must elide.
 ``--strict`` exits 1 when any size reports overflow, clipped text, an elided label without
 its full text in the tooltip, or a window that could not shrink to the requested size.
 """
@@ -61,7 +61,8 @@ def apply_window_scenario(win, scenario: str) -> None:
     if scenario != "running":
         return
     from mandible.ui.widgets.base import set_style_property
-    from mandible.ui.widgets.header import READOUT_OVERSIZE, READOUT_SAMPLES
+    from mandible.ui.widgets.header import (AUDITION_TEXTS, POWER_ON_TEXT, READOUT_OVERSIZE,
+                                            READOUT_SAMPLES)
 
     h = win.header
     fields = h.readout_fields()
@@ -79,8 +80,8 @@ def apply_window_scenario(win, scenario: str) -> None:
         button.blockSignals(True)
         button.setChecked(True)
         button.blockSignals(False)
-    win.power.setText("AUDIO ACTIVE")
-    win.audition_btn.setText("STOP LOOP")
+    win.power.setText(POWER_ON_TEXT)
+    win.audition_btn.setText(AUDITION_TEXTS[-1])
 
 
 def _elided(win) -> tuple[list[str], list[str]]:

@@ -6,9 +6,10 @@ import os
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QFileDialog, QHBoxLayout, QLineEdit,
                                QListWidget, QListWidgetItem,
-                               QPushButton, QVBoxLayout)
+                               QVBoxLayout)
 
 from ... import plugins as P
+from ..widgets.buttons import make_button, tier_button_box
 
 
 class AddPluginDialog(QDialog):
@@ -24,7 +25,7 @@ class AddPluginDialog(QDialog):
         self.search = QLineEdit()
         self.search.setPlaceholderText("Search plugins by name or vendor…")
         self.search.setClearButtonEnabled(True)
-        rescan_btn = QPushButton("Rescan")
+        rescan_btn = make_button("Rescan")
         rescan_btn.setToolTip("Rescan system folders for newly installed VST3 plugins")
         top_row.addWidget(self.search, 1)
         top_row.addWidget(rescan_btn)
@@ -35,10 +36,10 @@ class AddPluginDialog(QDialog):
         lay.addWidget(self.list, 1)
 
         row = QHBoxLayout()
-        browse = QPushButton("Browse for .vst3…")
+        browse = make_button("Browse for .vst3…")
         row.addWidget(browse)
         row.addStretch()
-        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb = tier_button_box(QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel))
         row.addWidget(bb)
         lay.addLayout(row)
 

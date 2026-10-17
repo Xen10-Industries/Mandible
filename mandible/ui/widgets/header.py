@@ -1,9 +1,9 @@
 """Main window header: three zones (spec 7.6).
 
-* **left** (fixed): rack screw, pilot lamp, power, a slot for the logo mark (Task 11) and the
-  status zone: the DSP readout over the idle-mode dropdown and the hotkeys switch (whose menu
-  sets the all-off key).
-* **middle** (flexible): the signal-flow strip; its steps drop to short tags below
+* **left** (fixed): rack screw, pilot lamp, power, the brand mark (``branding.render_mark``
+  in the look's ``text.primary``) and the status zone: the DSP readout over the idle-mode
+  dropdown and the hotkeys switch (whose menu sets the all-off key).
+* **middle** (flexible): the signal-flow strip; its steps drop to icons below
   ``FLOW_ICONS_BELOW`` and it hides below ``FLOW_HIDDEN_BELOW`` (window widths).
 * **right** (fixed): Test mic, Monitor, Panic, Settings, Help; below
   ``ACTIONS_OVERFLOW_BELOW`` Test mic and Monitor fold into an overflow menu.
@@ -14,12 +14,16 @@ whatever state the header is in.
 from __future__ import annotations
 
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtWidgets import (QComboBox, QFrame, QHBoxLayout, QMenu, QPushButton,
-                               QSizePolicy, QToolButton, QVBoxLayout, QWidget)
+from PySide6.QtGui import QPixmap
+from PySide6.QtWidgets import (QComboBox, QFrame, QHBoxLayout, QLabel, QMenu, QSizePolicy,
+                               QToolButton, QVBoxLayout, QWidget)
 
+from ... import branding
 from ... import devices as D
 from ...core import Core
+from ..look import current_look
 from .base import SpacedLayouts, _follow_look, reserve_text_width
+from .buttons import make_button
 from .chassis import RackScrew
 from .flow_strip import SignalFlowStrip
 from .labels import ElidedLabel
@@ -30,7 +34,11 @@ FLOW_HIDDEN_BELOW = 1100
 ACTIONS_OVERFLOW_BELOW = 1180
 STRIPS_COLLAPSE_BELOW_H = 800
 
-AUDITION_IDLE_TEXT = "TEST MIC"
+AUDITION_IDLE_TEXT = "Test mic"
+AUDITION_TEXTS = ("Rec 5.0 s", "Stop loop")   # while recording (counts up) / looping
+POWER_OFF_TEXT = "Start audio"
+POWER_ON_TEXT = "Audio on"
+MARK_PX = 22
 
 # The texts the DSP readout shows (MainWindow._update_status formats them). Each field is
 # fixed to the widest of its list, so starting audio never resizes the header's fixed left
@@ -55,6 +63,37 @@ def flow_mode_for_width(width: int) -> str:
     if width < FLOW_ICONS_BELOW:
         return "icons"
     return "full"
+
+
+class BrandMark(QLabel):
+    """Mandible's mark in the header: ``branding.render_mark`` drawn in the look's
+    ``text.primary``, re-rendered when the look (or the screen's pixel ratio) changes."""
+
+    def __init__(self, px: int = MARK_PX, parent=None):
+        super().__init__(parent)
+        self.mark_px = px
+        self._dpr = 0.0
+        self.setObjectName("brandMark")
+        self.setFixedSize(px, px)
+        self.setToolTip("Mandible")
+        self._render()
+        _follow_look(self)
+
+    def _render(self) -> None:
+        dpr = self.devicePixelRatioF()
+        self._dpr = dpr
+        img = branding.render_mark(round(self.mark_px * dpr), current_look().palette.color("text.primary"))
+        pm = QPixmap.fromImage(img)
+        pm.setDevicePixelRatio(dpr)
+        self.setPixmap(pm)
+
+    def _on_look_changed(self) -> None:
+        self._render()
+
+    def showEvent(self, ev) -> None:  # noqa: N802
+        super().showEvent(ev)
+        if self.devicePixelRatioF() != self._dpr:
+            self._render()
 
 
 def _zone(name: str) -> QWidget:
@@ -82,15 +121,16 @@ class HeaderBar(QFrame):
         self.pilot_lamp = PilotLamp(active=False, size=18)
         left.addWidget(self.pilot_lamp)
 
-        self.power = QPushButton("MASTER POWER")
+        self.power = make_button(POWER_OFF_TEXT, "secondary", icon="power",
+                                 tooltip="Start or stop the audio engine")
         self.power.setCheckable(True)
         self.power.setObjectName("hardwareMasterToggle")
-        self.power.setToolTip("Start or stop the audio engine")
         left.addWidget(self.power)
 
-        # Task 11 puts the logo mark here.
         self.logo_slot = QHBoxLayout()
         self.logo_slot.setContentsMargins(0, 0, 0, 0)
+        self.brand_mark = BrandMark()
+        self.logo_slot.addWidget(self.brand_mark)
         left.addLayout(self.logo_slot)
 
         status = QWidget()
@@ -126,7 +166,7 @@ class HeaderBar(QFrame):
 
         self.hotkeys_toggle = QToolButton()
         self.hotkeys_toggle.setObjectName("hotkeysToggle")
-        self.hotkeys_toggle.setText("HOTKEYS")
+        self.hotkeys_toggle.setText("Hotkeys")
         self.hotkeys_toggle.setCheckable(True)
         self.hotkeys_toggle.setChecked(cfg.hotkeys_enabled)
         self.hotkeys_toggle.setToolButtonStyle(Qt.ToolButtonTextOnly)
@@ -151,23 +191,23 @@ class HeaderBar(QFrame):
         self.fold_box = QWidget()
         self.fold_box.setObjectName("headerFoldable")
         fold = self._spaced.add(QHBoxLayout(self.fold_box), spacing=2, margins=0)
-        self.audition_btn = QPushButton(AUDITION_IDLE_TEXT)
+        self.audition_btn = make_button(
+            AUDITION_IDLE_TEXT, "secondary", icon="mic",
+            tooltip="Record 5 seconds of your dry voice and loop it through the active rack so "
+                    "you can audition knobs without speaking")
         self.audition_btn.setObjectName("hardwareAuditionBtn")
-        self.audition_btn.setToolTip(
-            "Record 5 seconds of your dry voice and loop it through the active rack so you can "
-            "audition knobs without speaking")
         fold.addWidget(self.audition_btn)
-        self.monitor = QPushButton("MONITOR")
+        self.monitor = make_button("Monitor", "secondary", icon="monitor",
+                                   tooltip="Listen to your output in your headphones")
         self.monitor.setCheckable(True)
         self.monitor.setChecked(cfg.monitor_enabled)
         self.monitor.setObjectName("hardwareMonitorToggle")
-        self.monitor.setToolTip("Listen to your output in your headphones")
         fold.addWidget(self.monitor)
         right.addWidget(self.fold_box)
 
-        self.more_btn = QPushButton("MORE")
-        self.more_btn.setObjectName("hardwareConfigBtn")
-        self.more_btn.setToolTip("Signal-flow steps and actions that do not fit the header")
+        self.more_btn = make_button("More", "secondary", icon="menu",
+                                    tooltip="Signal-flow steps and actions that do not fit the header")
+        self.more_btn.setObjectName("headerMoreBtn")
         self.more_menu = QMenu(self.more_btn)
         # The flow strip's actions, for when the strip is hidden (spec 7.6: below ~1100 px).
         self.act_prefx = self.more_menu.addAction("Mic cleanup (Pre-FX)…")
@@ -191,17 +231,17 @@ class HeaderBar(QFrame):
         self.more_btn.setVisible(False)
         right.addWidget(self.more_btn)
 
-        self.panic_btn = QPushButton("PANIC")
+        self.panic_btn = make_button("Panic", "danger", icon="panic",
+                                     tooltip="Turn all effect chains off immediately")
         self.panic_btn.setObjectName("hardwarePanicCut")
-        self.panic_btn.setToolTip("Turn all effect chains off immediately")
         right.addWidget(self.panic_btn)
 
-        self.settings_btn = QPushButton("SETTINGS")
-        self.settings_btn.setObjectName("hardwareConfigBtn")
+        self.settings_btn = make_button(tier="quiet", icon="settings", tooltip="Settings")
+        self.settings_btn.setObjectName("headerSettingsBtn")
         right.addWidget(self.settings_btn)
 
-        self.help_btn = QPushButton("HELP")
-        self.help_btn.setObjectName("hardwareConfigBtn")
+        self.help_btn = make_button(tier="quiet", icon="help", tooltip="Help, about and licences")
+        self.help_btn.setObjectName("headerHelpBtn")
         self.help_menu = QMenu(self.help_btn)
         self.help_btn.setMenu(self.help_menu)
         right.addWidget(self.help_btn)
@@ -209,14 +249,17 @@ class HeaderBar(QFrame):
         right.addWidget(self._right_screw)
         top.addWidget(self.right)
 
+        # Header actions use the small type size (the zones are tight at 1024 px).
+        for b in (self.power, self.audition_btn, self.monitor, self.more_btn, self.panic_btn):
+            b.setProperty("small", "true")
         # Texts that change at run time must not move the zones around.
-        reserve_text_width(self.power, "MASTER POWER", "AUDIO ACTIVE")
+        reserve_text_width(self.power, POWER_OFF_TEXT, POWER_ON_TEXT)
         # The readout shows these at run time (see MainWindow._update_status); reserve the
         # widest of each so the fixed left zone never grows when audio starts.
         for key, label in self.readout_fields().items():
             reserve_text_width(label, *READOUT_SAMPLES[key])
             label.setFixedWidth(label.minimumWidth())
-        reserve_text_width(self.audition_btn, "REC 5.0s", "STOP LOOP")
+        reserve_text_width(self.audition_btn, *AUDITION_TEXTS)
 
         # Hidden widgets are not polished until shown; their size hints are needed before.
         # (Never polish from inside a size hint or an event handler: it re-enters the

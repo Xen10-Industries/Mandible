@@ -5,12 +5,13 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
                                QListWidget, QListWidgetItem,
-                               QMessageBox, QPushButton, QVBoxLayout)
+                               QMessageBox, QVBoxLayout)
 
 from ... import plugins as P
 from ...config import PluginSlot
 from ...core import Core, inst
 from ...internal_dsp import is_internal_plugin
+from ..widgets.buttons import make_button, tier_button_box
 
 
 class PluginParamMapDialog(QDialog):
@@ -66,13 +67,13 @@ class PluginParamMapDialog(QDialog):
         self.search_edit.textChanged.connect(self._populate_available)
         filter_row.addWidget(self.search_edit, 1)
 
-        smart_btn = QPushButton("SMART AUTO-PICK")
+        smart_btn = make_button("Smart auto-pick")
         smart_btn.setToolTip("Automatically pick up to 6 key studio controls for this plugin")
         smart_btn.setObjectName("paramMapSmartBtn")
         smart_btn.clicked.connect(self._smart_pick)
         filter_row.addWidget(smart_btn)
 
-        clear_btn = QPushButton("CLEAR ALL")
+        clear_btn = make_button("Clear all")
         clear_btn.setToolTip("Unmap all knobs so this plugin displays as a compact 1U module without knobs")
         clear_btn.setObjectName("paramMapClearBtn")
         clear_btn.clicked.connect(self._clear_all)
@@ -83,23 +84,25 @@ class PluginParamMapDialog(QDialog):
         cols = QHBoxLayout()
         cols.setSpacing(12)
 
-        left_box = QGroupBox(f"AVAILABLE {self.kind.upper()} ({len(self.usable_params)})")
+        left_box = QGroupBox(f"Available {self.kind} ({len(self.usable_params)})")
         left_lay = QVBoxLayout(left_box)
         self.avail_list = QListWidget()
         self.avail_list.itemChanged.connect(self._on_avail_item_changed)
         left_lay.addWidget(self.avail_list, 1)
         cols.addWidget(left_box, 3)
 
-        right_box = QGroupBox("MAPPED MODULE KNOBS (LEFT → RIGHT)")
+        right_box = QGroupBox("Mapped module knobs (left to right)")
         right_lay = QVBoxLayout(right_box)
         self.mapped_list = QListWidget()
         right_lay.addWidget(self.mapped_list, 1)
 
         order_row = QHBoxLayout()
         order_row.setSpacing(6)
-        btn_up = QPushButton("▲ MOVE LEFT")
-        btn_dn = QPushButton("▼ MOVE RIGHT")
-        btn_rm = QPushButton("REMOVE")
+        btn_up = make_button("Move left", "quiet", icon="chevron_left",
+                             tooltip="Move the selected knob one place left")
+        btn_dn = make_button("Move right", "quiet", icon="chevron_right",
+                             tooltip="Move the selected knob one place right")
+        btn_rm = make_button("Remove", "quiet", icon="remove", tooltip="Unmap the selected knob")
         btn_up.clicked.connect(lambda: self._move_mapped(-1))
         btn_dn.clicked.connect(lambda: self._move_mapped(1))
         btn_rm.clicked.connect(self._remove_selected_mapped)
@@ -112,8 +115,8 @@ class PluginParamMapDialog(QDialog):
         lay.addLayout(cols, 1)
 
         # Dialog footer buttons
-        bb = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
-        bb.button(QDialogButtonBox.Save).setText("SAVE MAPPING")
+        bb = tier_button_box(QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel))
+        bb.button(QDialogButtonBox.Save).setText("Save mapping")
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
         lay.addWidget(bb)

@@ -69,8 +69,9 @@ def test_prefx_pill_is_named_pre_fx_with_a_per_stage_tooltip(sample_core, real_l
 
     strip = SignalFlowStrip(sample_core)
     pill = strip.prefx_btn
-    assert pill.text() == "PRE-FX"
-    assert pill.property("state") == "on"          # the high-pass is on by default
+    assert pill.text() == "Pre-FX"
+    assert strip.step_state("prefx") == "on"       # the high-pass is on by default
+    assert pill.property("state") == "on"
     tip = pill.toolTip()
     assert "High-pass" in tip and "RNNoise" not in tip and "Noise gate" not in tip
 
@@ -78,17 +79,18 @@ def test_prefx_pill_is_named_pre_fx_with_a_per_stage_tooltip(sample_core, real_l
     strip.refresh(None, "CLEAN VOICE")
     tip = pill.toolTip()
     assert tip.index("High-pass") < tip.index("RNNoise") < tip.index("Noise gate")
-    assert pill.text() == "PRE-FX"
+    assert pill.text() == "Pre-FX"
 
     _set_prefx(sample_core, False, False, False)
     strip.refresh(None, "CLEAN VOICE")
-    assert pill.text() == "PRE-FX"
-    assert pill.property("state") == "off"
+    assert pill.text() == "Pre-FX"
+    assert strip.step_state("prefx") == "off" and not pill.property("state")
     for stage in ("High-pass", "RNNoise", "Noise gate"):
         assert stage not in pill.toolTip()
-    # the compact tag means the same thing as the full pill
+    # the icon means the same thing as the full button
     icon = strip.step_button("prefx", "icons")
-    assert icon.text() == "PRE" and icon.property("state") == "off"
+    assert icon.text() == "" and not icon.icon().isNull() and not icon.property("state")
+    assert "all stages off" in icon.toolTip()
     strip.deleteLater()
     _flush_deletes()
 
@@ -103,7 +105,14 @@ def _card(core, slot, chain=None):
 
 
 def _badge_texts(card):
-    return [b.text() for b in card.findChildren(QLabel) if b.objectName().endswith("Badge")]
+    return [b.text() for b in _badges(card).values()]
+
+
+def _badges(card):
+    """The card's status-pill badges by kind (format, builtin, vendor, awake)."""
+    from mandible.ui.widgets.buttons import StatusPill
+
+    return {b.property("badge"): b for b in card.findChildren(StatusPill) if b.property("badge")}
 
 
 def test_plugin_card_latency_uses_the_plugins_reported_latency(sample_core, real_look):
@@ -142,8 +151,8 @@ def test_built_in_cards_say_built_in_and_have_no_open_ui(sample_core, real_look)
         card = _card(sample_core, slot, chain)
         badges = _badge_texts(card)
         assert "Built-in" in badges and "VST3" not in badges
-        assert card.findChild(QLabel, "formatBadge") is None
-        assert card.findChild(QLabel, "builtinBadge").text() == "Built-in"
+        assert "format" not in _badges(card)
+        assert _badges(card)["builtin"].text() == "Built-in"
         assert card.ui_btn.isHidden()          # no plugin window to open
         card.deleteLater()
     _flush_deletes()
@@ -156,7 +165,7 @@ def test_vst3_cards_say_vst3_and_have_open_ui(sample_core, real_look):
     card = _card(sample_core, slot, chain)
     badges = _badge_texts(card)
     assert "VST3" in badges and "Built-in" not in badges
-    assert card.findChild(QLabel, "builtinBadge") is None
+    assert "builtin" not in _badges(card)
     assert not card.ui_btn.isHidden() and card.ui_btn.isEnabled()
     card.deleteLater()
 

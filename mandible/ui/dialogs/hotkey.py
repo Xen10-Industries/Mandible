@@ -3,10 +3,11 @@ from __future__ import annotations
 
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
+from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QVBoxLayout
 
 from ...config import Hotkey
 from ...core import Core
+from ..widgets.buttons import make_button
 
 
 class HotkeyDialog(QDialog):
@@ -21,13 +22,11 @@ class HotkeyDialog(QDialog):
         lbl = QLabel("Press the key combination you want to use…\n\n"
                      "Modifiers (Ctrl / Shift / Alt / Win) are allowed.\nEsc cancels.")
         lbl.setAlignment(Qt.AlignCenter)
-        f = lbl.font()
-        f.setPointSize(f.pointSize() + 1)
-        lbl.setFont(f)
+        lbl.setObjectName("hotkeyPrompt")
         lay.addWidget(lbl)
         row = QHBoxLayout()
-        clear = QPushButton("Remove hotkey")
-        cancel = QPushButton("Cancel")
+        clear = make_button("Remove hotkey", "danger")
+        cancel = make_button("Cancel")
         row.addWidget(clear)
         row.addStretch()
         row.addWidget(cancel)
