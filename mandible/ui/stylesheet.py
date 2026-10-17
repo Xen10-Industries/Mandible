@@ -81,6 +81,29 @@ def build_qss(look: "Look") -> str:
     raised_bg = alt if flat else f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {alt}, stop:1 {card})"
     toggle_bg = f"qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {alt}, stop:1 {inset})"
 
+    # Task 8c: the old inline sheets on the inspector box, the console frame and the condensed
+    # strips were plain declarations, so they cascaded onto every descendant widget and beat
+    # the app-level rules for the same properties. Reproduced here so layout and minimum
+    # sizes stay identical; Stage 3 (layout and bugs) deletes this block.
+    legacy_cascade = f"""
+QFrame#inspectorBox QWidget {{
+    background: {inset};
+    border: {bw} solid {line};
+    border-radius: {r_pnl};
+    padding: 4px 8px;
+}}
+QFrame#consoleFrame QWidget {{
+    background: {inset};
+    border-top: {bw} solid {line};
+}}
+QFrame#condensedStrip QWidget {{
+    background: {inset};
+    border: {bw} solid {line};
+    border-radius: {r_sm};
+    padding: 4px 8px;
+}}
+"""
+
     return f"""
 QWidget {{
     font-family: "Segoe UI", -apple-system, system-ui, Roboto, sans-serif;
@@ -860,6 +883,234 @@ QLabel#diagLabel {{
     font-size: {f_small};
 }}
 
+QFrame#waveformPanel {{
+    background: {inset};
+    border: {bw} solid {line};
+    border-radius: {r_pnl};
+    padding: 6px;
+}}
+QLabel#waveformClipName {{
+    font-weight: bold;
+    font-size: 8.5pt;
+    color: {text};
+}}
+QLabel#waveformTiming {{
+    font-family: Consolas, monospace;
+    font-size: 8pt;
+    color: {muted};
+}}
+QPushButton#waveformPlayBtn {{
+    background: {ok_bg};
+    border: {bw} solid {ok};
+    color: {ok};
+    font-weight: bold;
+    padding: 4px 12px;
+    border-radius: {r_sm};
+}}
+QPushButton#waveformPlayBtn:hover {{
+    background: {alt};
+}}
+QPushButton#waveformResetBtn {{
+    color: {muted};
+    font-size: 8pt;
+    padding: 4px 10px;
+}}
+QLabel#waveformHint {{
+    color: {muted};
+    font-size: 7.5pt;
+    font-style: italic;
+}}
+QLabel#rackBusLabel {{
+    font-weight: 800;
+    font-size: 8.5pt;
+    color: {muted};
+    letter-spacing: 0.8px;
+}}
+QPushButton#rackInsertBtn {{
+    background: {accent};
+    border: {bw} solid {accent_hover};
+    color: {on_accent};
+    font-weight: 800;
+    font-size: 8pt;
+    padding: 4px 12px;
+    border-radius: {r_sm};
+    letter-spacing: 0.5px;
+}}
+QPushButton#rackInsertBtn:hover {{
+    background: {accent_hover};
+}}
+QLineEdit#rackBusNameEdit {{
+    background: {inset};
+    border: {bw} dashed {strong};
+    border-radius: {r_sm};
+    padding: 3px 8px;
+    color: {text};
+    font-family: "Segoe UI", sans-serif;
+    font-weight: 800;
+    font-size: 9pt;
+    letter-spacing: 0.5px;
+}}
+QLineEdit#rackBusNameEdit:hover {{
+    border: {bw} solid {strong};
+    background: {card};
+}}
+QLineEdit#rackBusNameEdit:focus {{
+    border: {bw2} solid {ring};
+    background: {alt};
+}}
+QFrame#inspectorBox {{
+    background: {inset};
+    border: {bw} solid {line};
+    border-radius: {r_pnl};
+    padding: 4px 8px;
+}}
+QFrame#inspectorSeparator {{
+    color: {line};
+}}
+QLabel#rackLatency {{
+    color: {muted};
+    font-family: Consolas, monospace;
+    font-size: 7.5pt;
+    font-weight: bold;
+}}
+QFrame#inspectorBox QPushButton#rackLiveToggle {{
+    background: {card};
+    border: {bw} solid {strong};
+    color: {muted};
+    font-weight: bold;
+    font-size: 7.5pt;
+    padding: 4px 12px;
+    border-radius: {r_sm};
+}}
+QFrame#inspectorBox QPushButton#rackLiveToggle[live="true"] {{
+    background: {ok_bg};
+    border: {bw2} solid {ok};
+    color: {ok};
+    font-weight: 800;
+}}
+
+QLabel#vfdStat {{
+    font-family: Consolas, monospace;
+    font-size: 7.5pt;
+    font-weight: bold;
+    color: {muted};
+}}
+QLabel#vfdStat[running="true"] {{
+    color: {ok};
+}}
+QLabel#vfdValue {{
+    font-family: Consolas, monospace;
+    font-size: 7.5pt;
+    color: {muted};
+}}
+QLabel#vfdLatency {{
+    font-family: Consolas, monospace;
+    font-size: 7.5pt;
+    font-weight: bold;
+    color: {readout};
+}}
+QLabel#vfdDriver {{
+    font-family: Consolas, monospace;
+    font-size: 7.5pt;
+    font-weight: bold;
+    color: {text};
+}}
+QLabel#moduleTitle {{
+    font-weight: 800;
+    font-size: 7.5pt;
+    color: {muted};
+    letter-spacing: 0.8px;
+}}
+QLabel#bankTitle {{
+    font-weight: 800;
+    font-size: 8pt;
+    color: {muted};
+    letter-spacing: 0.8px;
+}}
+QPushButton#presetBankBtn, QPushButton#presetFactoryBtn {{
+    background: {card};
+    border: {bw} solid {line};
+    color: {muted};
+    font-family: Consolas, monospace;
+    font-size: 7pt;
+    font-weight: bold;
+    padding: 2px 6px;
+    border-radius: {r_sm};
+}}
+QPushButton#presetBankBtn:hover {{
+    background: {alt};
+    color: {readout};
+    border-color: {readout};
+}}
+QPushButton#presetFactoryBtn {{
+    color: {ok};
+}}
+QPushButton#presetFactoryBtn:hover {{
+    background: {ok_bg};
+    color: {ok};
+    border-color: {ok};
+}}
+QPushButton#presetActionBtn {{
+    background: {card};
+    border: {bw} solid {line};
+    color: {muted};
+    font-size: 7.5pt;
+    font-weight: bold;
+    padding: 5px 8px;
+    border-radius: {r_sm};
+}}
+QLabel#limiterThreshold {{
+    color: {muted};
+    font-family: Consolas, monospace;
+    font-size: 7.5pt;
+    font-weight: bold;
+    margin-right: 4px;
+}}
+QLabel#limiterThreshold[active="true"] {{
+    color: {text};
+}}
+QFrame#consoleFrame {{
+    background: {inset};
+    border-top: {bw} solid {line};
+}}
+QFrame#consoleFrame QPushButton#collapseFadersBtn {{
+    background: {card};
+    border: {bw} solid {line};
+    border-radius: {r_sm};
+    color: {muted};
+    font-size: 7.5pt;
+    font-weight: bold;
+    padding: 2px 8px;
+}}
+QFrame#consoleFrame QPushButton#collapseFadersBtn:hover {{
+    background: {alt};
+    color: {text};
+    border-color: {strong};
+}}
+QFrame#consoleFrame QFrame#condensedStrip {{
+    background: {inset};
+    border: {bw} solid {line};
+    border-radius: {r_sm};
+    padding: 4px 8px;
+}}
+QLabel#condensedLabel {{
+    font-weight: bold;
+    font-size: 7.5pt;
+    color: {muted};
+}}
+QPushButton#hardwareAuditionBtn[audition="rec"] {{
+    background: {danger_bg};
+    border: {bw} solid {danger};
+    color: {danger};
+    font-weight: bold;
+}}
+QPushButton#hardwareAuditionBtn[audition="loop"] {{
+    background: {ok_bg};
+    border: {bw} solid {ok};
+    color: {ok};
+    font-weight: bold;
+}}
+
 QLabel#dialogInfo {{
     color: {muted};
     font-size: 8.5pt;
@@ -1147,4 +1398,4 @@ QScrollBar::handle:vertical:hover {{
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
     height: 0px;
 }}
-"""
+{legacy_cascade}"""

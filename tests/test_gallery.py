@@ -93,3 +93,34 @@ def test_gallery_run_records_screen_errors_and_continues(qapp, tmp_path, monkeyp
     on_disk = json.loads((out / "report.json").read_text(encoding="utf-8"))
     assert on_disk.keys() == report.keys()
     assert "ERROR" in (out / "index.html").read_text(encoding="utf-8")
+
+
+def test_main_window_show_tray_flag(sample_core, monkeypatch):
+    """show_tray=False builds the tray icon but never shows it; the default shows it."""
+    from PySide6.QtWidgets import QSystemTrayIcon
+
+    from mandible.ui.main_window import MainWindow
+
+    shown = []
+    monkeypatch.setattr(QSystemTrayIcon, "show", lambda self: shown.append(self))
+    quiet = MainWindow(sample_core, show_tray=False)
+    assert shown == [] and quiet.tray is not None
+    quiet.meter_timer.stop()
+    quiet.status_timer.stop()
+    loud = MainWindow(sample_core)
+    assert shown == [loud.tray]
+    loud.meter_timer.stop()
+    loud.status_timer.stop()
+    quiet.deleteLater()
+    loud.deleteLater()
+
+
+def test_gui_shim_only_exposes_main():
+    import importlib
+
+    importlib.import_module("mandible.__main__")  # imports cleanly, does not start the app
+    from mandible import gui
+    from mandible.ui.app import main
+
+    assert gui.main is main
+    assert [n for n in vars(gui) if not n.startswith("_") and n != "main"] == []

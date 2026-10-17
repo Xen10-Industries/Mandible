@@ -194,6 +194,33 @@ def test_set_look_emits_once_and_applies_stylesheet(qapp, restore_look, monkeypa
         look_bus().lookChanged.disconnect(on_change)
 
 
+@pytest.mark.parametrize("palette_id", ["scarlet", "cyan", "stealth", "amber"])
+def test_set_look_alone_syncs_the_native_palette(qapp, restore_look, palette_id):
+    """No entry point can bypass the QPalette sync: set_look itself sets it (no apply_theme)."""
+    from PySide6.QtGui import QPalette
+
+    look = Look(BUILTIN_PALETTES[palette_id], BUILTIN_SKINS["minimal"])
+    set_look(look)
+    pal = qapp.palette()
+    c = look.palette.color
+    assert pal.color(QPalette.Window).name() == c("bg.window")
+    assert pal.color(QPalette.WindowText).name() == c("text.primary")
+    assert pal.color(QPalette.Text).name() == c("text.primary")
+    assert pal.color(QPalette.Highlight).name() == c("accent")
+    assert pal.color(QPalette.HighlightedText).name() == c("text.on_accent")
+    assert pal.color(QPalette.Base).name() == c("bg.inset")
+
+
+def test_set_look_keeps_the_native_palette_following_later_looks(qapp, restore_look):
+    from PySide6.QtGui import QPalette
+
+    set_look(Look(BUILTIN_PALETTES["scarlet"], BUILTIN_SKINS["minimal"]))
+    first = qapp.palette().color(QPalette.Window).name()
+    set_look(Look(BUILTIN_PALETTES["cyan"], BUILTIN_SKINS["minimal"]))
+    assert qapp.palette().color(QPalette.Window).name() == BUILTIN_PALETTES["cyan"].color("bg.window")
+    assert first == BUILTIN_PALETTES["scarlet"].color("bg.window") != qapp.palette().color(QPalette.Window).name()
+
+
 def test_set_look_without_app_does_not_fail(qapp, restore_look, monkeypatch):
     # Explicit app=None path with no QApplication instance must still swap + emit.
     from PySide6.QtWidgets import QApplication

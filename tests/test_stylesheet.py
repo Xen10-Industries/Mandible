@@ -233,7 +233,10 @@ INFO_TEXT_SELECTORS = ("QLabel#flowBusLabel", "QLabel#flowArrow", "QLabel#chainS
                        "QLabel#rackSlotIndex", "QLabel#latencyChip", "QLabel#rackBayLabel",
                        "QLabel#dialogInfo", "QLabel#duckLabel", "QLabel#wizardDesc",
                        "QLabel#wizardFieldLabel", "QLabel#wizardMicStatus",
-                       "QLabel#wizardCardDesc", "QLabel#wizardGuideText")
+                       "QLabel#wizardCardDesc", "QLabel#wizardGuideText",
+                       "QLabel#rackBusLabel", "QLabel#rackLatency", "QLabel#vfdValue",
+                       "QLabel#moduleTitle", "QLabel#bankTitle", "QLabel#condensedLabel",
+                       "QLabel#waveformTiming", "QLabel#waveformHint", "QLabel#limiterThreshold")
 
 
 @pytest.mark.parametrize("look", ALL_LOOKS)
@@ -257,6 +260,21 @@ def test_informational_text_is_readable_not_disabled_colour(look):
 # Small coloured text and the surface it actually sits on (4.5:1 applies to all of it).
 SMALL_TEXT_ON_SURFACE = {
     "QLabel#wizardStep": "bg.window",
+    "QLabel#vfdStat": "bg.inset",
+    'QLabel#vfdStat[running="true"]': "bg.inset",
+    "QLabel#vfdLatency": "bg.inset",
+    "QLabel#vfdDriver": "bg.inset",
+    "QPushButton#presetFactoryBtn": "bg.panel",
+    "QPushButton#presetBankBtn": "bg.panel",
+    "QPushButton#presetActionBtn": "bg.panel",
+    "QFrame#inspectorBox QPushButton#rackLiveToggle": "bg.panel",
+    'QFrame#inspectorBox QPushButton#rackLiveToggle[live="true"]': "status.ok.subtle",
+    "QPushButton#waveformPlayBtn": "status.ok.subtle",
+    'QPushButton#hardwareAuditionBtn[audition="rec"]': "status.danger.subtle",
+    'QPushButton#hardwareAuditionBtn[audition="loop"]': "status.ok.subtle",
+    "QPushButton#rackInsertBtn": "accent",
+    "QFrame#consoleFrame QPushButton#collapseFadersBtn": "bg.panel",
+    "QLabel#waveformClipName": "bg.inset",
 }
 
 

@@ -83,7 +83,7 @@ def main():
     _setup_logging()
     _tune_process()
     _migrate_startup_entry()
-    from mandible.gui import main as gui_main
+    from mandible.ui.app import main as gui_main
     return gui_main()
 
 

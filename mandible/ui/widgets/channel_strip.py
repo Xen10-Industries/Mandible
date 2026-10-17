@@ -10,12 +10,12 @@ from .meters import LevelMeter
 from .sliders import GainSlider
 
 
-class _ChannelDot(QWidget):
+class ChannelDot(QWidget):
     """Small round channel colour marker drawn from a palette token."""
-    def __init__(self, token: str, parent=None):
+    def __init__(self, token: str, diameter: int = 8, parent=None):
         super().__init__(parent)
         self.token = token
-        self.setFixedSize(8, 8)
+        self.setFixedSize(diameter, diameter)
         _follow_look(self)
 
     def _on_look_changed(self):
@@ -44,7 +44,7 @@ class ChannelStripCard(QFrame):
 
         head = QHBoxLayout()
         head.setSpacing(6)
-        head.addWidget(_ChannelDot(dot_token))
+        head.addWidget(ChannelDot(dot_token))
 
         t_lbl = QLabel(title)
         t_lbl.setObjectName("channelTitle")

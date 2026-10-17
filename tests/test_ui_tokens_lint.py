@@ -26,21 +26,18 @@ def tool():
     return mod
 
 
-def test_repo_passes_with_the_legacy_allowlist():
+def test_repo_passes_with_an_empty_legacy_allowlist(tool):
+    assert tool.ALLOWLIST_LEGACY == set()
     proc = run()
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
 
-def test_legacy_allowlist_contents(tool):
-    assert tool.ALLOWLIST_LEGACY == {
-        "mandible/gui.py", "mandible/overlay.py", "mandible/waveform_widget.py"}
-
-
-def test_legacy_files_are_flagged_without_the_allowlist(tool):
-    findings = tool.scan_file(ROOT / "mandible" / "gui.py", ROOT)
-    assert findings, "gui.py still has literals; the allowlist is what keeps the lint green"
-    # Paths are repo-relative with forward slashes.
-    assert all(f.startswith("mandible/gui.py:") for f in findings)
+def test_former_legacy_modules_have_no_literals(tool):
+    """Task 8c: gui.py (now a shim), the main window, the overlay and the waveform widget."""
+    for rel in ("mandible/gui.py", "mandible/ui/main_window.py", "mandible/ui/app.py",
+                "mandible/overlay.py", "mandible/waveform_widget.py"):
+        assert not tool.is_allowed(rel), rel
+        assert tool.scan_file(ROOT / rel, ROOT) == [], rel
 
 
 def test_setstylesheet_call_and_hex_are_flagged(tmp_path):

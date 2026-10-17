@@ -46,9 +46,9 @@ def test_soundboard_dialog_opens_with_clips(sample_core):
 def test_meter_timer_pauses_when_hidden(sample_core):
     from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QApplication
-    from mandible import gui
+    from mandible.ui.main_window import MainWindow
 
-    win = gui.MainWindow(sample_core)
+    win = MainWindow(sample_core)
     win.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
     try:
         win.show()

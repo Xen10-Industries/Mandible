@@ -49,12 +49,12 @@ def parse_sizes(text: str) -> list[tuple[int, int]]:
 
 
 def _apply(app, skin_id: str, theme_id: str) -> None:
-    """Select a skin and theme: ``set_look`` (via ``gui.apply_theme``, which also sets the
-    app's Fusion style as ``main()`` does)."""
-    from mandible import gui
+    """Select a skin and theme: ``set_look`` (via ``apply_theme``, which also sets the app's
+    Fusion style as ``main()`` does)."""
+    from mandible.ui.app import apply_theme
     from mandible.ui.look import BUILTIN_PALETTES, BUILTIN_SKINS, Look
 
-    gui.apply_theme(app, Look(BUILTIN_PALETTES[theme_id], BUILTIN_SKINS[skin_id]))
+    apply_theme(app, Look(BUILTIN_PALETTES[theme_id], BUILTIN_SKINS[skin_id]))
 
 
 def _contrast(theme_id: str) -> list[dict]:
@@ -107,19 +107,14 @@ def _states(dialog):
 
 def build_main_window(core):
     """A MainWindow that never touches the desktop: shown with WA_DontShowOnScreen and with no
-    system tray icon (``MainWindow.__init__`` calls ``tray.show()``, which ignores
-    WA_DontShowOnScreen and would put a real icon on the taskbar)."""
+    system tray icon (``show_tray=False``; a shown tray icon ignores WA_DontShowOnScreen and
+    would land on the taskbar)."""
     from PySide6.QtCore import Qt
-    from PySide6.QtWidgets import QApplication, QSystemTrayIcon
+    from PySide6.QtWidgets import QApplication
 
-    from mandible import gui
+    from mandible.ui.main_window import MainWindow
 
-    real_show = QSystemTrayIcon.show
-    QSystemTrayIcon.show = lambda self: None  # type: ignore[method-assign]
-    try:
-        win = gui.MainWindow(core)
-    finally:
-        QSystemTrayIcon.show = real_show  # type: ignore[method-assign]
+    win = MainWindow(core, show_tray=False)
     win.tray.hide()
     win.setAttribute(Qt.WA_DontShowOnScreen)
     win.show()

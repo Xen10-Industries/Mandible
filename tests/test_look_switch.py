@@ -108,7 +108,8 @@ class _RecordingEngine:
 def test_switch_look_fast_and_engine_free(sample_core, restore_look):
     from PySide6.QtCore import QEvent, Qt
     from PySide6.QtWidgets import QApplication
-    from mandible import gui
+    from mandible.ui.app import apply_theme
+    from mandible.ui.main_window import MainWindow
 
     app = QApplication.instance()
     # Measure the sample setup alone: earlier tests leave dialogs/windows alive, and an
@@ -118,10 +119,10 @@ def test_switch_look_fast_and_engine_free(sample_core, restore_look):
             w.hide()
             w.deleteLater()
     app.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-    gui.apply_theme(app, _look("skeuomorphic", "scarlet"))
+    apply_theme(app, _look("skeuomorphic", "scarlet"))
     engine = _RecordingEngine(sample_core.engine)
     sample_core.engine = engine
-    win = gui.MainWindow(sample_core)
+    win = MainWindow(sample_core)
     win.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
     timings: dict[tuple[str, str], list[float]] = {}
     try:

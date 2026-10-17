@@ -26,12 +26,8 @@ ALLOWED_MODULES = {
     "mandible/ui/palette_gen.py",
     "mandible/branding.py",
 }
-# Files not yet migrated; Task 8c empties this set.
-ALLOWLIST_LEGACY: set[str] = {
-    "mandible/gui.py",
-    "mandible/overlay.py",
-    "mandible/waveform_widget.py",
-}
+# Files not yet migrated: none (kept so a temporary exemption has an obvious home).
+ALLOWLIST_LEGACY: set[str] = set()
 
 # #rgb, #rrggbb and #rrggbbaa, not part of a longer word (so "#abcd" and "#12" pass).
 HEX_RE = re.compile(r"(?<![\w&])#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{3})(?![0-9a-zA-Z_])")

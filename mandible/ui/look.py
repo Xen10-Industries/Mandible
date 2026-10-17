@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 __all__ = [
     "PALETTE_TOKENS", "SKIN_SLOTS", "SHAPE_TOKENS", "Palette", "Skin", "Look",
     "BUILTIN_PALETTES", "BUILTIN_SKINS", "LookBus", "space", "font_px",
-    "current_look", "set_look", "look_bus", "with_elements", "look_for", "look_from_config",
+    "current_look", "set_look", "qpalette", "look_bus", "with_elements", "look_for", "look_from_config",
 ]
 
 SKIN_SLOTS = ("frame", "switch", "knob", "meter", "panel", "screws", "density")
@@ -256,8 +256,28 @@ def current_look() -> Look:
     return _current
 
 
+_PALETTE_ROLES = (
+    ("Window", "bg.window"), ("WindowText", "text.primary"), ("Base", "bg.inset"),
+    ("AlternateBase", "bg.panel"), ("Text", "text.primary"), ("Button", "bg.panel"),
+    ("ButtonText", "text.primary"), ("Highlight", "accent"),
+    ("HighlightedText", "text.on_accent"), ("ToolTipBase", "bg.raised"),
+    ("ToolTipText", "text.primary"), ("PlaceholderText", "text.disabled"),
+)
+
+
+def qpalette(look: Look):
+    """The native ``QPalette`` for ``look`` (what Fusion paints with where no QSS rule applies)."""
+    from PySide6.QtGui import QColor, QPalette
+
+    pal = QPalette()
+    for role, token in _PALETTE_ROLES:
+        pal.setColor(getattr(QPalette, role), QColor(look.palette.color(token)))
+    return pal
+
+
 def set_look(look: Look, app: "QApplication | None" = None) -> None:
-    """Make ``look`` current, apply its stylesheet once, then emit ``lookChanged``.
+    """Make ``look`` current, apply its stylesheet and native palette to the app, then
+    emit ``lookChanged``.
 
     The stylesheet is built before anything changes, so a failing build leaves the
     previous look, stylesheet and listeners untouched.
@@ -272,6 +292,7 @@ def set_look(look: Look, app: "QApplication | None" = None) -> None:
     app = app or QApplication.instance()
     if app is not None:
         app.setStyleSheet(qss)
+        app.setPalette(qpalette(look))
     look_bus().lookChanged.emit()
 
 
