@@ -1,7 +1,7 @@
 # Mandible UI design pass: skins, themes, layout and polish
 
 - **Date:** 2026-10-16
-- **Status:** Awaiting owner approval
+- **Status:** Approved by owner 2026-10-16
 - **Owner:** Xen10 Industries
 - **Related:** UI review (https://claude.ai/artifact/SoBeAbuBs6sN8GDysdXZXb), audit fixes and new logo on branch `fix/audit-findings`
 
