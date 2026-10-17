@@ -12,8 +12,8 @@ from functools import partial
 
 import numpy as np
 from PySide6.QtCore import QLockFile, QPointF, QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import (QAction, QBrush, QColor, QIcon, QLinearGradient,
-                            QPainter, QPainterPath, QPalette, QPen, QPixmap, QRadialGradient)
+from PySide6.QtGui import (QAction, QBrush, QColor, QLinearGradient,
+                            QPainter, QPainterPath, QPalette, QPen, QRadialGradient)
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
                                QDoubleSpinBox, QFileDialog, QFormLayout, QFrame, QGroupBox,
                                QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit,
@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDia
 
 from . import devices as D
 from . import plugins as P
+from . import branding
 from .audio_engine import DRY_ID
 from .config import (APP_DIR, Chain, Hotkey, MidiBinding, PluginSlot,
                      SoundboardClipConfig, is_startup_enabled, load_config, set_startup_enabled)
@@ -743,7 +744,7 @@ def apply_theme(
     pal.setColor(QPalette.ToolTipText, QColor("#f1f5f9"))
     app.setPalette(pal)
     app.setStyleSheet(build_stylesheet(_UI_STATE["theme"], _UI_STATE["skin"], _UI_STATE["frame"]))
-    app.setWindowIcon(make_icon(False, _UI_STATE["theme"]))
+    app.setWindowIcon(branding.app_icon())
     for w in app.allWidgets():
         if hasattr(w, "update_frame_margins"):
             w.update_frame_margins()
@@ -974,160 +975,6 @@ class ChassisWrapperFrame(QFrame):
 
 
 # =============================================================== small widgets
-_ICON_CACHE: dict[tuple[bool, str], QIcon] = {}
-
-
-def _render_mandible_emblem_pixmap(size: int, active: bool, accent_hex: str) -> QPixmap:
-    """Renders the Mandible emblem (studio condenser mic inside rotary FX graduation ring)."""
-    pm = QPixmap(size, size)
-    pm.fill(Qt.transparent)
-    p = QPainter(pm)
-    p.setRenderHint(QPainter.Antialiasing)
-    s = float(size)
-
-    margin = s * 0.04
-    w = s - 2 * margin
-    rad = s * 0.22
-
-    # 1. Outer drop shadow & metallic bezel rim
-    p.setPen(Qt.NoPen)
-    p.setBrush(QColor("#05070a"))
-    p.drawRoundedRect(QRectF(margin, margin, w, w), rad, rad)
-
-    bezel_grad = QLinearGradient(0, margin, 0, s - margin)
-    bezel_grad.setColorAt(0.0, QColor("#3b4459"))
-    bezel_grad.setColorAt(0.5, QColor("#1e2433"))
-    bezel_grad.setColorAt(1.0, QColor("#0f131c"))
-    p.setBrush(bezel_grad)
-    p.drawRoundedRect(QRectF(margin, margin, w, w), rad, rad)
-
-    # 2. Inner recessed dark faceplate
-    in_m = s * 0.085
-    in_w = s - 2 * in_m
-    in_rad = s * 0.18
-    face_grad = QLinearGradient(0, in_m, 0, s - in_m)
-    face_grad.setColorAt(0.0, QColor("#161b26"))
-    face_grad.setColorAt(0.5, QColor("#10141d"))
-    face_grad.setColorAt(1.0, QColor("#0a0d14"))
-    p.setBrush(face_grad)
-
-    main_col = QColor(ACTIVE) if active else QColor(accent_hex)
-    border_col = QColor(main_col)
-    border_col.setAlpha(140 if active else 90)
-    p.setPen(QPen(border_col, max(1.0, s * 0.018)))
-    p.drawRoundedRect(QRectF(in_m, in_m, in_w, in_w), in_rad, in_rad)
-
-    # Ambient radial center glow
-    amb = QRadialGradient(s * 0.5, s * 0.5, s * 0.42)
-    c_amb = QColor(main_col)
-    c_amb.setAlpha(45 if active else 32)
-    amb.setColorAt(0.0, c_amb)
-    c_amb0 = QColor(main_col)
-    c_amb0.setAlpha(0)
-    amb.setColorAt(1.0, c_amb0)
-    p.setPen(Qt.NoPen)
-    p.setBrush(amb)
-    p.drawRoundedRect(QRectF(in_m, in_m, in_w, in_w), in_rad, in_rad)
-
-    # 3. Corner rack screws (drawn at sizes >= 32px for crispness)
-    if s >= 32:
-        screw_offs = s * 0.175
-        screw_r = s * 0.032
-        for sx, sy in (
-            (screw_offs, screw_offs),
-            (s - screw_offs, screw_offs),
-            (screw_offs, s - screw_offs),
-            (s - screw_offs, s - screw_offs),
-        ):
-            p.setPen(QPen(QColor("#090b10"), max(0.8, s * 0.008)))
-            p.setBrush(QColor("#94a3b8"))
-            p.drawEllipse(QPointF(sx, sy), screw_r, screw_r)
-            p.setPen(QPen(QColor("#0d1017"), max(0.8, s * 0.009), Qt.SolidLine, Qt.RoundCap))
-            slot = screw_r * 0.55
-            p.drawLine(QPointF(sx - slot, sy), QPointF(sx + slot, sy))
-            p.drawLine(QPointF(sx, sy - slot), QPointF(sx, sy + slot))
-
-    cx, cy = s * 0.5, s * 0.51
-
-    # 4. Outer Rotary FX Graduation Ring
-    ring_r = s * 0.32
-    ring_rect = QRectF(cx - ring_r, cy - ring_r, ring_r * 2, ring_r * 2)
-
-    p.setPen(QPen(QColor("#1e293b"), max(1.6, s * 0.048), Qt.SolidLine, Qt.RoundCap))
-    p.setBrush(Qt.NoBrush)
-    p.drawArc(ring_rect, int(225 * 16), int(-270 * 16))
-
-    glow_pen = QPen(
-        QColor(main_col.red(), main_col.green(), main_col.blue(), 80),
-        max(2.5, s * 0.085),
-        Qt.SolidLine,
-        Qt.RoundCap,
-    )
-    p.setPen(glow_pen)
-    p.drawArc(ring_rect, int(225 * 16), int(-220 * 16))
-
-    p.setPen(QPen(main_col, max(1.6, s * 0.048), Qt.SolidLine, Qt.RoundCap))
-    p.drawArc(ring_rect, int(225 * 16), int(-220 * 16))
-
-    # Specular indicator dot on FX ring tip (at 5 deg)
-    tip_ang = math.radians(5.0)
-    tx = cx + ring_r * math.cos(tip_ang)
-    ty = cy - ring_r * math.sin(tip_ang)
-    p.setPen(Qt.NoPen)
-    p.setBrush(QColor("#ffffff"))
-    p.drawEllipse(QPointF(tx, ty), max(1.3, s * 0.026), max(1.3, s * 0.026))
-
-    # 5. Center Broadcast Condenser Microphone Silhouette
-    cap_w = s * 0.18
-    cap_h = s * 0.27
-    cap_x = cx - cap_w / 2.0
-    cap_y = cy - s * 0.18
-    cap_rad = cap_w / 2.0
-
-    cap_grad = QLinearGradient(cap_x, cap_y, cap_x + cap_w, cap_y + cap_h)
-    cap_grad.setColorAt(0.0, QColor("#ffffff"))
-    cap_grad.setColorAt(0.6, QColor("#e2e8f0"))
-    cap_grad.setColorAt(1.0, QColor("#94a3b8"))
-
-    p.setPen(Qt.NoPen)
-    p.setBrush(cap_grad)
-    p.drawRoundedRect(QRectF(cap_x, cap_y, cap_w, cap_h), cap_rad, cap_rad)
-
-    if s >= 32:
-        p.setPen(QPen(QColor("#1e293b"), max(1.0, s * 0.016), Qt.SolidLine, Qt.RoundCap))
-        for sy_off in (0.06, 0.10, 0.14):
-            ly = cap_y + s * sy_off
-            p.drawLine(QPointF(cx - cap_w * 0.28, ly), QPointF(cx + cap_w * 0.28, ly))
-
-    # Shockmount U-cradle & stand base
-    u_w = s * 0.27
-    u_h = s * 0.24
-    u_rect = QRectF(cx - u_w / 2.0, cy - s * 0.11, u_w, u_h)
-    p.setPen(QPen(QColor("#e2e8f0"), max(1.4, s * 0.032), Qt.SolidLine, Qt.RoundCap))
-    p.setBrush(Qt.NoBrush)
-    p.drawArc(u_rect, int(180 * 16), int(180 * 16))
-
-    post_top = u_rect.bottom()
-    post_bot = cy + s * 0.22
-    p.drawLine(QPointF(cx, post_top), QPointF(cx, post_bot))
-    p.drawLine(QPointF(cx - s * 0.08, post_bot), QPointF(cx + s * 0.08, post_bot))
-
-    p.end()
-    return pm
-
-
-def make_icon(active: bool = False, theme_name: str = "scarlet") -> QIcon:
-    key = (bool(active), str(theme_name))
-    if key in _ICON_CACHE:
-        return _ICON_CACHE[key]
-    t = get_theme_dict(theme_name)
-    ico = QIcon()
-    for sz in (16, 24, 32, 48, 64, 128, 256):
-        ico.addPixmap(_render_mandible_emblem_pixmap(sz, active, t["accent"]))
-    _ICON_CACHE[key] = ico
-    return ico
-
-
 class RackScrew(QWidget):
     """Countersunk light brushed-steel hardware rack screw (hidden in minimal skin)."""
     def __init__(self, size=14, parent=None):
@@ -4821,7 +4668,7 @@ class MainWindow(QMainWindow):
         self._quitting = False
         self.setWindowTitle("Mandible")
         theme_cur = getattr(self.cfg, "theme", "scarlet")
-        self.setWindowIcon(make_icon(False, theme_cur))
+        self.setWindowIcon(branding.app_icon())
         self.resize(1020, 660)
 
         central = QWidget()
@@ -5204,7 +5051,9 @@ class MainWindow(QMainWindow):
         root.addLayout(bottom)
 
         # ---- tray
-        self.tray = QSystemTrayIcon(make_icon(False, theme_cur), self)
+        self._tray_on = False
+        self._tray_light = branding.taskbar_is_light()
+        self.tray = QSystemTrayIcon(branding.tray_icon(False, get_theme_dict(theme_cur)["accent"]), self)
         menu = QMenu()
         act_show = QAction("Show Mandible", self)
         act_wizard = QAction("Audio Setup Assistant…", self)
@@ -5401,7 +5250,8 @@ class MainWindow(QMainWindow):
         if hasattr(self, "flow_strip"):
             self.flow_strip.refresh(target, text)
 
-        self.tray.setIcon(make_icon(on, cur_theme))
+        self._tray_on = on
+        self.tray.setIcon(branding.tray_icon(on, get_theme_dict(cur_theme)["accent"]))
         self.tray.setToolTip(f"Mandible — {text}")
         if self.editor.chain is not None:
             is_live = (self.editor.chain.id == target)
@@ -5774,6 +5624,10 @@ class MainWindow(QMainWindow):
 
     def _update_status(self):
         e = self.core.engine
+        light = branding.taskbar_is_light()
+        if light != getattr(self, "_tray_light", light) and hasattr(self, "tray"):
+            self._tray_light = light
+            self.tray.setIcon(branding.tray_icon(self._tray_on, get_theme_dict(self.cfg.theme)["accent"]))
         state_changed = getattr(self, "_status_running", None) != e.running
         self._status_running = e.running
         if hasattr(self, "pilot_lamp"):
@@ -5935,7 +5789,7 @@ class MainWindow(QMainWindow):
                 self._tray_hint_shown = True
                 self.tray.showMessage("Mandible is still running",
                                       "Hotkeys stay active. Right-click the tray icon to quit.",
-                                      make_icon(), 2500)
+                                      branding.app_icon(), 2500)
             return
         self.quit()
         ev.accept()
@@ -5987,7 +5841,7 @@ def main():
     if n_plugins and not start_minimized:
         prog = QProgressDialog("Loading plugins…", None, 0, n_plugins)
         prog.setWindowTitle("Mandible")
-        prog.setWindowIcon(make_icon(False, cur_theme))
+        prog.setWindowIcon(branding.app_icon())
         prog.setMinimumDuration(300)
 
     def progress(n, total, name):

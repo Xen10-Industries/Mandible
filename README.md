@@ -1,3 +1,5 @@
+<img src="assets/icon/mandible-tile.svg" width="96" height="96" alt="Mandible logo">
+
 # Mandible
 
 **Mandible** by **Xen10 Industries** is a free, open-source, low-latency voice effects rack for Windows.

@@ -63,6 +63,7 @@ hiddenimports = [
     "mandible.about",
     "mandible.api",
     "mandible.audio_engine",
+    "mandible.branding",
     "mandible.config",
     "mandible.core",
     "mandible.devices",

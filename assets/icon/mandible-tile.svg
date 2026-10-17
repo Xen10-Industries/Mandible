@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="256" height="256">
+  <title>Mandible</title>
+  <rect width="64" height="64" rx="14" fill="#17181B"/>
+  <path transform="translate(2.1333 1.2000) scale(0.93333)" fill="#F2F2EF" d="M 8 10 L 8 38 C 8 47 13 54 24 56 C 17 51 15 45 15 38 L 15 24 L 32 45 L 49 24 L 49 38 C 49 45 47 51 40 56 C 51 54 56 47 56 38 L 56 10 L 32 35 Z"/>
+</svg>
