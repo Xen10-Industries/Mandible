@@ -60,6 +60,7 @@ def build_qss(look: "Look") -> str:
     danger = t("status.danger")
     danger_bg = t("status.danger.subtle")
     chip_text = accent_hover        # chip_text: a light tint of the accent
+    readout = t("readout.text")     # signal-blue family: informational badges
 
     # ---- skin shape tokens
     r_ctl = _px(shape["radius.control"])
@@ -220,6 +221,17 @@ QFrame#signalFlowStrip {{
     border: {bw} solid {line};
     border-radius: {r_pnl};
 }}
+QLabel#flowBusLabel {{
+    color: {dim};
+    font-size: 7.5pt;
+    font-weight: bold;
+    font-family: Consolas, monospace;
+}}
+QLabel#flowArrow {{
+    color: {dim};
+    font-size: 8.5pt;
+    font-weight: bold;
+}}
 QLabel#flowPill {{
     background-color: {win};
     border: {bw} solid {line};
@@ -305,12 +317,44 @@ QLabel#cardHotkey {{
     border-radius: {r_sm};
     padding: 0px 6px;
     font-family: Consolas, monospace;
-    font-size: {f_small};
+    font-size: 7.5pt;
     font-weight: bold;
-    color: {chip_text};
+    color: {muted};
     min-height: 18px;
     max-height: 18px;
     qproperty-alignment: 'AlignCenter';
+}}
+QLabel#cardHotkey[active="true"] {{
+    background-color: {ok_bg};
+    border: {bw} solid {ok};
+    color: {ok};
+}}
+QLabel#chainName {{
+    color: {text};
+    font-weight: bold;
+}}
+QLabel#chainName[active="true"] {{
+    font-weight: 800;
+}}
+QLabel#chainSub {{
+    color: {dim};
+    font-size: 7.5pt;
+    padding-left: 17px;
+}}
+QLabel#chainSub[active="true"] {{
+    color: {ok};
+    font-weight: bold;
+}}
+QLabel#chainWet {{
+    color: {muted};
+    font-size: 7.5pt;
+    font-weight: bold;
+    font-family: Consolas, monospace;
+    margin: 0px;
+    padding: 0px;
+}}
+QLabel#chainWet[active="true"] {{
+    color: {ok};
 }}
 
 QListWidget#rackList {{
@@ -384,6 +428,79 @@ QPushButton#rackHotkeyBtn:hover {{
     border-color: {accent};
     color: {text};
 }}
+QPushButton#rackKnobsBtn {{
+    background-color: {card};
+    border: {bw} solid {strong};
+    border-radius: {r_sm};
+    padding: 3px 7px;
+    font-family: Consolas, monospace;
+    font-size: 7.5pt;
+    font-weight: bold;
+    color: {text};
+}}
+QPushButton#rackMapBtn {{
+    background-color: {inset};
+    border: {bw} solid {strong};
+    border-radius: {r_sm};
+    padding: 3px 7px;
+    font-family: Consolas, monospace;
+    font-size: 7.5pt;
+    font-weight: bold;
+    color: {muted};
+}}
+QPushButton#rackMapBtn[mapped="true"] {{
+    border-color: {readout};
+    color: {readout};
+}}
+QLabel#rackSlotIndex {{
+    font-family: Consolas, monospace;
+    font-size: 10.5pt;
+    font-weight: bold;
+    color: {dim};
+}}
+QLabel#formatBadge {{
+    background-color: {inset};
+    border: {bw} solid {readout};
+    border-radius: {r_sm};
+    padding: 1px 5px;
+    font-size: 7.5pt;
+    font-weight: bold;
+    color: {readout};
+}}
+QLabel#awakeBadge {{
+    background-color: {ok_bg};
+    border: {bw} solid {ok};
+    border-radius: {r_sm};
+    padding: 1px 5px;
+    font-size: 7.5pt;
+    font-weight: bold;
+    color: {ok};
+}}
+QLabel#rackSlotError {{
+    color: {danger};
+    font-size: 8pt;
+    font-weight: bold;
+}}
+QLabel#latencyChip {{
+    color: {dim};
+    font-family: Consolas, monospace;
+    font-size: 7.5pt;
+    font-weight: bold;
+}}
+QLabel#rackBayLabel {{
+    font-family: Consolas, monospace;
+    font-size: 6.5pt;
+    font-weight: bold;
+    color: {dim};
+    letter-spacing: 0.5px;
+    border: none;
+    background: transparent;
+}}
+QFrame#rackBaySeparator {{
+    color: {line};
+    background: {line};
+    max-width: 1px;
+}}
 QPushButton#rackUiBtn {{
     background-color: {accent};
     border: {bw} solid {accent_hover};
@@ -432,6 +549,37 @@ QFrame#channelStripCard, QFrame#channelStrip {{
     background-color: {card};
     border: {bw} solid {line};
     border-radius: {r_pnl};
+}}
+
+QLabel#channelTitle {{
+    font-weight: bold;
+    font-size: 8pt;
+    color: {muted};
+    letter-spacing: 0.5px;
+}}
+QLabel#gainLabel {{
+    font-size: 8.5pt;
+    color: {muted};
+}}
+QLabel#gainValue {{
+    font-family: Consolas, monospace;
+    font-size: 8.5pt;
+    color: {text};
+}}
+QLineEdit#inlineValueEdit, QLineEdit#gainValueEdit {{
+    background-color: {inset};
+    border: {bw2} solid {ring};
+    border-radius: {r_sm};
+    color: {text};
+    font-family: Consolas, monospace;
+    font-size: 8pt;
+    font-weight: bold;
+    padding: 0px 2px;
+    selection-background-color: {accent};
+}}
+QLineEdit#gainValueEdit {{
+    font-size: 8.5pt;
+    padding: 0px 3px;
 }}
 
 QFrame#pluginMacroBay {{

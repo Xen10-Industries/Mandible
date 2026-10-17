@@ -265,14 +265,17 @@ def test_settings_apply_persists_look(core, restore_look):
 def test_widgets_take_variants_from_the_look(qapp, restore_look):
     import dataclasses
 
-    from mandible import gui
     from mandible.ui.elements import knobs, meters, screws, switches
+    from mandible.ui.widgets.chassis import RackScrew
+    from mandible.ui.widgets.knobs import HardwareKnob
+    from mandible.ui.widgets.meters import LevelMeter, PluginPrePostMeter, ThinLevelMeter
+    from mandible.ui.widgets.switches import HardwareSwitch
 
-    main, thin, prepost = gui.LevelMeter("CH"), gui.ThinLevelMeter(), gui.PluginPrePostMeter()
-    knob = gui.HardwareKnob("GAIN", -60.0, 12.0)
-    sw_v = gui.HardwareSwitch(active=True, compact=True, vertical=True)
-    sw = gui.HardwareSwitch(active=True)
-    screw = gui.RackScrew(12)
+    main, thin, prepost = LevelMeter("CH"), ThinLevelMeter(), PluginPrePostMeter()
+    knob = HardwareKnob("GAIN", -60.0, 12.0)
+    sw_v = HardwareSwitch(active=True, compact=True, vertical=True)
+    sw = HardwareSwitch(active=True)
+    screw = RackScrew(12)
     try:
         set_look(_look("skeuomorphic", "scarlet"))
         assert isinstance(main.element(), meters.LedSegments) and main.element().segments == 26
@@ -300,11 +303,11 @@ def test_widgets_take_variants_from_the_look(qapp, restore_look):
 
 
 def test_plugin_knob_is_compact(sample_core, restore_look):
-    from mandible import gui
+    from mandible.ui.widgets.knobs import PluginParamKnob
 
     set_look(_look("vintage", "amber"))
     chain = sample_core.cfg.chains[0]
-    kn = gui.PluginParamKnob(chain.plugins[0], "missing_param", sample_core)
+    kn = PluginParamKnob(chain.plugins[0], "missing_param", sample_core)
     try:
         assert kn.element().compact
         assert type(kn.element()).__name__ == "VintageBakelite"
@@ -322,12 +325,12 @@ def test_widget_paint_equals_element_paint(qapp, restore_look):
     from PySide6.QtCore import QRectF, Qt
     from PySide6.QtGui import QImage, QPainter
 
-    from mandible import gui
     from mandible.ui.elements.base import ElementState
+    from mandible.ui.widgets.switches import HardwareSwitch
 
     for skin in BUILTIN_SKINS:
         set_look(_look(skin, "cyan"))
-        sw = gui.HardwareSwitch(active=True, compact=True)
+        sw = HardwareSwitch(active=True, compact=True)
         sw.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         try:
             got = sw.grab().toImage().convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
@@ -344,11 +347,11 @@ def test_widget_paint_equals_element_paint(qapp, restore_look):
 
 
 def test_meter_states_hide_low_peaks(qapp):
-    from mandible import gui
+    from mandible.ui.widgets.meters import LevelMeter, PluginPrePostMeter, ThinLevelMeter
 
-    m = gui.LevelMeter("CH")
-    t = gui.ThinLevelMeter()
-    pp = gui.PluginPrePostMeter(enabled=True)
+    m = LevelMeter("CH")
+    t = ThinLevelMeter()
+    pp = PluginPrePostMeter(enabled=True)
     try:
         m.level_db, m.peak_db = -20.0, -54.0
         st = m.bar_state()
@@ -377,9 +380,9 @@ def test_meter_states_hide_low_peaks(qapp):
 def test_chassis_margins_follow_frame(qapp, restore_look):
     from PySide6.QtWidgets import QVBoxLayout
 
-    from mandible import gui
+    from mandible.ui.widgets.chassis import ChassisWrapperFrame
 
-    frame = gui.ChassisWrapperFrame()
+    frame = ChassisWrapperFrame()
     QVBoxLayout(frame)
     try:
         set_look(_look("skeuomorphic", "scarlet"))
@@ -395,9 +398,9 @@ def test_chassis_margins_follow_frame(qapp, restore_look):
 
 
 def test_look_change_repaints_listeners(qapp, restore_look):
-    from mandible import gui
+    from mandible.ui.widgets.switches import HardwareSwitch
 
-    sw = gui.HardwareSwitch(active=True)
+    sw = HardwareSwitch(active=True)
     hits = []
     sw.update = lambda *a: hits.append(1)   # instance attribute shadows QWidget.update
     try:

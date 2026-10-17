@@ -88,3 +88,10 @@ def test_allowed_modules_are_never_flagged(tool):
 def test_nonexistent_path_is_an_error():
     proc = run("does/not/exist.py")
     assert proc.returncode == 2
+
+
+def test_widget_modules_have_no_literals(tool):
+    """Task 8a: the widgets under mandible/ui/widgets are never on the allowlist."""
+    for path in sorted((ROOT / "mandible" / "ui" / "widgets").glob("*.py")):
+        assert not tool.is_allowed(tool._relative(path, ROOT)), path
+        assert tool.scan_file(path, ROOT) == [], path
