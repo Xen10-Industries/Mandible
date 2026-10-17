@@ -55,7 +55,12 @@ def test_every_colour_in_the_qss_is_a_palette_token(look):
 
 
 def test_build_qss_is_deterministic():
-    assert build_qss(SCARLET_SKEUO) == build_qss(SCARLET_SKEUO)
+    # Compare uncached builds so the test can actually fail (build_qss itself is cached).
+    assert build_qss.__wrapped__(SCARLET_SKEUO) == build_qss.__wrapped__(SCARLET_SKEUO)
+    build_qss.cache_clear()
+    first = build_qss(SCARLET_SKEUO)
+    build_qss.cache_clear()
+    assert build_qss(SCARLET_SKEUO) == first
     rebuilt = Look(BUILTIN_PALETTES["scarlet"], BUILTIN_SKINS["skeuomorphic"])
     assert build_qss(rebuilt) == build_qss(SCARLET_SKEUO)
 
@@ -100,9 +105,13 @@ def test_each_tier_has_all_five_states(tier):
 def test_focus_state_uses_the_focus_ring_token():
     pal = SCARLET_SKEUO.palette
     qss = build_qss(SCARLET_SKEUO)
-    for tier in ("secondary", "quiet", "danger"):
+    for tier in ("primary", "secondary", "quiet", "danger"):
         body = rule_blocks(qss, f'QPushButton[tier="{tier}"]:focus')[0]
-        assert pal.color("focus.ring") in body
+        assert pal.color("focus.ring") in body, tier
+    # The primary fill equals the ring colour on some palettes, so its ring must be drawn
+    # as a separated outer line (double border, fill clipped to the padding box).
+    primary = rule_blocks(qss, 'QPushButton[tier="primary"]:focus')[0]
+    assert "double" in primary and "background-clip: padding" in primary
 
 
 @pytest.mark.parametrize("state,fg,bg", [
@@ -179,6 +188,39 @@ def test_parse_check_detects_a_broken_sheet(qapp):
 @pytest.mark.parametrize("look", ALL_LOOKS)
 def test_stylesheet_parses_cleanly_in_qt(qapp, look):
     assert _qt_parse_messages(build_qss(look)) == []
+
+
+@pytest.mark.parametrize("pal_id", list(BUILTIN_PALETTES))
+def test_primary_focus_ring_is_visible_against_the_fill(qapp, pal_id):
+    """Render a focused primary button: surface-coloured gaps must separate ring and fill.
+
+    On most palettes focus.ring equals the accent fill, so a plain ring would be invisible.
+    """
+    from PySide6.QtGui import QColor
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QPushButton, QWidget
+
+    look = Look(BUILTIN_PALETTES[pal_id], BUILTIN_SKINS["skeuomorphic"])
+    pal = look.palette
+    surface, ring = pal.color("bg.panel").lower(), pal.color("focus.ring").lower()
+    host = QWidget()
+    host.setObjectName("h")
+    host.setStyleSheet(build_qss(look) + f" QWidget#h {{ background-color: {surface}; }}")
+    btn = QPushButton("OK", host)
+    btn.setProperty("tier", "primary")
+    btn.setGeometry(10, 10, 80, 30)
+    host.resize(100, 50)
+    host.show()
+    host.activateWindow()
+    QTest.qWaitForWindowActive(host)
+    btn.setFocus()
+    qapp.processEvents()
+    assert btn.hasFocus()
+    img = host.grab().toImage()
+    row = [QColor(img.pixel(x, 25)).name().lower() for x in range(10, 16)]
+    host.close()
+    assert row[0] == ring, row
+    assert surface in row[1:5], row  # a gap of surface colour sits between ring and fill
 
 
 def test_set_look_applies_the_real_stylesheet(qapp, restore_look):

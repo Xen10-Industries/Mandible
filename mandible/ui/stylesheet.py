@@ -476,7 +476,9 @@ QPushButton[tier="primary"]:pressed {{
     color: {on_accent};
 }}
 QPushButton[tier="primary"]:focus {{
-    border: {bw2} solid {text};
+    border: 3px double {ring};
+    background-clip: padding;
+    padding: 3px 10px;
 }}
 QPushButton[tier="primary"]:disabled {{
     background-color: {alt};
