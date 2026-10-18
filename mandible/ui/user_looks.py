@@ -462,8 +462,9 @@ def migrate_appearance(cfg) -> str | None:
     ``chassis_frame == "auto"`` means "the skin's own frame". A skin is only created when the old
     settings differ from the selected built-in skin: a frame other than that skin's, or (skeuomorphic
     only, as ``look_for`` always did) a different switch style. An unknown or ``user:`` ``ui_skin`` is
-    left alone. Once migrated, ``cfg.chassis_frame`` is reset to ``"auto"`` so the legacy overrides do
-    not stack on top of the new skin; ``switch_style`` is left as is (ignored for non-built-in ids).
+    left alone. Once a user skin carries the old settings, ``cfg.chassis_frame`` is reset to ``"auto"``
+    and ``cfg.switch_style`` to the built-in Skeuomorphic skin's own switch, so the legacy overrides
+    add nothing on top of it and the built-in skin is pristine again.
     """
     if getattr(cfg, "appearance_migrated", False):
         return None
@@ -503,6 +504,8 @@ def _migrate_appearance(cfg) -> str | None:
         skin_id = skin.id
     cfg.ui_skin = skin_id
     cfg.chassis_frame = "auto"
+    # The old switch now lives in the user skin; the built-in Skeuomorphic goes back to its own.
+    cfg.switch_style = BUILTIN_SKINS["skeuomorphic"].elements["switch"]
     cfg.appearance_migrated = True
     return skin_id
 

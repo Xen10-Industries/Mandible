@@ -650,6 +650,7 @@ def test_migrate_frame_override_creates_user_skin():
     assert dict(skin.shape) == dict(base.shape)
     assert cfg.ui_skin == skin_id and cfg.appearance_migrated is True
     assert cfg.chassis_frame == "auto"           # the user skin now carries the frame
+    assert cfg.switch_style == "bat_toggle"
     assert look_mod.look_from_config(cfg).skin.elements["frame"] == "wood_cheeks"
 
 
@@ -732,20 +733,44 @@ def test_migrate_name_collision_with_different_content_gets_a_unique_name_and_ke
 
 
 @pytest.mark.parametrize("error", [OSError("disk full"), UL.LookFileError("nope"), ValueError("bad")])
-def test_migrate_save_failure_does_not_raise_or_set_the_flag(monkeypatch, capsys, error):
+def test_migrate_save_failure_does_not_raise_or_set_the_flag(monkeypatch, capsys, looks_dirs, error):
     def boom(skin):
         raise error
 
-    monkeypatch.setattr(UL, "save_skin", boom)
     cfg = _cfg(chassis_frame="wood_cheeks")
-    assert UL.migrate_appearance(cfg) is None
+    with pytest.MonkeyPatch.context() as mp:      # only the stub is undone, not looks_dirs
+        mp.setattr(UL, "save_skin", boom)
+        assert UL.migrate_appearance(cfg) is None
     assert cfg.appearance_migrated is False
     assert (cfg.ui_skin, cfg.chassis_frame) == ("skeuomorphic", "wood_cheeks")
     out = capsys.readouterr()
     assert len((out.out + out.err).strip().splitlines()) == 1
-    monkeypatch.undo()
-    # next launch retries
-    assert UL.migrate_appearance(cfg) is not None and cfg.appearance_migrated is True
+    assert not UL.SKINS_DIR.exists() or not list(UL.SKINS_DIR.glob("*.json"))
+    # next launch retries and really creates the skin (in the per-test folder)
+    skin_id = UL.migrate_appearance(cfg)
+    assert skin_id is not None and cfg.appearance_migrated is True
+    assert [p.name for p in (looks_dirs / "skins").glob("*.json")] == ["skeuomorphic-my-settings.json"]
+
+
+@pytest.mark.parametrize("skin,frame,switch", [
+    ("skeuomorphic", "auto", "rocker"),
+    ("skeuomorphic", "wood_cheeks", "rocker"),
+    ("skeuomorphic", "frameless", "bat_toggle"),
+    ("vintage", "metal_rack", "bat_toggle"),
+    ("vintage", "frameless", "rocker"),
+    ("minimal", "wood_cheeks", "rocker"),
+])
+def test_migration_keeps_the_rendered_look_identical(skin, frame, switch):
+    cfg = _cfg(ui_skin=skin, chassis_frame=frame, switch_style=switch)
+    before = look_mod.look_from_config(cfg)
+    skin_id = UL.migrate_appearance(cfg)
+    after = look_mod.look_from_config(cfg)
+    assert dict(after.skin.elements) == dict(before.skin.elements)
+    assert dict(after.skin.shape) == dict(before.skin.shape)
+    assert after.palette == before.palette
+    if skin_id:                                  # built-in Skeuomorphic is pristine again
+        assert cfg.switch_style == BUILTIN_SKINS["skeuomorphic"].elements["switch"]
+        assert cfg.chassis_frame == "auto"
 
 
 def test_look_for_docstring_marks_legacy_overrides_as_unmigrated_only():
@@ -764,9 +789,15 @@ def test_startup_migration_loads_migrates_and_saves_config(tmp_path, monkeypatch
     assert cfg.appearance_migrated is True and cfg.ui_skin.startswith("user:")
     assert cfg.chassis_frame == "auto"
     assert cfg.ui_skin in UL.all_skins()
-    stamp = (tmp_path / "app" / "config.json").read_bytes()
-    entry._migrate_appearance()                        # nothing changes -> nothing is rewritten
-    assert (tmp_path / "app" / "config.json").read_bytes() == stamp
+    saves = []
+    real_save = config.save_config
+    monkeypatch.setattr(config, "save_config", lambda c: (saves.append(c), real_save(c)))
+    entry._migrate_appearance()                        # already migrated -> nothing is rewritten
+    assert saves == []
+    config.save_config(_cfg())                         # fresh default config: flag flips, saved once
+    saves.clear()
+    entry._migrate_appearance()
+    assert len(saves) == 1 and config.load_config().appearance_migrated is True
 
 
 def test_startup_migration_never_raises(tmp_path, monkeypatch, capsys):

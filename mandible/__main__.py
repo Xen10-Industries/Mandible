@@ -85,10 +85,10 @@ def _migrate_appearance():
         from mandible import config
         from mandible.ui import user_looks
         cfg = config.load_config()
-        before = config._to_dict(cfg)
-        user_looks.migrate_appearance(cfg)
-        if config._to_dict(cfg) != before:
-            config.save_config(cfg)
+        if not cfg.appearance_migrated:
+            user_looks.migrate_appearance(cfg)
+            if cfg.appearance_migrated:  # a failed save leaves it unset: retry next launch
+                config.save_config(cfg)
     except Exception as exc:
         print(f"[Mandible] appearance migration skipped ({type(exc).__name__}: {exc})")
 
