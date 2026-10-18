@@ -18,7 +18,7 @@ WIN32 = sys.platform == "win32"
 
 def run_probe(out_dir: pathlib.Path, sizes, scenario: str = "sample", scale: float | None = None,
               strict: bool = False, skins=("skeuomorphic", "vintage", "minimal"),
-              mode: str = "layout", themes=None):
+              mode: str = "layout", themes=None, dock: str | None = None):
     env = dict(os.environ)
     env["QT_QPA_PLATFORM"] = "windows" if WIN32 else "offscreen"
     env.pop("QT_SCALE_FACTOR", None)
@@ -31,6 +31,8 @@ def run_probe(out_dir: pathlib.Path, sizes, scenario: str = "sample", scale: flo
            "--scenario", scenario, "--mode", mode]
     if themes:
         cmd += ["--themes", ",".join(themes)]
+    if dock:
+        cmd += ["--dock", dock]
     if strict:
         cmd.append("--strict")
     proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",

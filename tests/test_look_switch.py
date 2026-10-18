@@ -175,6 +175,33 @@ def test_switch_look_under_150_ms_in_a_clean_process(skin, tmp_path):
     assert res["median_ms"] < SWITCH_MS, res["ms"]
 
 
+LEDGER_MS = 135         # the ledger ruling: the median a look switch must stay at or under
+
+
+@pytest.mark.parametrize("skin,dock", [
+    ("skeuomorphic", "simple"), ("vintage", "simple"), ("minimal", "simple"),
+    ("skeuomorphic", "advanced"), ("skeuomorphic", "closed"),
+])
+def test_switch_look_with_the_customize_panel_in_a_clean_process(skin, dock, tmp_path):
+    """The look-switch time with the Customize panel open in Simple mode, open with Advanced on,
+    and opened then closed (its deletion processed), each in a fresh process like the test above.
+    Every case stays under the 150 ms limit; Simple mode and the closed panel also keep the
+    ledger median (<= 135 ms): a live panel must not slow every later switch down."""
+    from _probe import run_probe
+
+    proc, report = run_probe(tmp_path, [(1280, 720)], mode="switch", skins=[skin],
+                             themes=list(BUILTIN_PALETTES), dock=dock)
+    assert report is not None and proc.returncode == 0, proc.stdout + proc.stderr
+    res = report["switch"]
+    assert res["dock"] == dock and res["errors"] == [], res["errors"]
+    assert len(res["ms"]) >= MIN_SWITCH_SAMPLES, len(res["ms"])
+    print(f"switch into {skin} with the panel {dock}: median {res['median_ms']} ms, "
+          f"max {res['max_ms']} ms over {len(res['ms'])} switches")
+    assert res["median_ms"] < SWITCH_MS, res["ms"]
+    if dock in ("simple", "closed"):
+        assert res["median_ms"] <= LEDGER_MS, res["ms"]
+
+
 def test_look_persists(core, restore_look):
     from mandible.config import load_config
     from mandible.ui.look import look_from_config

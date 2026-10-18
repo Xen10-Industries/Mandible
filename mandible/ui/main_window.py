@@ -7,8 +7,8 @@ import time
 from functools import partial
 
 import numpy as np
-from PySide6.QtCore import QEvent, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QAction
+from PySide6.QtCore import QEvent, QRect, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QAction, QGuiApplication
 from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout,
                                QInputDialog, QLabel, QLineEdit, QListWidgetItem,
                                QMainWindow, QMenu, QMessageBox, QSplitter,
@@ -473,7 +473,8 @@ class MainWindow(QMainWindow):
         self.cfg = core.cfg
         self._editor_event: threading.Event | None = None
         self._quitting = False
-        self.customize_panel: CustomizePanel | None = None   # docked on first use (Customize…)
+        self.customize_panel: CustomizePanel | None = None   # exists only while open
+        self._pre_dock_width: int | None = None
         self.setWindowTitle("Mandible")
         self.setWindowIcon(branding.app_icon())
         self.resize(1280, 820)
@@ -824,7 +825,9 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------ responsive layout
     def resizeEvent(self, ev):
         super().resizeEvent(ev)
-        self._apply_breakpoints()
+        central = self.__dict__.get("_central")
+        if central is None or not central.isVisible():   # afterwards its own resize drives them
+            self._apply_breakpoints()
 
     def eventFilter(self, obj, ev):  # noqa: N802 - Qt naming
         if obj is self.__dict__.get("_central") and ev.type() == QEvent.Resize:
@@ -1319,31 +1322,90 @@ class MainWindow(QMainWindow):
         the Customize panel docked here."""
         dlg = SettingsDialog(self.core, self.core.engine.running, self, initial_section=initial_section)
         customize = []
-        dlg.customizeRequested.connect(lambda: customize.append(True))
-        if dlg.exec():
-            dlg.apply_all()
-            self.cfg.audio = dlg.result_settings()
-            self.core.save()
-            if self.core.engine.running or self.cfg.autostart_audio:
-                self.start_audio()
-            self._update_limiter_ui()
-            self.sync_status_controls()
+        try:
+            dlg.customizeRequested.connect(lambda: customize.append(True))
+            if dlg.exec():
+                dlg.apply_all()
+                self.cfg.audio = dlg.result_settings()
+                self.core.save()
+                if self.core.engine.running or self.cfg.autostart_audio:
+                    self.start_audio()
+                self._update_limiter_ui()
+                self.sync_status_controls()
+        finally:
+            # A leftover dialog would be re-polished by every later look switch.
+            dlg.deleteLater()
         if customize:
             self.open_customize()
 
+    def _available_geometry(self) -> QRect:
+        """The usable area of the screen the window is on."""
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        return screen.availableGeometry() if screen is not None else QRect()
+
+    def _dock_fits(self, panel: CustomizePanel) -> bool:
+        """Whether docking ``panel`` keeps the window inside its screen's available area (the
+        window grows to the central area's minimum plus the panel's)."""
+        avail = self._available_geometry()
+        if avail.isEmpty():
+            return True
+        panel_w = max(panel.minimumSizeHint().width(), panel.scroll.minimumWidth())
+        need = max(self.width(), self.minimumSizeHint().width() + panel_w + space(2))
+        frame = self.frameGeometry()
+        chrome = max(0, frame.width() - self.width())
+        return frame.left() + need + chrome <= avail.right() + 1
+
     def open_customize(self) -> CustomizePanel:
-        """Show (and raise) the Customize panel on the right; built once, then reused."""
+        """Show (and raise) the Customize panel: docked on the right, or floating at the screen's
+        right edge when docking would push the window off its screen. Created on open, deleted
+        on close."""
         panel = self.customize_panel
-        if panel is None:
-            panel = CustomizePanel(self.core, self)
-            self.customize_panel = panel
-            self.addDockWidget(Qt.RightDockWidgetArea, panel)
+        if panel is not None:
+            panel.reload()
+            panel.show()
+            panel.raise_()
+            return panel
+        panel = CustomizePanel(self.core, self)
+        if self.testAttribute(Qt.WA_DontShowOnScreen):
+            panel.setAttribute(Qt.WA_DontShowOnScreen)
+        self.customize_panel = panel
+        panel.closed.connect(self._customize_closed)
+        panel.destroyed.connect(self._customize_destroyed)
+        fits = self._dock_fits(panel)
+        self.addDockWidget(Qt.RightDockWidgetArea, panel)
+        if fits:
+            self._pre_dock_width = self.width()
             self.resizeDocks([panel], [CUSTOMIZE_WIDTH], Qt.Horizontal)
         else:
-            panel.reload()
+            self._pre_dock_width = None
+            panel.setFloating(True)
+            avail = self._available_geometry()
+            width = max(CUSTOMIZE_WIDTH, panel.minimumSizeHint().width(), panel.minimumWidth())
+            panel.setGeometry(avail.right() + 1 - width, avail.top(), width, avail.height())
         panel.show()
         panel.raise_()
         return panel
+
+    def _customize_closed(self) -> None:
+        """The panel closed and deletes itself: forget it."""
+        self.customize_panel = None
+
+    def _customize_destroyed(self, *_args) -> None:
+        """The panel is gone: give back the width that docking it added (once the dock has left
+        the layout, so the window's minimum no longer includes it)."""
+        width, self._pre_dock_width = self._pre_dock_width, None
+        if width is None or self._quitting:          # quitting: the window goes too
+            return
+        try:
+            if self.isMaximized() or self.isFullScreen():
+                return
+        except RuntimeError:                        # the window itself is being deleted
+            return
+        QTimer.singleShot(0, self, lambda: self._shrink_back_to(width))
+
+    def _shrink_back_to(self, width: int) -> None:
+        if self.customize_panel is None and self.width() > width:
+            self.resize(max(width, self.minimumSizeHint().width()), self.height())
 
     def _update_status(self):
         e = self.core.engine
@@ -1527,10 +1589,21 @@ class MainWindow(QMainWindow):
                                       "Hotkeys stay active. Right-click the tray icon to quit.",
                                       branding.app_icon(), 2500)
             return
-        self.quit()
+        if self.quit() is False:
+            ev.ignore()
+            return
         ev.accept()
 
     def quit(self):
+        """Quit Mandible. Returns False (and quits nothing) while the Customize panel has unsaved
+        changes: the panel shows its Save / Discard / Keep editing banner instead."""
+        panel = self.customize_panel
+        if panel is not None and panel.is_dirty():
+            self.show_normal()
+            panel.show()
+            panel.raise_()
+            panel.close()          # dirty: shows the banner, stays open
+            return False
         self._quitting = True
         if self._editor_event is not None:
             self._editor_event.set()

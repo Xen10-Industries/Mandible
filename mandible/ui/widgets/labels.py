@@ -1,8 +1,10 @@
 """Labels that shrink gracefully."""
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QSize, Qt
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import QLabel, QSizePolicy
+
+from ..look import look_bus
 
 
 class ElidedLabel(QLabel):
@@ -24,6 +26,9 @@ class ElidedLabel(QLabel):
         self.setTextFormat(Qt.PlainText)
         self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
         self.setText(text)
+        # Re-elide once per look switch (the new stylesheet's fonts are in place by then) rather
+        # than on each of the dozens of Font/Style change events a switch delivers to a label.
+        look_bus().lookChanged.connect(self._elide)
 
     # ------------------------------------------------------------------ text
     def full_text(self) -> str:
@@ -45,19 +50,30 @@ class ElidedLabel(QLabel):
 
     def _elide(self) -> None:
         avail = self.contentsRect().width()
-        shown = self._full
-        fm = self.fontMetrics()
-        if self._full and avail > 0 and fm.horizontalAdvance(self._full) > avail:
-            shown = fm.elidedText(self._full, self._mode, avail)
-            # elidedText ignores the font's letter spacing (section labels use it): narrow
-            # the target until the elided text really fits.
-            target = avail
-            while shown and fm.horizontalAdvance(shown) > avail and target > 0:
-                target -= max(1, int(fm.horizontalAdvance(shown) - avail))
-                shown = fm.elidedText(self._full, self._mode, max(0, target))
+        # A look switch delivers several Font/Style changes per label, alternating between fonts;
+        # the elided text for a (text, width, font) is remembered, so only new ones are measured.
+        key = (self._full, avail, self.font().toString())
+        memo = self.__dict__.setdefault("_elide_memo", {})
+        shown = memo.get(key)
+        if shown is None:
+            shown = self._full
+            fm = self.fontMetrics()
+            if self._full and avail > 0 and fm.horizontalAdvance(self._full) > avail:
+                shown = fm.elidedText(self._full, self._mode, avail)
+                # elidedText ignores the font's letter spacing (section labels use it): narrow
+                # the target until the elided text really fits.
+                target = avail
+                while shown and fm.horizontalAdvance(shown) > avail and target > 0:
+                    target -= max(1, int(fm.horizontalAdvance(shown) - avail))
+                    shown = fm.elidedText(self._full, self._mode, max(0, target))
+            if len(memo) >= 8:
+                memo.clear()
+            memo[key] = shown
         if QLabel.text(self) != shown:
             QLabel.setText(self, shown)
-        self._sync_tooltip()
+            self._sync_tooltip()
+        elif self.__dict__.get("_tip_for") != (self._full, self._base_tip, shown):
+            self._sync_tooltip()
 
     def _sync_tooltip(self) -> None:
         if self.is_elided():
@@ -66,6 +82,7 @@ class ElidedLabel(QLabel):
             tip = self._base_tip
         if self.toolTip() != tip:
             self.setToolTip(tip)
+        self.__dict__["_tip_for"] = (self._full, self._base_tip, QLabel.text(self))
 
     # ---------------------------------------------------------------- sizing
     def _text_delta(self, target: str) -> int:
@@ -91,7 +108,10 @@ class ElidedLabel(QLabel):
         super().resizeEvent(ev)
         self._elide()
 
-    def changeEvent(self, ev) -> None:  # noqa: N802
-        super().changeEvent(ev)
-        if ev.type() in (QEvent.FontChange, QEvent.StyleChange):
-            self._elide()
+    def showEvent(self, ev) -> None:  # noqa: N802
+        super().showEvent(ev)
+        self._elide()             # first polish (stylesheet font) happens just before showing
+
+    def setFont(self, font) -> None:  # noqa: N802
+        super().setFont(font)
+        self._elide()

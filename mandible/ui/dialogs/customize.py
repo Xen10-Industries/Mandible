@@ -8,32 +8,33 @@ Discard / Keep editing), never an OS dialog. Nothing here touches the audio engi
 """
 from __future__ import annotations
 
+from collections import OrderedDict
 from pathlib import Path
 
-from PySide6.QtCore import QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
+from PySide6.QtCore import QEvent, QPointF, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (QAbstractButton, QCheckBox, QColorDialog, QDockWidget, QFileDialog,
                                QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QScrollArea,
-                               QSizePolicy, QVBoxLayout, QWidget)
+                               QSizePolicy, QToolTip, QVBoxLayout, QWidget)
 
 from .. import user_looks
 from ..elements import registry
 from ..elements.base import ElementState, tok
-from ..look import (SKIN_SLOTS, Look, Palette, Skin, current_look, font_px, look_from_config,
-                    set_look, with_elements)
+from ..look import (SKIN_SLOTS, Look, Palette, Skin, current_look, font_px, look_bus,
+                    look_from_config, set_look, space, with_elements)
 from ..palette_gen import CONTRAST_PAIRS, PALETTE_TOKENS, TINTS, contrast_ratio, derive_colors
 from ..widgets.base import SpacedLayouts, _follow_look, set_style_property
-from ..widgets.buttons import StatusPill, make_button, set_tier
-from ..widgets.labels import ElidedLabel
-from .parts import group_label, hint_label
+from ..widgets.buttons import make_button, set_tier
+from .parts import hint_label
 
-__all__ = ["CustomizePanel", "VariantTile", "ColorSwatch", "TokenRow", "render_thumbnail",
+__all__ = ["CustomizePanel", "VariantTile", "ColorSwatch", "TextLine", "TokenList", "render_thumbnail",
            "LIVE_EDIT_MS", "MIN_WIDTH", "DEFAULT_WIDTH", "ADJUSTED_TEXT"]
 
 LIVE_EDIT_MS = 40          # live picker edits apply at most once per tick (R7)
 MIN_WIDTH = 320            # the dock's narrowest width (content may ask for more)
 DEFAULT_WIDTH = 380
 THUMB_W, THUMB_H = 84, 44  # element thumbnails (logical px)
+THUMB_CACHE = 240          # thumbnails kept: twelve looks' worth of the twenty tiles
 ADJUSTED_TEXT = "Adjusted for readability"
 DEFAULT_SKIN, DEFAULT_THEME = "skeuomorphic", "scarlet"
 SLOT_TITLES = {"frame": "Frame", "switch": "Switches", "knob": "Knobs", "meter": "Meters",
@@ -258,64 +259,368 @@ class ColorSwatch(QAbstractButton):
         p.end()
 
 
-class TokenRow(QWidget):
-    """Advanced mode: one palette token with its swatch, hex value, contrast ratio against its
-    partner surface (the worst of its CONTRAST_PAIRS) and a warning badge below target."""
+class TextLine(QWidget):
+    """A one-line painted label (the panel's title, section and field captions).
 
-    def __init__(self, panel: "CustomizePanel", token: str, spaced: SpacedLayouts):
-        super().__init__()
+    The panel stays cheap to restyle: every QLabel is matched against all of the stylesheet's
+    ``QLabel#...`` rules on each look switch, while a plain QWidget subclass meets only a few.
+    The text elides to the width it gets (full text in the tooltip) and paints in palette tokens.
+    """
+
+    # role -> (type role, weight, token, uppercase with letter spacing, top padding step)
+    ROLES = {"title": ("title", 700, "text.primary", False, 0),
+             "group": ("small", 800, "text.secondary", True, 3),
+             "slot": ("small", 600, "text.secondary", False, 0),
+             "notice": ("small", 600, "status.warn", False, 0)}
+
+    def __init__(self, text: str, role: str = "slot", parent=None, first: bool = False):
+        super().__init__(parent)
+        self._text = text
+        self._role = role
+        self._first = first            # a group label at the very top gets no top padding
+        self.setAccessibleName(text)
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+
+    def text(self) -> str:
+        return self._text
+
+    def setText(self, text: str) -> None:  # noqa: N802 - Qt naming
+        if text != self._text:
+            self._text = text
+            self.setAccessibleName(text)
+            self.updateGeometry()
+            self.update()
+
+    def _spec(self):
+        return self.ROLES[self._role]
+
+    def _font(self):
+        size, weight, _token, upper, _pad = self._spec()
+        f = self.font()
+        f.setFamily("Segoe UI")
+        f.setPixelSize(font_px(size))
+        f.setWeight(QFont.Weight(weight))
+        if upper:
+            f.setLetterSpacing(QFont.AbsoluteSpacing, 1.0)
+        return f
+
+    def _shown(self) -> str:
+        return self._text.upper() if self._spec()[3] else self._text
+
+    def _top(self) -> int:
+        step = self._spec()[4]
+        return 0 if (self._first or not step) else space(step)
+
+    def sizeHint(self) -> QSize:  # noqa: N802
+        fm = QFontMetrics(self._font())
+        return QSize(fm.horizontalAdvance(self._shown()) + 2, fm.height() + self._top())
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802
+        fm = QFontMetrics(self._font())
+        shown = self._shown()
+        short = shown[:6] + "…" if len(shown) > 6 else shown
+        return QSize(min(fm.horizontalAdvance(short), fm.horizontalAdvance(shown)) + 2,
+                     fm.height() + self._top())
+
+    def refresh(self) -> None:
+        """The look changed: the density may move the top padding."""
+        self.updateGeometry()
+        self.update()
+
+    def paintEvent(self, _ev) -> None:  # noqa: N802
+        p = QPainter(self)
+        p.setFont(self._font())
+        p.setPen(tok(current_look(), self._spec()[2]))
+        rect = QRectF(0, self._top(), self.width(), self.height() - self._top())
+        shown = self._shown()
+        elided = p.fontMetrics().elidedText(shown, Qt.ElideRight, max(0, self.width() - 1))
+        tip = self._text if elided != shown else ""
+        if self.toolTip() != tip:
+            self.setToolTip(tip)
+        p.drawText(rect, Qt.AlignLeft | Qt.AlignVCenter, elided)
+        p.end()
+
+
+class TokenRowView:
+    """What Advanced mode shows for one token (a row of ``TokenList``; not a widget)."""
+
+    def __init__(self, token_list: "TokenList", token: str):
+        self._list = token_list
         self.token = token
-        lay = spaced.add(QHBoxLayout(self), spacing=2, margins=0)
-        self.swatch = ColorSwatch(f"Colour {token}")
-        self.swatch.clicked.connect(lambda: panel._pick_token(token))
-        lay.addWidget(self.swatch)
-        self.name_label = ElidedLabel(token, min_chars=6)
-        self.name_label.setObjectName("tokenName")
-        lay.addWidget(self.name_label, 1)
-        self.hex_edit = QLineEdit()
-        self.hex_edit.setObjectName("hexEdit")
-        self.hex_edit.setMaxLength(7)
-        self.hex_edit.setAccessibleName(f"{token} hex value")
-        self.hex_edit.editingFinished.connect(lambda: panel._hex_edited(token, self.hex_edit))
-        lay.addWidget(self.hex_edit)
-        self.ratio_label = QLabel("—")
-        self.ratio_label.setObjectName("tokenRatio")
-        self.ratio_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        lay.addWidget(self.ratio_label)
-        self.badge = StatusPill("Low", "warn")
-        keep = self.badge.sizePolicy()
-        keep.setRetainSizeWhenHidden(True)
-        self.badge.setSizePolicy(keep)
-        self.badge.hide()
-        lay.addWidget(self.badge)
-        self.fit_columns()
+        self.hex = ""
+        self.ratio = "—"
+        self.warning = ""
+        self.tip = ""
 
-    def fit_columns(self) -> None:
-        """Fixed hex and ratio columns, so every row lines up."""
-        fit_hex_edit(self.hex_edit)
-        self.ratio_label.ensurePolished()
-        self.ratio_label.setFixedWidth(self.ratio_label.fontMetrics().horizontalAdvance("21.0:1") + 2)
+    def hex_text(self) -> str:
+        return self.hex
 
+    def ratio_text(self) -> str:
+        return self.ratio
+
+    def has_warning(self) -> bool:
+        return bool(self.warning)
+
+    def isVisible(self) -> bool:  # noqa: N802 - mirrors QWidget
+        return self._list.isVisible()
+
+
+class TokenList(QWidget):
+    """Advanced mode: every palette token in one painted widget, one row each: swatch, token name,
+    hex value, contrast ratio against its partner surface (the worst of its CONTRAST_PAIRS, "—"
+    when it has none) and a "Low" badge below target.
+
+    Two widgets in all (the list and one shared hex editor shown over the row being edited):
+    every live widget is re-polished by each look switch. Keyboard: Up / Down pick a row, Enter
+    or F2 edits its hex value, Space opens the colour picker; the mouse does the same on the hex
+    field and the swatch."""
+
+    SWATCH = 20
+    BADGE_TEXT = "Low"
+    RATIO_SAMPLE = "21.0:1"
+    HEX_SAMPLE = "#mmmmmm"   # seven characters of the monospace font (any letters, same width)
+
+    def __init__(self, panel: "CustomizePanel"):
+        super().__init__()
+        self._panel = panel
+        self.setObjectName("tokenList")
+        self.setAccessibleName("Colour tokens")
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.rows: dict[str, TokenRowView] = {t: TokenRowView(self, t) for t in PALETTE_TOKENS}
+        self._order = list(PALETTE_TOKENS)
+        self._current = 0
+        self._metrics: tuple | None = None
+        self.editor = QLineEdit(self)
+        self.editor.setObjectName("hexEdit")
+        self.editor.setMaxLength(7)
+        self.editor.hide()
+        self.editor.editingFinished.connect(self._commit)
+        self.editor.installEventFilter(self)
+        self._editing: str | None = None
+
+    # -------------------------------------------------------------- geometry
+    def _font(self, mono: bool = True, bold: bool = False):
+        f = self.font()
+        if mono:
+            f.setFamilies(["Consolas", "Cascadia Mono"])
+        else:
+            f.setFamily("Segoe UI")
+        f.setPixelSize(font_px("small"))
+        f.setBold(bold)
+        return f
+
+    def refresh_metrics(self) -> None:
+        """Column widths and row height for the current look (fonts, density)."""
+        mono = QFontMetrics(self._font())
+        badge = QFontMetrics(self._font(False, True))
+        self.editor.ensurePolished()
+        edit_h = self.editor.sizeHint().height()
+        hex_w = mono.horizontalAdvance(self.HEX_SAMPLE) + 2 * space(2)
+        self._metrics = (max(self.SWATCH + 4, edit_h), hex_w,
+                         mono.horizontalAdvance(self.RATIO_SAMPLE) + 2,
+                         badge.horizontalAdvance(self.BADGE_TEXT) + 18,
+                         max(mono.horizontalAdvance(t) for t in self._order),
+                         mono.horizontalAdvance("bg.win…"))
+        self.updateGeometry()
+        self._place_editor()
+        self.update()
+
+    def _m(self) -> tuple:
+        if self._metrics is None:
+            self.refresh_metrics()
+        return self._metrics
+
+    def _gap(self) -> int:
+        return space(1)
+
+    def sizeHint(self) -> QSize:  # noqa: N802
+        row_h, hex_w, ratio_w, badge_w, name_w, _ = self._m()
+        g = space(2)
+        n = len(self._order)
+        return QSize(self.SWATCH + name_w + hex_w + ratio_w + badge_w + 4 * g,
+                     n * row_h + (n - 1) * self._gap())
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802
+        hint = self.sizeHint()
+        _row_h, _hex_w, _ratio_w, _badge_w, name_w, name_min = self._m()
+        return QSize(hint.width() - name_w + min(name_w, name_min), hint.height())
+
+    def row_rect(self, index: int) -> QRectF:
+        row_h = self._m()[0]
+        return QRectF(0, index * (row_h + self._gap()), self.width(), row_h)
+
+    def _columns(self, row: QRectF) -> dict[str, QRectF]:
+        row_h, hex_w, ratio_w, badge_w, _name_w, _ = self._m()
+        g = space(2)
+        w, y, h = row.width(), row.y(), row.height()
+        badge_x = w - badge_w
+        ratio_x = badge_x - g - ratio_w
+        hex_x = ratio_x - g - hex_w
+        name_x = self.SWATCH + g
+        return {"swatch": QRectF(0, y + (h - self.SWATCH) / 2, self.SWATCH, self.SWATCH),
+                "name": QRectF(name_x, y, max(0, hex_x - g - name_x), h),
+                "hex": QRectF(hex_x, y, hex_w, h),
+                "ratio": QRectF(ratio_x, y, ratio_w, h),
+                "badge": QRectF(badge_x, y + (h - 20) / 2, badge_w, 20)}
+
+    def _index_at(self, pos) -> int:
+        pos = QPointF(pos)
+        row_h = self._m()[0]
+        index = int(pos.y() // (row_h + self._gap()))
+        return index if 0 <= index < len(self._order) and self.row_rect(index).contains(pos) else -1
+
+    def resizeEvent(self, ev) -> None:  # noqa: N802
+        super().resizeEvent(ev)
+        self._place_editor()
+
+    # -------------------------------------------------------------- values
     def show_values(self, colors) -> None:
-        hex_ = colors[self.token]
-        self.swatch.set_color(hex_)
-        if not self.hex_edit.hasFocus() and self.hex_edit.text() != hex_:
-            self.hex_edit.setText(hex_)
-        pairs = _PAIRS.get(self.token, [])
-        if not pairs:
-            self.ratio_label.setText("—")
-            self.ratio_label.setToolTip("No contrast target for this colour")
-            self.badge.hide()
+        for token, row in self.rows.items():
+            hex_ = colors[token]
+            pairs = _PAIRS.get(token, [])
+            if not pairs:
+                ratio, warning, tip = "—", "", "No contrast target for this colour"
+            else:
+                results = [(p, t, contrast_ratio(hex_, colors[p])) for p, t in pairs]
+                failing = [(p, t, r) for p, t, r in results if r < t]
+                ratio = f"{min(r for _p, _t, r in results):.1f}:1"
+                warning = ("Below the contrast target: " + "; ".join(
+                    f"{p} {r:.1f}:1, needs {t:g}:1" for p, t, r in failing)) if failing else ""
+                tip = "\n".join(f"On {p}: {r:.1f}:1 (target {t:g}:1)" for p, t, r in results)
+            row.hex, row.ratio, row.warning = hex_, ratio, warning
+            row.tip = f"{token}: {hex_}\n{tip}" + (f"\n{warning}" if warning else "")
+        self._describe()
+        self.update()
+
+    def low_count(self) -> int:
+        return sum(1 for row in self.rows.values() if row.warning)
+
+    def _describe(self) -> None:
+        row = self.rows[self._order[self._current]]
+        self.setAccessibleDescription(row.tip)
+
+    # -------------------------------------------------------------- editing
+    def edit(self, token: str) -> None:
+        """Show the hex editor over ``token``'s row."""
+        self._current = self._order.index(token)
+        self._editing = token
+        self.editor.setText(self.rows[token].hex)
+        self.editor.setAccessibleName(f"{token} hex value")
+        self._place_editor()
+        self.editor.show()
+        self.editor.setFocus()
+        self.editor.selectAll()
+
+    def _place_editor(self) -> None:
+        if self._editing is None or self._metrics is None:
             return
-        results = [(partner, target, contrast_ratio(hex_, colors[partner])) for partner, target in pairs]
-        worst = min(r for _p, _t, r in results)
-        failing = [(p, t, r) for p, t, r in results if r < t]
-        self.ratio_label.setText(f"{worst:.1f}:1")
-        self.ratio_label.setToolTip("\n".join(f"On {p}: {r:.1f}:1 (target {t:g}:1)" for p, t, r in results))
-        if failing:
-            self.badge.setToolTip("Below the contrast target: " + "; ".join(
-                f"{p} {r:.1f}:1, needs {t:g}:1" for p, t, r in failing))
-        self.badge.setVisible(bool(failing))
+        col = self._columns(self.row_rect(self._order.index(self._editing)))["hex"]
+        eh = min(self.editor.sizeHint().height(), int(col.height()))
+        self.editor.setGeometry(int(col.x()), int(col.y() + (col.height() - eh) / 2),
+                                int(col.width()), eh)
+
+    def _commit(self) -> None:
+        token, self._editing = self._editing, None
+        self.editor.hide()
+        if token is not None:
+            self._panel._hex_edited(token, self.editor)
+        self.setFocus()
+
+    def eventFilter(self, obj, ev) -> bool:  # noqa: N802
+        if obj is self.editor and ev.type() == QEvent.KeyPress:
+            if ev.key() == Qt.Key_Escape:
+                self._editing = None
+                self.editor.hide()
+                self.setFocus()
+                return True
+            if ev.key() in (Qt.Key_Return, Qt.Key_Enter):
+                self._commit()        # consumed: it would otherwise reach the list and re-open
+                return True
+        return super().eventFilter(obj, ev)
+
+    # -------------------------------------------------------------- input
+    def mousePressEvent(self, ev) -> None:  # noqa: N802
+        index = self._index_at(ev.position())
+        if ev.button() != Qt.LeftButton or index < 0:
+            return super().mousePressEvent(ev)
+        self._current = index
+        token = self._order[index]
+        cols = self._columns(self.row_rect(index))
+        if cols["swatch"].contains(ev.position()):
+            self._panel._pick_token(token)
+        elif cols["hex"].contains(ev.position()):
+            self.edit(token)
+        self._describe()
+        self.update()
+
+    def keyPressEvent(self, ev) -> None:  # noqa: N802
+        key = ev.key()
+        if key in (Qt.Key_Up, Qt.Key_Down):
+            step = -1 if key == Qt.Key_Up else 1
+            self._current = max(0, min(len(self._order) - 1, self._current + step))
+            self._describe()
+            self._panel._scroll_into_view(self, self.row_rect(self._current))
+            self.update()
+        elif key in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_F2):
+            self.edit(self._order[self._current])
+        elif key == Qt.Key_Space:
+            self._panel._pick_token(self._order[self._current])
+        else:
+            super().keyPressEvent(ev)
+
+    def event(self, ev) -> bool:
+        if ev.type() == QEvent.ToolTip:
+            index = self._index_at(ev.pos())
+            if index >= 0:
+                QToolTip.showText(ev.globalPos(), self.rows[self._order[index]].tip, self)
+            else:
+                QToolTip.hideText()
+            return True
+        return super().event(ev)
+
+    # -------------------------------------------------------------- paint
+    def paintEvent(self, _ev) -> None:  # noqa: N802
+        look = current_look()
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        radius = min(4.0, float(look.skin.shape.get("radius.control", 4)))
+        mono, badge_font = self._font(), self._font(False, True)
+        fm = QFontMetrics(mono)
+        for index, token in enumerate(self._order):
+            row = self.rows[token]
+            rect = self.row_rect(index)
+            cols = self._columns(rect)
+            if index == self._current and self.hasFocus():
+                p.setPen(QPen(tok(look, "focus.ring"), 1.5))
+                p.setBrush(Qt.NoBrush)
+                p.drawRoundedRect(rect.adjusted(0.75, 0.75, -0.75, -0.75), radius, radius)
+            p.setPen(QPen(tok(look, "line.strong"), 1.0))
+            p.setBrush(QColor(row.hex) if row.hex else Qt.NoBrush)
+            p.drawRoundedRect(cols["swatch"].adjusted(1, 1, -1, -1), radius, radius)
+            p.setFont(mono)
+            p.setPen(tok(look, "text.primary"))
+            name = cols["name"]
+            p.drawText(name, Qt.AlignLeft | Qt.AlignVCenter,
+                       fm.elidedText(token, Qt.ElideRight, int(name.width())))
+            if token != self._editing:
+                field = cols["hex"].adjusted(0, 2, 0, -2)
+                p.setPen(QPen(tok(look, "line.subtle"), 1.0))
+                p.setBrush(tok(look, "bg.inset"))
+                p.drawRoundedRect(field, radius, radius)
+                p.setPen(tok(look, "text.primary"))
+                p.drawText(field.adjusted(space(1), 0, 0, 0), Qt.AlignLeft | Qt.AlignVCenter, row.hex)
+            p.setPen(tok(look, "text.secondary"))
+            p.drawText(cols["ratio"], Qt.AlignRight | Qt.AlignVCenter, row.ratio)
+            if row.warning:
+                badge = cols["badge"]
+                p.setPen(Qt.NoPen)
+                p.setBrush(tok(look, "status.warn.subtle"))
+                p.drawRoundedRect(badge, badge.height() / 2, badge.height() / 2)
+                p.setFont(badge_font)
+                p.setPen(tok(look, "status.warn"))
+                p.drawText(badge, Qt.AlignCenter, self.BADGE_TEXT)
+        p.end()
 
 
 # ------------------------------------------------------------------ the panel
@@ -325,20 +630,27 @@ class CustomizePanel(QDockWidget):
     theme id when only a theme was saved."""
 
     saved = Signal(str)
+    closed = Signal()        # closed for good: the panel deletes itself (WA_DeleteOnClose)
 
     def __init__(self, core, parent=None):
         super().__init__("Customize", parent)
         self.core = core
         self.cfg = core.cfg
         self.setObjectName("customizePanel")
-        self.setFeatures(QDockWidget.DockWidgetClosable | QDockWidget.DockWidgetMovable)
+        # Created on open, deleted on close: a live panel (even hidden) would be re-polished by
+        # every later look switch.
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
+        self.setFeatures(QDockWidget.DockWidgetClosable | QDockWidget.DockWidgetMovable
+                         | QDockWidget.DockWidgetFloatable)
         self.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
         self._spaced = SpacedLayouts()
+        self._captions: list[TextLine] = []
         self._applying = False
         self._advanced = False
         self._banner_mode = ""
-        self._thumbs: dict[tuple, QPixmap] = {}
+        self._thumbs: OrderedDict[tuple, QPixmap] = OrderedDict()
         self._thumb_look: Look | None = None
+        self._thumb_base: tuple = ()
         self._live = QTimer(self)
         self._live.setSingleShot(True)
         self._live.setInterval(LIVE_EDIT_MS)
@@ -376,9 +688,7 @@ class CustomizePanel(QDockWidget):
         bar = QWidget()
         bar.setObjectName("customizeTitleBar")
         lay = self._spaced.add(QHBoxLayout(bar), spacing=2, margins=(3, 1, 1, 1))
-        title = ElidedLabel("Customize", min_chars=6)
-        title.setObjectName("customizeTitle")
-        lay.addWidget(title, 1)
+        lay.addWidget(TextLine("Customize", "title"), 1)
         self.close_btn = make_button(tier="quiet", icon="remove", tooltip="Close the Customize panel")
         self.close_btn.clicked.connect(self.close)
         lay.addWidget(self.close_btn)
@@ -427,39 +737,84 @@ class CustomizePanel(QDockWidget):
         self.message_label.hide()
         col.addWidget(self.message_label)
 
-        self.banner = QFrame()
-        self.banner.setObjectName("customizeBanner")
-        self.banner.setProperty("state", "warn")
-        b_lay = self._spaced.add(QVBoxLayout(self.banner), spacing=2, margins=2)
-        self.banner_label = QLabel()
-        self.banner_label.setObjectName("customizeBannerText")
-        self.banner_label.setWordWrap(True)
-        self.banner_label.setTextFormat(Qt.PlainText)
-        b_lay.addWidget(self.banner_label)
-        b_row = self._spaced.add(QHBoxLayout(), spacing=2, margins=0)
-        self.banner_save_btn = make_button("Save")
-        self.banner_discard_btn = make_button("Discard", "danger")
-        self.banner_delete_btn = make_button("Delete", "danger")
-        self.banner_keep_btn = make_button("Keep editing")
-        for btn in (self.banner_save_btn, self.banner_discard_btn, self.banner_delete_btn,
-                    self.banner_keep_btn):
-            b_row.addWidget(btn)
+        # The banner is built when it is shown and deleted when it goes (see _ensure_banner).
+        self._header_col = col
+        self._banner: QFrame | None = None
+        self._banner_parts: dict = {}
+
+    def _ensure_banner(self) -> QFrame:
+        if self._banner is not None:
+            return self._banner
+        banner = QFrame()
+        banner.setObjectName("customizeBanner")
+        banner.setProperty("state", "warn")
+        b_lay = QVBoxLayout(banner)
+        b_lay.setSpacing(space(2))
+        b_lay.setContentsMargins(*(space(2),) * 4)
+        label = QLabel()
+        label.setObjectName("customizeBannerText")
+        label.setWordWrap(True)
+        label.setTextFormat(Qt.PlainText)
+        b_lay.addWidget(label)
+        b_row = QHBoxLayout()
+        b_row.setSpacing(space(2))
+        b_row.setContentsMargins(0, 0, 0, 0)
+        parts = {"label": label, "save": make_button("Save"),
+                 "discard": make_button("Discard", "danger"),
+                 "delete": make_button("Delete", "danger"), "keep": make_button("Keep editing")}
+        for key in ("save", "discard", "delete", "keep"):
+            b_row.addWidget(parts[key])
         b_row.addStretch(1)
         b_lay.addLayout(b_row)
-        self.banner_save_btn.clicked.connect(self._banner_save)
-        self.banner_discard_btn.clicked.connect(self._banner_discard)
-        self.banner_delete_btn.clicked.connect(self._banner_delete)
-        self.banner_keep_btn.clicked.connect(self._banner_keep)
-        self.banner.hide()
-        col.addWidget(self.banner)
+        parts["save"].clicked.connect(self._banner_save)
+        parts["discard"].clicked.connect(self._banner_discard)
+        parts["delete"].clicked.connect(self._banner_delete)
+        parts["keep"].clicked.connect(self._banner_keep)
+        banner.hide()
+        self._header_col.insertWidget(self._header_col.indexOf(self.message_label) + 1, banner)
+        self._banner, self._banner_parts = banner, parts
+        return banner
+
+    @property
+    def banner(self) -> QFrame:
+        return self._ensure_banner()
+
+    @property
+    def banner_label(self) -> QLabel:
+        self._ensure_banner()
+        return self._banner_parts["label"]
+
+    @property
+    def banner_save_btn(self):
+        self._ensure_banner()
+        return self._banner_parts["save"]
+
+    @property
+    def banner_discard_btn(self):
+        self._ensure_banner()
+        return self._banner_parts["discard"]
+
+    @property
+    def banner_delete_btn(self):
+        self._ensure_banner()
+        return self._banner_parts["delete"]
+
+    @property
+    def banner_keep_btn(self):
+        self._ensure_banner()
+        return self._banner_parts["keep"]
+
+    def _caption(self, col: QVBoxLayout, text: str, role: str = "slot") -> TextLine:
+        line = TextLine(text, role)
+        self._captions.append(line)
+        col.addWidget(line)
+        return line
 
     def _build_elements(self, col: QVBoxLayout) -> None:
-        group_label(col, "Elements")
+        self._caption(col, "Elements", "group")
         self.tiles: dict[tuple[str, str], VariantTile] = {}
         for slot in SKIN_SLOTS:
-            label = QLabel(SLOT_TITLES.get(slot, slot))
-            label.setObjectName("customizeSlotLabel")
-            col.addWidget(label)
+            self._caption(col, SLOT_TITLES.get(slot, slot))
             grid = self._spaced.add(QGridLayout(), spacing=2, margins=0)
             for i, variant in enumerate(registry.variants(slot)):
                 tile = VariantTile(self, slot, variant, registry.label(slot, variant))
@@ -471,10 +826,8 @@ class CustomizePanel(QDockWidget):
             col.addLayout(grid)
 
     def _build_colours(self, col: QVBoxLayout) -> None:
-        self.colours_label = group_label(col, "Colours")
-        accent_lbl = QLabel("Accent")
-        accent_lbl.setObjectName("customizeSlotLabel")
-        col.addWidget(accent_lbl)
+        self.colours_label = self._caption(col, "Colours", "group")
+        self._caption(col, "Accent")
         row = self._spaced.add(QHBoxLayout(), spacing=2, margins=0)
         self.accent_swatch = ColorSwatch("Accent colour")
         self.accent_swatch.clicked.connect(self._pick_accent)
@@ -497,9 +850,7 @@ class CustomizePanel(QDockWidget):
         self.notice_label.hide()
         col.addWidget(self.notice_label)
 
-        tint_lbl = QLabel("Background tint")
-        tint_lbl.setObjectName("customizeSlotLabel")
-        col.addWidget(tint_lbl)
+        self._caption(col, "Background tint")
         chips = self._spaced.add(QHBoxLayout(), spacing=2, margins=0)
         self.tint_chips: dict[str, QAbstractButton] = {}
         for tint, text in (*TINT_CHIPS, ("custom", "Custom…")):
@@ -519,20 +870,41 @@ class CustomizePanel(QDockWidget):
         self.advanced_check = QCheckBox("Advanced: edit every colour")
         self.advanced_check.toggled.connect(self.set_advanced)
         col.addWidget(self.advanced_check)
-        self.advanced_box = QWidget()
-        a_lay = self._spaced.add(QVBoxLayout(self.advanced_box), spacing=1, margins=0)
+        # The token list exists only while Advanced is on (_build_advanced / _drop_advanced):
+        # every widget alive is re-polished by each look switch, hidden or not.
+        self._colours_col = col
+        self._advanced_at = col.count()
+        self.token_list: TokenList | None = None
+        self.contrast_label: QLabel | None = None
+
+    @property
+    def token_rows(self) -> dict[str, TokenRowView]:
+        """Advanced mode's rows by token (empty while Advanced is off)."""
+        return self.token_list.rows if self.token_list is not None else {}
+
+    @property
+    def advanced_box(self) -> TokenList | None:
+        return self.token_list
+
+    def _build_advanced(self) -> None:
         self.contrast_label = QLabel()
         self.contrast_label.setObjectName("customizeMessage")
         self.contrast_label.setProperty("state", "warn")
         self.contrast_label.setWordWrap(True)
-        a_lay.addWidget(self.contrast_label)
-        self.token_rows: dict[str, TokenRow] = {}
-        for token in PALETTE_TOKENS:
-            row_w = TokenRow(self, token, self._spaced)
-            self.token_rows[token] = row_w
-            a_lay.addWidget(row_w)
-        self.advanced_box.hide()
-        col.addWidget(self.advanced_box)
+        self.contrast_label.hide()
+        self.token_list = TokenList(self)
+        self._colours_col.insertWidget(self._advanced_at, self.contrast_label)
+        self._colours_col.insertWidget(self._advanced_at + 1, self.token_list)
+        self.token_list.show()
+
+    def _drop_advanced(self) -> None:
+        for w in (self.contrast_label, self.token_list):
+            if w is not None:
+                w.hide()
+                self._colours_col.removeWidget(w)
+                w.deleteLater()
+        self.token_list = None
+        self.contrast_label = None
 
     # ------------------------------------------------------------ state
     def _load(self, look: Look) -> None:
@@ -546,8 +918,18 @@ class CustomizePanel(QDockWidget):
             self.name_edit.setText(self._suggested_name())
 
     def _suggested_name(self) -> str:
+        """A name for Save as new that no skin uses yet ("My Vintage", "Night copy")."""
         skin = self._base.skin
-        return skin.name if _is_user(skin.id) else f"My {skin.name}"
+        base = f"{skin.name} copy" if _is_user(skin.id) else f"My {skin.name}"
+        try:
+            taken = {s.name.casefold() for s in user_looks.all_skins().values()}
+        except OSError:
+            return base
+        name, n = base, 1
+        while name.casefold() in taken:
+            n += 1
+            name = f"{base} ({n})"
+        return name
 
     def _skin_changed(self) -> bool:
         return self._elements != dict(self._base.skin.elements)
@@ -608,8 +990,10 @@ class CustomizePanel(QDockWidget):
 
     def _on_look_changed(self) -> None:
         self._spaced.apply()
-        for row in self.token_rows.values():
-            row.fit_columns()
+        if self.token_list is not None:
+            self.token_list.refresh_metrics()
+        for line in self._captions:
+            line.refresh()
         fit_hex_edit(self.accent_edit)
         for tile in self.tiles.values():
             tile.update()
@@ -633,16 +1017,25 @@ class CustomizePanel(QDockWidget):
         self._sync()
 
     def thumbnail(self, slot: str, variant: str, dpr: float = 1.0) -> QPixmap:
-        """The cached thumbnail of a variant in the current look (rendered once per look)."""
+        """The thumbnail of a variant in the current look, rendered once and cached by what it
+        depends on: the palette's colours, the shape tokens and, for a frame, the screws it
+        bolts on. Swapping elements or switching skins in one theme renders nothing again; the
+        last few looks' thumbnails are kept, so switching back is free too."""
         look = current_look()
         if look != self._thumb_look:
-            self._thumbs.clear()
             self._thumb_look = look
-        key = (slot, variant, dpr)
+            self._thumb_base = (tuple(sorted(look.palette.colors.items())),
+                                tuple(sorted(look.skin.shape.items())))
+        extra = registry.resolve(look.skin.elements)[0]["screws"] if slot == "frame" else ""
+        key = (slot, variant, dpr, extra, self._thumb_base)
         pm = self._thumbs.get(key)
         if pm is None:
             pm = render_thumbnail(slot, variant, look, THUMB_W, THUMB_H, dpr)
             self._thumbs[key] = pm
+            while len(self._thumbs) > THUMB_CACHE:
+                self._thumbs.popitem(last=False)
+        else:
+            self._thumbs.move_to_end(key)
         return pm
 
     # ------------------------------------------------------------ elements
@@ -696,7 +1089,10 @@ class CustomizePanel(QDockWidget):
             self.advanced_check.blockSignals(True)
             self.advanced_check.setChecked(on)
             self.advanced_check.blockSignals(False)
-        self.advanced_box.setVisible(on)
+        if on and self.advanced_box is None:
+            self._build_advanced()
+        elif not on and self.advanced_box is not None:
+            self._drop_advanced()
         self._sync()
         self._sync_min_width()
 
@@ -747,6 +1143,12 @@ class CustomizePanel(QDockWidget):
             if palette_changed:
                 user_looks.save_palette(self._draft_palette())
         except (OSError, ValueError, user_looks.LookFileError) as exc:
+            if skin_changed and palette_changed:
+                # the skin may be on disk already: keep the editor in step with the files
+                fresh = user_looks.all_skins().get(base.skin.id)
+                if fresh is not None and dict(fresh.elements) == self._elements:
+                    self._base = Look(base.palette, fresh)
+                    self._sync()
             self._show_message(f"Could not save: {exc}", "danger")
             return None
         self._select(base.skin.id, base.palette.id)
@@ -764,6 +1166,7 @@ class CustomizePanel(QDockWidget):
             return None
         palette_changed = self._palette_changed()
         theme_id = self._base.palette.id
+        skin = None
         try:
             skin = user_looks.new_skin(name, self._elements, self._base.skin.shape)
             user_looks.save_skin(skin)
@@ -772,6 +1175,11 @@ class CustomizePanel(QDockWidget):
                 user_looks.save_palette(palette)
                 theme_id = palette.id
         except (OSError, ValueError, user_looks.LookFileError) as exc:
+            if skin is not None and palette_changed:   # no orphan skin without its theme
+                try:
+                    user_looks.delete_user_look(skin.id, "skin")
+                except (OSError, ValueError):
+                    pass
             self._show_message(f"Could not save: {exc}", "danger")
             return None
         self._select(skin.id, theme_id)
@@ -819,7 +1227,10 @@ class CustomizePanel(QDockWidget):
             if ext == user_looks.SKIN_EXT:
                 user_looks.export_skin(self._draft_skin(name or self._base.skin.name), path)
             elif ext == user_looks.THEME_EXT:
-                user_looks.export_palette(self._draft_palette(name or self._base.palette.name), path)
+                if name is None or name == self._suggested_name():   # not typed: the theme's own
+                    palette = self._base.palette
+                    name = palette.name if _is_user(palette.id) else f"My {palette.name}"
+                user_looks.export_palette(self._draft_palette(name), path)
             else:
                 self._show_message(f"Export to a {user_looks.SKIN_EXT} (skin) or "
                                    f"{user_looks.THEME_EXT} (theme) file.", "danger")
@@ -840,6 +1251,10 @@ class CustomizePanel(QDockWidget):
         except user_looks.LookFileError as exc:
             self._show_message(f"Could not import {path.name}: {exc}", "danger")
             return None
+        except OSError as exc:            # writing the imported copy failed (disk full, ...)
+            self._show_message(f"Could not import {path.name}: "
+                               f"{exc.strerror or type(exc).__name__}", "danger")
+            return None
         if kind == "skin":
             self._select(look.id, self._base.palette.id, apply=False)
             if colour_edits is not None:          # unsaved colour edits survive a skin import
@@ -859,7 +1274,7 @@ class CustomizePanel(QDockWidget):
         from ..user_looks import slugify
 
         stem = slugify(self.name_edit.text() or self._base.skin.name)
-        start = str(Path.home() / f"{stem}{user_looks.SKIN_EXT}")
+        start = str(Path.home() / stem)
         skin_filter = f"Mandible skin (*{user_looks.SKIN_EXT})"
         theme_filter = f"Mandible theme (*{user_looks.THEME_EXT})"
         path, chosen = QFileDialog.getSaveFileName(self, "Export look", start,
@@ -929,7 +1344,6 @@ class CustomizePanel(QDockWidget):
         self.message_label.clear()
 
     def _show_banner(self, mode: str) -> None:
-        self._banner_mode = mode
         base = self._base
         if mode == "delete":
             if _is_user(base.skin.id):
@@ -939,10 +1353,13 @@ class CustomizePanel(QDockWidget):
             else:
                 return
             text = f"Delete {what}? This cannot be undone."
+            if self.is_dirty():
+                text += " Your unsaved changes will be lost too."
         elif mode == "external":
             text = "The look was changed elsewhere. Your changes here are not saved."
         else:
             text = "You have unsaved changes."
+        self._banner_mode = mode
         self.banner_label.setText(text)
         set_style_property(self.banner, "state", "danger" if mode == "delete" else "warn")
         self.banner_save_btn.setVisible(mode != "delete")
@@ -954,7 +1371,11 @@ class CustomizePanel(QDockWidget):
 
     def _hide_banner(self) -> None:
         self._banner_mode = ""
-        self.banner.hide()
+        banner, self._banner, self._banner_parts = self._banner, None, {}
+        if banner is not None:
+            banner.hide()
+            self._header_col.removeWidget(banner)
+            banner.deleteLater()
 
     def _banner_save(self) -> None:
         mode = self._banner_mode
@@ -963,7 +1384,7 @@ class CustomizePanel(QDockWidget):
             return
         self._hide_banner()
         if mode == "close":
-            self.hide()
+            self.close()
 
     def _banner_discard(self) -> None:
         mode = self._banner_mode
@@ -972,7 +1393,7 @@ class CustomizePanel(QDockWidget):
             self._load(current_look())
             self._sync()
         else:
-            self._discard_and_hide()
+            self.discard_and_close()
 
     def _banner_keep(self) -> None:
         mode = self._banner_mode
@@ -984,14 +1405,14 @@ class CustomizePanel(QDockWidget):
         self._hide_banner()
         self.delete()
 
-    def _discard_and_hide(self) -> None:
-        """Drop unsaved changes (back to the saved look) and hide without asking."""
+    def discard_and_close(self) -> None:
+        """Drop unsaved changes (back to the saved look) and close without asking."""
         self._live.stop()
         if self.is_dirty():
             self._load(self._base)
             self._apply_draft()
         self._hide_banner()
-        self.hide()
+        self.close()
 
     def closeEvent(self, ev) -> None:  # noqa: N802 - Qt naming
         if self.is_dirty():
@@ -999,7 +1420,13 @@ class CustomizePanel(QDockWidget):
             self._show_banner("close")
             return
         self._hide_banner()
+        self._live.stop()
+        try:                      # no more look-switch work while the deletion is pending
+            look_bus().lookChanged.disconnect(self._on_look_changed)
+        except (RuntimeError, TypeError):
+            pass
         super().closeEvent(ev)
+        self.closed.emit()
 
     # ------------------------------------------------------------ syncing the controls
     def _sync(self) -> None:
@@ -1037,10 +1464,9 @@ class CustomizePanel(QDockWidget):
             on = (tint == name) if name != "custom" else (tint is not None and tint not in TINTS)
             if chip.isChecked() != on:
                 chip.setChecked(on)
-        if self._advanced:
-            for row in self.token_rows.values():
-                row.show_values(self._colors)
-            low = sum(1 for row in self.token_rows.values() if row.badge.isVisibleTo(self.advanced_box))
+        if self._advanced and self.token_list is not None:
+            self.token_list.show_values(self._colors)
+            low = self.token_list.low_count()
             self.contrast_label.setText(f"{low} colour{'s' if low != 1 else ''} below the contrast "
                                         "target. You can still save; the warning stays." if low else "")
             self.contrast_label.setVisible(bool(low))
@@ -1059,6 +1485,18 @@ class CustomizePanel(QDockWidget):
         bar = self.scroll.verticalScrollBar()
         bar.setValue(0 if widget is None else widget.mapTo(self.content, widget.rect().topLeft()).y())
 
+    def _scroll_to_end(self) -> None:
+        from PySide6.QtWidgets import QApplication
+
+        QApplication.processEvents()
+        bar = self.scroll.verticalScrollBar()
+        bar.setValue(bar.maximum())
+
+    def _scroll_into_view(self, widget: QWidget, rect: QRectF) -> None:
+        """Keep ``rect`` (in ``widget``'s coordinates) visible in the scroll area."""
+        centre = widget.mapTo(self.content, rect.center().toPoint())
+        self.scroll.ensureVisible(centre.x(), centre.y(), 0, int(rect.height()))
+
     def gallery_states(self, warnings: bool = False):
         """``(suffix, label)`` per state the UI gallery captures, each scrolled into view: the
         header and elements, the simple colours, the advanced token list (top and end) and the
@@ -1075,7 +1513,7 @@ class CustomizePanel(QDockWidget):
             self.set_advanced(True)
             self._scroll_to(self.colours_label)
             yield "_advanced", "advanced colours"
-            self._scroll_to(self.token_rows[PALETTE_TOKENS[-1]])
+            self._scroll_to_end()
             yield "_advanced_end", "advanced colours (end)"
             if warnings and not self.is_dirty():
                 # An accent as dark as the panel (nudged: the notice shows), then a secondary text

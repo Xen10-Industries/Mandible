@@ -52,9 +52,16 @@ def panel(core, scarlet):
 
     yield make()
     for p in made:
-        p._discard_and_hide()
-        p.deleteLater()
+        _close(p)
     _flush_deletes()
+
+
+def _close(panel):
+    """Discard and close ``panel`` if it still exists (it deletes itself on close)."""
+    from shiboken6 import isValid
+
+    if isValid(panel):
+        panel.discard_and_close()
 
 
 def _flush_deletes():
@@ -116,25 +123,38 @@ def test_tile_click_selects_the_variant(panel):
 
 
 def test_tile_thumbnails_render_once_per_look_change(panel, monkeypatch):
-    """R7: thumbnails are cached per look, not rendered on every paint."""
+    """R7: thumbnails are cached, not rendered on every paint. They depend on the colours and
+    shape only (and a frame on its screws), so swapping an element renders nothing again; a
+    colour change renders each tile once; going back to a look seen before is free."""
     from mandible.ui.dialogs import customize as mod
 
     calls = []
     real = mod.render_thumbnail
     monkeypatch.setattr(mod, "render_thumbnail", lambda *a, **k: (calls.append(a[:2]), real(*a, **k))[1])
-    panel.select_variant("knob", "flat_ring")            # a new look: the cache starts over
-    for tile in panel.tiles.values():
-        tile.grab()
-    first = len(calls)
-    assert first == len(panel.tiles)
-    for _ in range(2):
+
+    def paint_all():
         for tile in panel.tiles.values():
             tile.grab()
+
+    panel.set_accent("#3366ff")                          # new colours: every tile renders once
+    paint_all()
+    first = len(calls)
+    assert first == len(panel.tiles)
+    paint_all()
+    paint_all()
     assert len(calls) == first                           # repaints reuse the cache
-    panel.select_variant("knob", "machined")
-    for tile in panel.tiles.values():
-        tile.grab()
-    assert len(calls) == 2 * first
+    panel.select_variant("knob", "flat_ring")            # same colours and shape: nothing new
+    paint_all()
+    assert len(calls) == first
+    panel.select_variant("screws", "none")               # the frame tiles show the screws
+    paint_all()
+    assert sorted(set(calls[first:])) == [("frame", v) for v in sorted(mod.registry.variants("frame"))]
+    panel.set_accent("#22aa66")
+    paint_all()
+    second = len(calls)
+    panel.set_accent("#3366ff")                          # back to colours seen before
+    paint_all()
+    assert len(calls) == second
 
 
 # ------------------------------------------------------------------- save / save as (R1)
@@ -228,6 +248,7 @@ def test_saved_look_is_current_after_a_restart(panel, core):
     panel.save_as("Night")
     saved = current_look()
     core.save_now()
+    UL.invalidate_cache()                                # read back from disk, not memory
     look = look_from_config(load_config())
     assert look.skin.id == "user:night" and look.palette.id == saved.palette.id
     assert dict(look.skin.elements) == dict(saved.skin.elements)
@@ -298,16 +319,16 @@ def test_advanced_mode_lists_every_token_with_its_contrast_ratio(panel):
     partnered = {t for t, _, _ in CONTRAST_PAIRS}
     for token, row in panel.token_rows.items():
         assert row.isVisible()
-        assert row.hex_edit.text() == colors[token]
+        assert row.hex_text() == colors[token]
         if token in partnered:
             worst = min(contrast_ratio(colors[token], colors[p]) for t, p, _ in CONTRAST_PAIRS
                         if t == token)
-            assert row.ratio_label.text() == f"{worst:.1f}:1", token
+            assert row.ratio_text() == f"{worst:.1f}:1", token
         else:
-            assert row.ratio_label.text() == "—", token
-        assert not row.badge.isVisible(), token          # Scarlet passes every pair
+            assert row.ratio_text() == "—", token
+        assert not row.has_warning(), token              # Scarlet passes every pair
     panel.set_advanced(False)
-    assert not any(r.isVisible() for r in panel.token_rows.values())
+    assert panel.token_rows == {} and panel.token_list is None   # torn down while off
 
 
 def test_contrast_pairs_cover_readout_and_accent_states():
@@ -322,11 +343,11 @@ def test_low_contrast_token_shows_a_warning_and_still_saves(panel, core):
     panel.set_advanced(True)
     panel.set_token("text.secondary", "#333333")
     row = panel.token_rows["text.secondary"]
-    assert row.badge.isVisible()
-    assert [t for t, r in panel.token_rows.items() if r.badge.isVisible()] == ["text.secondary"]
+    assert row.has_warning()
+    assert [t for t, r in panel.token_rows.items() if r.has_warning()] == ["text.secondary"]
     assert current_look().palette.color("text.secondary") == "#333333"
     assert panel.save_as("Low") == "user:low"
-    assert row.badge.isVisible()                         # the warning stays after saving
+    assert panel.token_rows["text.secondary"].has_warning()   # the warning stays after saving
     theme = UL.all_palettes()[core.cfg.theme]
     assert theme.colors["text.secondary"] == "#333333" and theme.source is None
 
@@ -356,10 +377,10 @@ def test_gallery_states_fit_at_minimum_width_and_leave_the_panel_as_found(panel,
         assert ins.extra_primary_buttons(panel) == [], suffix
         if suffix == "_warnings":
             assert panel.notice_label.isVisible()
-            assert any(r.badge.isVisible() for r in panel.token_rows.values())
+            assert any(r.has_warning() for r in panel.token_rows.values())
     assert seen == ["", "_colours", "_advanced", "_advanced_end", "_warnings", "_banner"]
-    assert current_look() == scarlet and not panel.is_dirty() and not panel.banner.isVisible()
-    assert not panel.advanced_box.isVisible()
+    assert current_look() == scarlet and not panel.is_dirty() and panel.banner_mode() == ""
+    assert panel.advanced_box is None
 
 
 def test_live_picker_edits_are_coalesced(panel, monkeypatch):
@@ -393,7 +414,7 @@ def test_closing_while_dirty_shows_the_banner_instead(panel, scarlet):
     assert panel.isVisible() and panel.banner.isVisible()
     assert panel.banner_mode() == "close"
     panel.banner_keep_btn.click()                        # Keep editing
-    assert not panel.banner.isVisible() and panel.isVisible() and panel.is_dirty()
+    assert panel.banner_mode() == "" and panel.isVisible() and panel.is_dirty()
     panel.close()
     panel.banner_discard_btn.click()                     # Discard: back to the saved look
     assert not panel.isVisible() and current_look() == scarlet and not panel.is_dirty()
@@ -401,7 +422,7 @@ def test_closing_while_dirty_shows_the_banner_instead(panel, scarlet):
 
 def test_closing_a_clean_panel_just_closes(panel):
     assert panel.close() is True
-    assert not panel.isVisible() and not panel.banner.isVisible()
+    assert not panel.isVisible() and panel.banner_mode() == ""
 
 
 def test_banner_save_saves_and_closes(panel, core):
@@ -429,7 +450,7 @@ def test_switching_the_look_elsewhere_while_dirty_shows_the_banner(panel):
 def test_switching_the_look_elsewhere_when_clean_follows_it(panel):
     other = Look(BUILTIN_PALETTES["cyan"], BUILTIN_SKINS["minimal"])
     set_look(other)
-    assert not panel.banner.isVisible() and not panel.is_dirty()
+    assert panel.banner_mode() == "" and not panel.is_dirty()
     assert panel.tiles[("switch", "pill")].isChecked()
     panel.select_variant("switch", "rocker")
     panel.revert()
@@ -590,14 +611,18 @@ def test_main_window_docks_the_panel_from_settings(core, scarlet, monkeypatch):
         assert win.dockWidgetArea(dock) == Qt.RightDockWidgetArea
         assert core.cfg.ui_skin == "vintage"             # Settings was applied first
         assert dock.tiles[("frame", "wood_cheeks")].isChecked()
-        dock.close()
-        assert win.open_customize() is dock and dock.isVisible()
+        dock.close()                                     # deleted on close, not kept hidden
+        assert win.customize_panel is None
+        _flush_deletes()
+        assert win.findChildren(CustomizePanel) == []
+        again = win.open_customize()
+        assert again is not dock and again.isVisible()
     finally:
         win._quitting = True
         win.meter_timer.stop()
         win.status_timer.stop()
         if win.customize_panel is not None:
-            win.customize_panel._discard_and_hide()
+            _close(win.customize_panel)
         win.hide()
         win.deleteLater()
         QApplication.processEvents()
@@ -691,10 +716,243 @@ def test_element_swaps_during_audio_never_touch_the_engine(core, scarlet):
     finally:
         stop.set()
         t.join(5)
-        p._discard_and_hide()
-        p.deleteLater()
+        _close(p)
         _flush_deletes()
         core.engine = real_engine
     assert errors == []
     assert blocks, "the callback thread ran"
     assert engine.calls == []
+
+
+# ------------------------------------------------------------------- fix round 1
+
+@pytest.fixture
+def window(core, scarlet):
+    """A main window that never shows on the desktop (no tray icon either)."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication
+
+    from mandible.ui.main_window import MainWindow
+
+    win = MainWindow(core, show_tray=False)
+    win.setAttribute(Qt.WA_DontShowOnScreen)
+    win.resize(1280, 720)
+    win.show()
+    QApplication.processEvents()
+    yield win
+    win._quitting = True
+    win.meter_timer.stop()
+    win.status_timer.stop()
+    if win.customize_panel is not None:
+        _close(win.customize_panel)
+    win.hide()
+    win.deleteLater()
+    QApplication.processEvents()
+    _flush_deletes()
+
+
+def _fake_settings(monkeypatch, act):
+    from mandible.ui.dialogs.settings import SettingsDialog
+
+    def fake_exec(dlg):
+        act(dlg)
+        return dlg.result()
+
+    monkeypatch.setattr(SettingsDialog, "exec", fake_exec)
+
+
+def test_no_settings_dialog_survives_settings(window, monkeypatch):
+    """I-1: every SettingsDialog is deleted once Settings returns (a leftover would be
+    re-polished by every later look switch)."""
+    from mandible.ui.dialogs.settings import SettingsDialog
+
+    _fake_settings(monkeypatch, lambda dlg: dlg.accept())
+    window._settings()
+    _fake_settings(monkeypatch, lambda dlg: dlg.reject())
+    window._settings()
+    _fake_settings(monkeypatch, lambda dlg: dlg.customize_btn.click())
+    window._settings()
+    _flush_deletes()
+    assert window.findChildren(SettingsDialog) == []
+    assert window.customize_panel is not None
+
+
+def test_settings_ok_keeps_an_unsaved_draft(window, monkeypatch):
+    """I-2: OK with the appearance untouched does not re-apply the saved look over a draft."""
+    panel = window.open_customize()
+    panel.select_variant("switch", "rocker")
+    draft = panel.draft_look()
+    _fake_settings(monkeypatch, lambda dlg: dlg.accept())
+    window._settings()
+    assert current_look() == draft and panel.banner_mode() == "" and panel.is_dirty()
+
+    def touch_and_return(dlg):                 # preview another skin, then back
+        dlg.skin_combo.setCurrentIndex(dlg.skin_combo.findData("minimal"))
+        dlg.skin_combo.setCurrentIndex(dlg.skin_combo.findData("skeuomorphic"))
+        dlg.accept()
+
+    _fake_settings(monkeypatch, touch_and_return)
+    window._settings()
+    assert current_look() == draft and panel.banner_mode() == ""
+
+
+def test_panel_floats_at_the_screen_edge_when_docking_does_not_fit(window, monkeypatch):
+    """Ruling: docking never grows the window past its screen; then the panel floats, non-modal,
+    at that screen's right edge."""
+    from PySide6.QtCore import QRect, Qt
+    from PySide6.QtWidgets import QApplication, QDockWidget
+
+    from mandible.ui.main_window import MainWindow
+
+    window.move(0, 0)
+    fake = QRect(0, 0, window.frameGeometry().width() + 40, 700)
+    monkeypatch.setattr(MainWindow, "_available_geometry", lambda self: fake)
+    before = window.width()
+    panel = window.open_customize()
+    QApplication.processEvents()
+    assert panel.isFloating() and panel.isVisible()
+    assert panel.features() & QDockWidget.DockWidgetFloatable
+    assert window.width() == before                      # the window did not grow
+    geo = panel.geometry()
+    assert geo.right() == fake.right() and geo.top() == fake.top()
+    assert not panel.isModal() and panel.windowModality() == Qt.NonModal
+    panel.select_variant("switch", "rocker")             # still the live preview
+    assert current_look().skin.elements["switch"] == "rocker"
+
+
+def test_panel_docks_when_it_fits_and_the_window_gives_the_width_back(window, monkeypatch):
+    from PySide6.QtCore import QRect, Qt
+    from PySide6.QtWidgets import QApplication
+
+    from mandible.ui.main_window import MainWindow
+
+    window.move(0, 0)
+    monkeypatch.setattr(MainWindow, "_available_geometry", lambda self: QRect(0, 0, 4000, 2000))
+    before = window.width()
+    panel = window.open_customize()
+    QApplication.processEvents()
+    assert not panel.isFloating() and window.dockWidgetArea(panel) == Qt.RightDockWidgetArea
+    panel.close()
+    for _ in range(3):
+        QApplication.processEvents()
+    _flush_deletes()
+    QApplication.processEvents()
+    assert window.width() == before
+
+
+def test_quitting_with_unsaved_changes_asks_first(window):
+    """M-1: quit while the panel is dirty shows its banner and quits nothing."""
+    panel = window.open_customize()
+    panel.select_variant("switch", "rocker")
+    assert window.quit() is False
+    assert panel.banner_mode() == "close" and panel.isVisible()
+    assert not window._quitting
+
+
+def test_import_write_errors_show_inline(panel, monkeypatch, tmp_path, core):
+    """M-2: an OSError while storing the imported copy is reported, nothing changes."""
+    src = tmp_path / "x.mandibletheme"
+    UL.export_palette(BUILTIN_PALETTES["cyan"], src)
+
+    def full(*_a, **_k):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(UL, "_write_json_atomic", full)
+    assert panel.import_file(src) is None
+    assert "No space left on device" in panel.message_label.text()
+    assert core.cfg.theme == "scarlet"
+
+
+def test_save_as_leaves_no_orphan_skin_when_the_theme_fails(panel, monkeypatch, core):
+    """M-3: Save as new writes the skin and then the theme; if the theme fails, the skin goes."""
+    panel.select_variant("switch", "rocker")
+    panel.set_accent("#3366ff")
+
+    def broken(_p):
+        raise OSError(13, "Permission denied")
+
+    monkeypatch.setattr(UL, "save_palette", broken)
+    assert panel.save_as("Night") is None
+    assert "Permission denied" in panel.message_label.text()
+    assert "user:night" not in UL.all_skins() and core.cfg.ui_skin == "skeuomorphic"
+    assert panel.is_dirty()
+
+
+def test_suggested_name_is_free(panel):
+    """M-4: on a user skin the name offered for Save as new is not the skin's own."""
+    panel.select_variant("switch", "rocker")
+    panel.save_as("Night")
+    assert panel.name_edit.text() == "Night copy"
+    panel.save_as(panel.name_edit.text())
+    assert panel.name_edit.text() == "Night copy copy"
+
+
+def test_theme_export_is_named_after_the_theme(panel, tmp_path):
+    """M-5: a theme exported without a typed name carries the theme's name, not the skin's."""
+    path = tmp_path / "t.mandibletheme"
+    panel.export(path)
+    assert json.loads(path.read_text(encoding="utf-8"))["name"] == "My Scarlet"
+    panel.name_edit.setText("Dusk")
+    panel.export(path)
+    assert json.loads(path.read_text(encoding="utf-8"))["name"] == "Dusk"
+
+
+def test_delete_banner_warns_about_unsaved_changes(panel):
+    """M-11."""
+    panel.select_variant("switch", "rocker")
+    panel.save_as("Night")
+    panel.select_variant("knob", "flat_ring")
+    panel.delete_btn.click()
+    assert "unsaved changes will be lost" in panel.banner_label.text()
+
+
+def test_cache_sees_files_rewritten_in_place_and_upper_case_names(looks_dirs):
+    """M-7: a hand-edited file keeps its name but changes; ``.JSON`` counts too."""
+    from mandible.ui.look import Skin
+
+    UL.save_skin(Skin("user:one", "One", dict(BUILTIN_SKINS["minimal"].elements),
+                      dict(BUILTIN_SKINS["minimal"].shape)))
+    assert UL.all_skins()["user:one"].name == "One"
+    path = UL.SKINS_DIR / "one.json"
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    doc["name"] = "One, renamed by hand"
+    path.write_text(json.dumps(doc), encoding="utf-8")
+    assert UL.all_skins()["user:one"].name == "One, renamed by hand"
+    upper = UL.SKINS_DIR / "two.JSON"
+    doc["name"] = "Two"
+    upper.write_text(json.dumps(doc), encoding="utf-8")
+    assert "user:two" in UL.all_skins()
+    doc["name"] = "Two again"
+    upper.write_text(json.dumps(doc), encoding="utf-8")
+    assert UL.all_skins()["user:two"].name == "Two again"
+
+
+def test_import_dispatch_uses_the_wrong_format_error(tmp_path):
+    """M-9: dispatch keys on the WrongFormatError type, not on message text."""
+    path = tmp_path / "x.mandibleskin"
+    path.write_text(json.dumps({"format": "Mandible.Theme", "version": 1}), encoding="utf-8")
+    with pytest.raises(UL.WrongFormatError):
+        UL.import_skin(path)
+    other = tmp_path / "x.json"
+    other.write_text(json.dumps({"format": "Something.Else", "version": 1}), encoding="utf-8")
+    with pytest.raises(UL.LookFileError, match="not a Mandible skin or theme file"):
+        UL.import_look(other)
+
+
+def test_token_list_edits_with_the_keyboard(panel):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QApplication
+
+    panel.set_advanced(True)
+    tokens = panel.token_list
+    tokens.setFocus()
+    QTest.keyClick(tokens, Qt.Key_Down)                    # bg.panel
+    QTest.keyClick(tokens, Qt.Key_Return)
+    assert tokens.editor.isVisible() and tokens.editor.text() == current_look().palette.color("bg.panel")
+    tokens.editor.setText("#202430")
+    QTest.keyClick(tokens.editor, Qt.Key_Return)
+    QApplication.processEvents()
+    assert current_look().palette.color("bg.panel") == "#202430"
+    assert not tokens.editor.isVisible()
+    assert len(panel.findChildren(type(tokens.editor), "hexEdit")) == 2   # accent + the shared one

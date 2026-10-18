@@ -276,22 +276,47 @@ def _merge_lists(into: dict, more: dict) -> None:
             into[key] = into.get(key, 0) + value
 
 
+DOCK_STATES = ("none", "simple", "advanced", "closed")
+
+
+def _open_dock(app, win, gallery, dock: str) -> None:
+    """Put the Customize panel in ``dock`` state: ``simple`` / ``advanced`` (open, docked or
+    floating as the screen allows), ``closed`` (opened, closed and its deletion processed, as the
+    event loop would), ``none`` (never opened)."""
+    from PySide6.QtCore import QCoreApplication, QEvent
+
+    if dock == "none":
+        return
+    panel = win.open_customize()
+    if dock == "advanced":
+        panel.set_advanced(True)
+    elif dock == "closed":
+        panel.close()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    gallery.settle(win)
+
+
 def _time_switch(app, core, gallery, skin: str, themes: list[str], rounds: int = 3,
-                 warmup: int = 1) -> dict:
+                 warmup: int = 1, dock: str = "none") -> dict:
     """Switch live into ``skin`` from every other built-in skin, in every theme, on a shown
     main window: milliseconds per switch, layout and repaint included. ``warmup`` untimed
     rounds come first (style and font caches, first-paint costs); then ``rounds`` timed ones.
-    ``median_ms`` and ``max_ms`` summarise the timed switches."""
+    ``median_ms`` and ``max_ms`` summarise the timed switches. ``dock`` sets the Customize
+    panel's state first (``DOCK_STATES``)."""
     import statistics
     import time
 
     from mandible.ui.look import BUILTIN_PALETTES, BUILTIN_SKINS, Look, set_look
 
-    result: dict = {"ms": [], "errors": [], "warmup_rounds": warmup}
+    result: dict = {"ms": [], "errors": [], "warmup_rounds": warmup, "dock": dock}
     win = gallery.build_main_window(core)
     try:
         win.resize(1280, 720)
         gallery.settle(win)
+        _open_dock(app, win, gallery, dock)
+        from PySide6.QtWidgets import QWidget
+        result["widgets"] = len(app.allWidgets()) if hasattr(app, "allWidgets") else len(
+            win.findChildren(QWidget))
         others = [s for s in BUILTIN_SKINS if s != skin] or [skin]
         for rnd in range(warmup + rounds):
             timed = rnd >= warmup
@@ -316,7 +341,7 @@ def _time_switch(app, core, gallery, skin: str, themes: list[str], rounds: int =
     return result
 
 
-def run_switch(skin: str, themes: list[str]) -> dict:
+def run_switch(skin: str, themes: list[str], dock: str = "none") -> dict:
     sys.path.insert(0, str(ROOT / "tools"))
     import ui_gallery as gallery
     from PySide6.QtGui import QGuiApplication
@@ -330,7 +355,7 @@ def run_switch(skin: str, themes: list[str]) -> dict:
     try:
         core.cfg.close_to_tray = False
         gallery._apply(app, skin, themes[0], core)
-        report["switch"] = _time_switch(app, core, gallery, skin, themes)
+        report["switch"] = _time_switch(app, core, gallery, skin, themes, dock=dock)
     finally:
         core.shutdown()
     return report
@@ -432,6 +457,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--mode", default="layout", choices=("layout", "standard", "switch"))
     ap.add_argument("--themes", default="scarlet,cyan,stealth,amber",
                     help="--mode standard/switch: the themes to measure")
+    ap.add_argument("--dock", default="none", choices=DOCK_STATES,
+                    help="--mode switch: the Customize panel's state while timing")
     ap.add_argument("--strict", action="store_true")
     args = ap.parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):
@@ -451,7 +478,7 @@ def main(argv: list[str] | None = None) -> int:
                                   parse_sizes(args.sizes), args.scenario)
             found = []
         elif args.mode == "switch":
-            report = run_switch(args.skins.split(",")[0], args.themes.split(","))
+            report = run_switch(args.skins.split(",")[0], args.themes.split(","), args.dock)
             found = []
         else:
             report = run(args.skins.split(","), args.theme, parse_sizes(args.sizes), args.scenario)

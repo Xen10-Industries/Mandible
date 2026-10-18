@@ -26,7 +26,7 @@ from .look import (BUILTIN_PALETTES, BUILTIN_SKINS, PALETTE_TOKENS, SHAPE_TOKENS
                    Skin, notify_user_looks_changed)
 
 __all__ = [
-    "SKINS_DIR", "THEMES_DIR", "MAX_IMPORT_BYTES", "LookFileError", "slugify", "save_skin", "save_palette",
+    "SKINS_DIR", "THEMES_DIR", "MAX_IMPORT_BYTES", "LookFileError", "WrongFormatError", "slugify", "save_skin", "save_palette",
     "load_user_skins", "load_user_palettes", "delete_user_look", "all_skins", "all_palettes",
     "export_skin", "export_palette", "import_skin", "import_palette", "import_look", "new_skin",
     "new_palette", "migrate_appearance", "invalidate_cache",
@@ -58,6 +58,10 @@ _STRIP_CATEGORIES = {"Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp"}
 
 class LookFileError(Exception):
     """A skin/theme file that cannot be used. The message is a single line fit for a dialog."""
+
+
+class WrongFormatError(LookFileError):
+    """A JSON object whose ``format`` is not the kind asked for (a theme opened as a skin...)."""
 
 
 # ------------------------------------------------------------------ small helpers
@@ -121,7 +125,7 @@ def _read_doc(path: str | os.PathLike, fmt: str) -> dict:
         raise LookFileError("not a Mandible look file")
     if doc.get("format") != fmt:
         what = "skin" if fmt == SKIN_FORMAT else "theme"
-        raise LookFileError(f"not a Mandible {what} file")
+        raise WrongFormatError(f"not a Mandible {what} file")
     version = doc.get("version")
     if isinstance(version, bool) or not isinstance(version, int):
         raise LookFileError("missing or invalid file version")
@@ -284,7 +288,7 @@ def _stamp(directory: Path) -> object:
         with os.scandir(directory) as it:
             entries = []
             for entry in it:
-                if entry.name.endswith(".json"):
+                if entry.name.lower().endswith(".json"):   # glob("*.json") ignores case here
                     try:
                         st = entry.stat()
                     except OSError:
@@ -523,15 +527,12 @@ def import_look(path: str | os.PathLike) -> tuple[str, Skin | Palette, list[str]
         return ("theme", *import_palette(path))
     try:
         return ("skin", *import_skin(path))
-    except LookFileError as exc:
-        if str(exc) != "not a Mandible skin file":
-            raise
+    except WrongFormatError:
+        pass
     try:
         return ("theme", *import_palette(path))
-    except LookFileError as exc:
-        if str(exc) == "not a Mandible theme file":
-            raise LookFileError("not a Mandible skin or theme file") from None
-        raise
+    except WrongFormatError:
+        raise LookFileError("not a Mandible skin or theme file") from None
 
 
 # ------------------------------------------------------------ appearance migration

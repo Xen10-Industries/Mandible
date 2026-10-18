@@ -807,13 +807,18 @@ class SettingsDialog(QDialog):
         # Monitor Mode
         self.core.set_monitor_mode(self.mon_mode.currentData())
 
-        # Appearance: store both ids first so the core setters apply the final look once. The old
-        # chassis_frame / switch_style fields are never written (spec 7.5; Customize owns them).
+        # Appearance: only when a picker changed, so OK never replaces a look it did not choose
+        # (an unsaved Customize draft stays on screen). Both ids are stored first so the core
+        # setters apply the final look once. The old chassis_frame / switch_style fields are
+        # never written (spec 7.5; Customize owns them).
         new_skin = self.skin_combo.currentData() or self.cfg.ui_skin
         new_theme = self.theme_combo.currentData() or self.cfg.theme
+        skin_changed, theme_changed = new_skin != self.cfg.ui_skin, new_theme != self.cfg.theme
         self.cfg.ui_skin, self.cfg.theme = new_skin, new_theme
-        self.core.set_ui_skin(new_skin)
-        self.core.set_theme(new_theme)
+        if skin_changed:
+            self.core.set_ui_skin(new_skin)
+        if theme_changed:
+            self.core.set_theme(new_theme)
 
         # Normalizer
         if hasattr(self, "norm_en"):
@@ -839,7 +844,11 @@ class SettingsDialog(QDialog):
             appearance_migrated=getattr(self.cfg, "appearance_migrated", False)))
 
     def _on_appearance_preview_changed(self, _=None):
-        look = self._preview_look()
+        # Back on the configured ids: show the look the dialog opened with (which may be an
+        # unsaved Customize draft), not a fresh copy of the saved one.
+        unchanged = (self.skin_combo.currentData() == getattr(self.cfg, "ui_skin", None)
+                     and self.theme_combo.currentData() == getattr(self.cfg, "theme", None))
+        look = self._orig_look if unchanged else self._preview_look()
         if look != current_look():
             set_look(look)
 

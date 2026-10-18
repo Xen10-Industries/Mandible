@@ -179,7 +179,9 @@ def _check(name: str) -> None:
         raise KeyError(f"unknown icon {name!r}")
 
 
-@lru_cache(maxsize=512)
+# Big enough for every icon x colour x size of a handful of looks, so switching back and forth
+# between looks reuses the rendered pixmaps (512 was overrun by two looks' worth).
+@lru_cache(maxsize=4096)
 def _pixmap(name: str, color: str, px: int, dpr: float) -> QPixmap:
     dev = max(1, round(px * dpr))
     img = QImage(dev, dev, QImage.Format_ARGB32_Premultiplied)
