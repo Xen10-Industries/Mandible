@@ -12,7 +12,6 @@ is evaluated, followed as a path, or interpolated into a path.
 from __future__ import annotations
 
 import json
-import math
 import os
 import re
 import tempfile
@@ -125,7 +124,8 @@ def _read_doc(path: str | os.PathLike, fmt: str) -> dict:
     if isinstance(version, bool) or not isinstance(version, int):
         raise LookFileError("missing or invalid file version")
     if version != FORMAT_VERSION:
-        raise LookFileError(f"unsupported file version {version}"
+        # Never echo the value: it is untrusted and may be thousands of digits long.
+        raise LookFileError("unsupported file version"
                             + (" (made by a newer Mandible)" if version > FORMAT_VERSION else ""))
     return doc
 
@@ -181,7 +181,9 @@ def _parse_skin(doc: Mapping) -> tuple[str, dict[str, str], dict[str, float], li
             continue
         v = raw_shape[token]
         lo, hi = _SHAPE_RANGES[token]
-        if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or not lo <= v <= hi:
+        # Range check first and on the raw value: int/float comparison is exact (no float() of a
+        # huge int, which would overflow), and NaN / infinities fail it.
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not lo <= v <= hi:
             raise LookFileError(f"shape.{token} must be a number from {lo:g} to {hi:g}")
         shape[token] = float(v)
     return name, elements, shape, notes
@@ -292,6 +294,9 @@ def _load_dir(kind: str) -> tuple[dict, list[str]]:
                 look, extra = _build_palette(look_id, name, dark, source, colors)
         except LookFileError as exc:
             notices.append(f"{file.name}: skipped ({exc})")
+            continue
+        except Exception as exc:  # backstop: no single file may ever break loading
+            notices.append(f"{file.name}: skipped ({_one_line(type(exc).__name__ + ': ' + str(exc))[:120]})")
             continue
         found.append(look)
         notices.extend(f"{name}: {n}" for n in notes)

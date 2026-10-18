@@ -294,6 +294,12 @@ BAD_SKINS = {
     "shape huge": skin_doc(shape={"radius.panel": 1e9}),
     "shape negative": skin_doc(shape={"border.width": -1}),
     "shape shadow range": skin_doc(shape={"shadow.depth": 7}),
+    "shape huge int": '{"format": "Mandible.Skin", "version": 1, "name": "x", "elements": {}, '
+                      '"shape": {"radius.control": ' + "9" * 400 + "}}",
+    "shape huge negative int": '{"format": "Mandible.Skin", "version": 1, "name": "x", "elements": {}, '
+                               '"shape": {"radius.control": -' + "9" * 400 + "}}",
+    "version huge int": '{"format": "Mandible.Skin", "version": ' + "7" * 4000 + ', "name": "x"}',
+    "version huge negative": '{"format": "Mandible.Skin", "version": -' + "7" * 4000 + ', "name": "x"}',
 }
 
 
@@ -307,7 +313,7 @@ def test_import_skin_rejects_bad_files_and_changes_nothing(case, tmp_path):
         p = write(tmp_path, BAD_SKINS[case])
     with pytest.raises(UL.LookFileError) as exc:
         UL.import_skin(p)
-    assert str(exc.value) and "\n" not in str(exc.value)
+    assert str(exc.value) and "\n" not in str(exc.value) and len(str(exc.value)) <= 200
     assert UL.all_skins() == before
     assert not UL.SKINS_DIR.exists() or not list(UL.SKINS_DIR.iterdir())
 
@@ -334,7 +340,7 @@ def test_import_palette_rejects_bad_files_and_changes_nothing(case, tmp_path):
     before = dict(UL.all_palettes())
     with pytest.raises(UL.LookFileError) as exc:
         UL.import_palette(write(tmp_path, BAD_THEMES[case]))
-    assert str(exc.value) and "\n" not in str(exc.value)
+    assert str(exc.value) and "\n" not in str(exc.value) and len(str(exc.value)) <= 200
     assert UL.all_palettes() == before
     assert not UL.THEMES_DIR.exists() or not list(UL.THEMES_DIR.iterdir())
 
@@ -570,3 +576,42 @@ def test_editing_a_user_palette_under_the_same_id_changes_the_stylesheet():
     assert build_qss(Look(p1, skin)) != build_qss(Look(p2, skin))  # ...but not the same cached QSS
     s2 = Skin(skin.id, skin.name, skin.elements, {**skin.shape, "radius.control": 9})
     assert build_qss(Look(p1, skin)) != build_qss(Look(p1, s2))
+
+
+def test_huge_int_file_in_the_skins_folder_is_skipped_not_fatal():
+    from types import SimpleNamespace
+
+    UL.save_skin(user_skin("Fine", "user:fine"))
+    UL.SKINS_DIR.joinpath("huge.json").write_text(
+        '{"format": "Mandible.Skin", "version": 1, "name": "Huge", "elements": {}, '
+        '"shape": {"radius.panel": ' + "9" * 400 + "}}", encoding="utf-8")
+    UL.SKINS_DIR.joinpath("hugever.json").write_text(
+        '{"format": "Mandible.Skin", "version": ' + "7" * 4000 + ', "name": "V"}', encoding="utf-8")
+    loaded, notices = UL.load_user_skins()
+    assert list(loaded) == ["user:fine"]
+    assert sum("huge.json" in n for n in notices) == 1 and any("hugever.json" in n for n in notices)
+    assert all("\n" not in n and len(n) <= 300 for n in notices)
+    assert "user:fine" in UL.all_skins()
+    assert look_mod.look_for("scarlet", "user:huge").skin.id == "skeuomorphic"
+    assert look_mod.look_for("scarlet", "user:fine").skin.id == "user:fine"
+    cfg = SimpleNamespace(theme="scarlet", ui_skin="user:fine", chassis_frame="auto", switch_style=None)
+    assert look_mod.look_from_config(cfg).skin.id == "user:fine"
+
+
+def test_unexpected_error_while_parsing_one_file_skips_only_that_file(monkeypatch):
+    UL.save_skin(user_skin("Alpha", "user:alpha"))
+    UL.save_skin(user_skin("Beta", "user:beta"))
+    UL.save_skin(user_skin("Gamma", "user:gamma"))
+    real = UL._parse_skin
+
+    def flaky(doc):
+        if doc.get("name") == "Beta":
+            raise RuntimeError("unexpected\nboom "+ "x" * 1000)
+        return real(doc)
+
+    monkeypatch.setattr(UL, "_parse_skin", flaky)
+    loaded, notices = UL.load_user_skins()
+    assert list(loaded) == ["user:alpha", "user:gamma"]
+    assert len(notices) == 1 and "beta.json" in notices[0] and "RuntimeError" in notices[0]
+    assert "\n" not in notices[0] and len(notices[0]) <= 300
+    assert list(UL.all_skins())[-2:] == ["user:alpha", "user:gamma"]
