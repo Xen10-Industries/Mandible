@@ -1,9 +1,6 @@
 """The running app draws from the current Look: switching, persistence, delegation."""
 from __future__ import annotations
 
-import statistics
-import time
-
 import pytest
 
 from mandible.ui.look import (
@@ -105,26 +102,25 @@ class _RecordingEngine:
         setattr(self._real, name, value)
 
 
-def test_switch_look_fast_and_engine_free(sample_core, restore_look):
-    from PySide6.QtCore import QEvent, Qt
+def test_switch_look_is_engine_free_and_error_free(sample_core, restore_look):
+    """Every Look in the skin x palette matrix switches on a live main window without an
+    exception, without a single engine call or attribute write, and repaints the chassis.
+
+    The 150 ms limit (spec 7.2) is not asserted here: after ~900 tests the process carries so
+    much accumulated Qt state that in-process medians are 125-200 ms whatever the code does.
+    It is asserted in a clean process by ``test_switch_look_under_150_ms_in_a_clean_process``.
+    """
+    from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QApplication
     from mandible.ui.app import apply_theme
     from mandible.ui.main_window import MainWindow
 
     app = QApplication.instance()
-    # Measure the sample setup alone: earlier tests leave dialogs/windows alive, and an
-    # app-wide stylesheet change restyles every live widget.
-    for w in app.topLevelWidgets():
-        if w is not sample_core.overlay:
-            w.hide()
-            w.deleteLater()
-    app.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     apply_theme(app, _look("skeuomorphic", "scarlet"))
     engine = _RecordingEngine(sample_core.engine)
     sample_core.engine = engine
     win = MainWindow(sample_core)
     win.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
-    timings: dict[tuple[str, str], list[float]] = {}
     try:
         win.resize(1280, 720)
         win.show()
@@ -133,16 +129,14 @@ def test_switch_look_fast_and_engine_free(sample_core, restore_look):
         chassis_paint = win.chassis.paintEvent
         win.chassis.paintEvent = lambda ev: (painted.append(1), chassis_paint(ev))
         looks = [(s, t) for s in BUILTIN_SKINS for t in BUILTIN_PALETTES]
-        for _ in range(3):
+        for _ in range(2):
             for skin, theme in looks:
                 engine.calls.clear()
                 painted.clear()
-                t0 = time.perf_counter()
                 set_look(_look(skin, theme))
                 app.sendPostedEvents()   # layout + repaint, but no timers
-                timings.setdefault((skin, theme), []).append(time.perf_counter() - t0)
                 assert engine.calls == [], (skin, theme, engine.calls)
-                assert painted, "the timed window includes the repaint"
+                assert painted, (skin, theme, "the chassis repaints")
                 assert current_look().skin.id == skin and current_look().palette.id == theme
     finally:
         win._quitting = True
@@ -151,10 +145,34 @@ def test_switch_look_fast_and_engine_free(sample_core, restore_look):
         win.deleteLater()
         sample_core.engine = engine._real
         app.processEvents()
-    medians = {k: statistics.median(v) * 1000 for k, v in timings.items()}
-    print("set_look median ms:", {f"{s}/{t}": round(ms, 1) for (s, t), ms in medians.items()})
-    slow = {k: ms for k, ms in medians.items() if ms >= 150}
-    assert not slow, slow
+
+
+SWITCH_MS = 150          # spec 7.2: a live look switch, layout and repaint included
+MIN_SWITCH_SAMPLES = 24  # timed switches per skin, after the warm-up round
+
+
+@pytest.mark.parametrize("skin", list(BUILTIN_SKINS))
+def test_switch_look_under_150_ms_in_a_clean_process(skin, tmp_path):
+    """The look-switch time, measured by ``tools/layout_probe.py --mode switch`` in a fresh
+    process per skin (real Windows font metrics on win32; never shown on the desktop): the
+    sample setup in a 1280 x 720 main window, switching into ``skin`` in every palette from
+    every other skin. A warm-up round is excluded, there are >= 24 timed switches, and their
+    median must stay under the limit (the max is printed: a lone slow switch is not a failure).
+    One process per skin because Qt state accumulates: the third skin timed in one process runs
+    ~35% slower than the first."""
+    from _probe import run_probe
+
+    proc, report = run_probe(tmp_path, [(1280, 720)], mode="switch", skins=[skin],
+                             themes=list(BUILTIN_PALETTES))
+    assert report is not None and proc.returncode == 0, proc.stdout + proc.stderr
+    assert report["skin"] == skin
+    res = report["switch"]
+    assert res["errors"] == [], res["errors"]
+    assert res["warmup_rounds"] >= 1
+    assert len(res["ms"]) >= MIN_SWITCH_SAMPLES, len(res["ms"])
+    print(f"switch into {skin}: median {res['median_ms']} ms, max {res['max_ms']} ms "
+          f"over {len(res['ms'])} switches")
+    assert res["median_ms"] < SWITCH_MS, res["ms"]
 
 
 def test_look_persists(core, restore_look):

@@ -45,7 +45,15 @@ minimum size), contrast, and the live switch into the skin::
             "clipped_text", "elided_without_tooltip", "untiered_buttons", "multiple_primaries",
             "off_scale_spacing",
             "unnamed_icon_controls", "small_painted_text", "painted_text_count"}}}},
-     "switch": {"ms": [...], "errors": [...]}}
+     "switch": {"ms": [...], "errors": [...], "warmup_rounds": n, "median_ms": x, "max_ms": y}}
+
+``--mode switch`` only times the live look switch into one skin (the first of ``--skins``)
+in every theme in ``--themes``, in a fresh process. Run one process per skin: Qt state
+accumulates, and the third skin measured in one process is ~35% slower than the first, which
+is why the 150 ms limit is asserted on fresh processes::
+
+    {"platform": ..., "skin": id, "switch": {"ms": [...], "errors": [...], "warmup_rounds": n,
+                                             "median_ms": x, "max_ms": y}}
 """
 from __future__ import annotations
 
@@ -268,20 +276,25 @@ def _merge_lists(into: dict, more: dict) -> None:
             into[key] = into.get(key, 0) + value
 
 
-def _time_switch(app, core, gallery, skin: str, themes: list[str], rounds: int = 3) -> dict:
+def _time_switch(app, core, gallery, skin: str, themes: list[str], rounds: int = 3,
+                 warmup: int = 1) -> dict:
     """Switch live into ``skin`` from every other built-in skin, in every theme, on a shown
-    main window: milliseconds per switch, layout and repaint included."""
+    main window: milliseconds per switch, layout and repaint included. ``warmup`` untimed
+    rounds come first (style and font caches, first-paint costs); then ``rounds`` timed ones.
+    ``median_ms`` and ``max_ms`` summarise the timed switches."""
+    import statistics
     import time
 
     from mandible.ui.look import BUILTIN_PALETTES, BUILTIN_SKINS, Look, set_look
 
-    result: dict = {"ms": [], "errors": []}
+    result: dict = {"ms": [], "errors": [], "warmup_rounds": warmup}
     win = gallery.build_main_window(core)
     try:
         win.resize(1280, 720)
         gallery.settle(win)
         others = [s for s in BUILTIN_SKINS if s != skin] or [skin]
-        for _ in range(rounds):
+        for rnd in range(warmup + rounds):
+            timed = rnd >= warmup
             for theme in themes:
                 for other in others:
                     try:
@@ -290,13 +303,37 @@ def _time_switch(app, core, gallery, skin: str, themes: list[str], rounds: int =
                         t0 = time.perf_counter()
                         set_look(Look(BUILTIN_PALETTES[theme], BUILTIN_SKINS[skin]))
                         app.sendPostedEvents()   # layout + repaint, no timers
-                        result["ms"].append(round((time.perf_counter() - t0) * 1000.0, 2))
+                        if timed:
+                            result["ms"].append(round((time.perf_counter() - t0) * 1000.0, 2))
                     except Exception as exc:  # noqa: BLE001 - reported
                         result["errors"].append(
                             f"{other}->{skin} ({theme}): {type(exc).__name__}: {exc}")
     finally:
         gallery.dispose_main_window(win)
+    if result["ms"]:
+        result["median_ms"] = round(statistics.median(result["ms"]), 2)
+        result["max_ms"] = max(result["ms"])
     return result
+
+
+def run_switch(skin: str, themes: list[str]) -> dict:
+    sys.path.insert(0, str(ROOT / "tools"))
+    import ui_gallery as gallery
+    from PySide6.QtGui import QGuiApplication
+    from PySide6.QtWidgets import QApplication
+
+    from mandible.ui.sample_setup import build_sample_core
+
+    app = QApplication.instance() or QApplication([])
+    report: dict = {"platform": QGuiApplication.platformName(), "skin": skin}
+    core = build_sample_core()
+    try:
+        core.cfg.close_to_tray = False
+        gallery._apply(app, skin, themes[0], core)
+        report["switch"] = _time_switch(app, core, gallery, skin, themes)
+    finally:
+        core.shutdown()
+    return report
 
 
 def run_standard(skin: str, themes: list[str], sizes: list[tuple[int, int]],
@@ -392,9 +429,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--sizes", default="1024x640")
     ap.add_argument("--scenario", default="sample",
                     choices=("sample", "long_names", "running", "many_knobs"))
-    ap.add_argument("--mode", default="layout", choices=("layout", "standard"))
+    ap.add_argument("--mode", default="layout", choices=("layout", "standard", "switch"))
     ap.add_argument("--themes", default="scarlet,cyan,stealth,amber",
-                    help="--mode standard: the themes to measure")
+                    help="--mode standard/switch: the themes to measure")
     ap.add_argument("--strict", action="store_true")
     args = ap.parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):
@@ -412,6 +449,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.mode == "standard":
             report = run_standard(args.skins.split(",")[0], args.themes.split(","),
                                   parse_sizes(args.sizes), args.scenario)
+            found = []
+        elif args.mode == "switch":
+            report = run_switch(args.skins.split(",")[0], args.themes.split(","))
             found = []
         else:
             report = run(args.skins.split(","), args.theme, parse_sizes(args.sizes), args.scenario)
