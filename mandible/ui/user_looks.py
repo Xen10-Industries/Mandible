@@ -22,13 +22,14 @@ from pathlib import Path
 from ..paths import APP_DIR
 from . import palette_gen
 from .elements import registry
-from .look import BUILTIN_PALETTES, BUILTIN_SKINS, PALETTE_TOKENS, SHAPE_TOKENS, SKIN_SLOTS, Palette, Skin
+from .look import (BUILTIN_PALETTES, BUILTIN_SKINS, PALETTE_TOKENS, SHAPE_TOKENS, SKIN_SLOTS, Palette,
+                   Skin, notify_user_looks_changed)
 
 __all__ = [
     "SKINS_DIR", "THEMES_DIR", "MAX_IMPORT_BYTES", "LookFileError", "slugify", "save_skin", "save_palette",
     "load_user_skins", "load_user_palettes", "delete_user_look", "all_skins", "all_palettes",
-    "export_skin", "export_palette", "import_skin", "import_palette", "new_skin", "new_palette",
-    "migrate_appearance",
+    "export_skin", "export_palette", "import_skin", "import_palette", "import_look", "new_skin",
+    "new_palette", "migrate_appearance", "invalidate_cache",
 ]
 
 SKINS_DIR = Path(APP_DIR) / "skins"
@@ -269,8 +270,56 @@ def _checked_palette_doc(p: Palette) -> dict:
 
 # ----------------------------------------------------------------- load / list
 
+# (kind, folder) -> (folder stamp, (looks by id, notices)). Listing the user looks parses every
+# file, and pickers / look_for ask often, so a listing is kept until this module writes or
+# deletes a file (``_changed``) or the folder's stamp changes (a file dropped in by hand).
+_cache: dict[tuple[str, str], tuple[object, tuple[dict, list[str]]]] = {}
+
+
+def _stamp(directory: Path) -> object:
+    """What changes when a look file is added, removed, renamed or rewritten: the folder's own
+    mtime and every ``*.json`` entry's name, mtime and size (one ``scandir``, no file reads)."""
+    try:
+        own = directory.stat().st_mtime_ns
+        with os.scandir(directory) as it:
+            entries = []
+            for entry in it:
+                if entry.name.endswith(".json"):
+                    try:
+                        st = entry.stat()
+                    except OSError:
+                        continue
+                    entries.append((entry.name, st.st_mtime_ns, st.st_size))
+    except OSError:
+        return None
+    return own, tuple(sorted(entries))
+
+
+def invalidate_cache() -> None:
+    """Forget the cached user look listings (the next listing re-reads the folders)."""
+    _cache.clear()
+
+
+def _changed() -> None:
+    """A user look file was written or deleted: drop the cache and tell the pickers."""
+    invalidate_cache()
+    notify_user_looks_changed()
+
+
 def _load_dir(kind: str) -> tuple[dict, list[str]]:
     directory = _dir(kind)
+    key = (kind, str(directory))
+    stamp = _stamp(directory)
+    hit = _cache.get(key)
+    if hit is not None and hit[0] == stamp:
+        looks, notices = hit[1]
+    else:
+        looks, notices = _read_dir(kind, directory)
+        _cache[key] = (stamp, (looks, notices))
+    return dict(looks), list(notices)
+
+
+def _read_dir(kind: str, directory: Path) -> tuple[dict, list[str]]:
     fmt = SKIN_FORMAT if kind == "skin" else THEME_FORMAT
     found: list = []
     notices: list[str] = []
@@ -386,7 +435,10 @@ def _save(kind: str, look, doc: dict) -> Path:
     path = directory / f"{slug}.json"
     if path.parent != directory:  # belt and braces; the id regex already rules this out
         raise ValueError(f"unsafe look id: {look.id!r}")
-    _write_json_atomic(path, doc)
+    try:
+        _write_json_atomic(path, doc)
+    finally:
+        _changed()
     return path
 
 
@@ -414,6 +466,8 @@ def delete_user_look(look_id: str, kind: str | None = None) -> None:
             (_dir(k) / f"{slug}.json").unlink()
         except FileNotFoundError:
             pass
+        finally:
+            _changed()
 
 
 # --------------------------------------------------------------- export / import
@@ -436,7 +490,10 @@ def import_skin(path: str | os.PathLike) -> tuple[Skin, list[str]]:
     unique, look_id = _claim(name, "skin")
     skin, extra = _build_skin(look_id, unique, elements, shape)
     # The file keeps the imported variant ids (a newer build may know them); loading resolves them.
-    _write_json_atomic(SKINS_DIR / f"{_slug_of_id(look_id)}.json", _skin_doc(unique, elements, shape))
+    try:
+        _write_json_atomic(SKINS_DIR / f"{_slug_of_id(look_id)}.json", _skin_doc(unique, elements, shape))
+    finally:
+        _changed()
     return skin, [f"{unique}: {n}" for n in notes] + extra
 
 
@@ -446,8 +503,35 @@ def import_palette(path: str | os.PathLike) -> tuple[Palette, list[str]]:
     name, dark, source, colors, notes = _parse_palette(_read_doc(path, THEME_FORMAT))
     unique, look_id = _claim(name, "theme")
     palette, extra = _build_palette(look_id, unique, dark, source, colors)
-    _write_json_atomic(THEMES_DIR / f"{_slug_of_id(look_id)}.json", _palette_doc(unique, dark, source, colors))
+    try:
+        _write_json_atomic(THEMES_DIR / f"{_slug_of_id(look_id)}.json",
+                           _palette_doc(unique, dark, source, colors))
+    finally:
+        _changed()
     return palette, [f"{unique}: {n}" for n in notes] + extra
+
+
+def import_look(path: str | os.PathLike) -> tuple[str, Skin | Palette, list[str]]:
+    """Import a skin or a theme file: ``(kind, look, notices)`` with kind ``"skin"`` or ``"theme"``.
+
+    ``.mandibleskin`` / ``.mandibletheme`` decide by extension; any other file is tried as a skin,
+    then as a theme, by its ``format``. Raises LookFileError (nothing written) like the importers."""
+    ext = Path(path).suffix.lower()
+    if ext == SKIN_EXT:
+        return ("skin", *import_skin(path))
+    if ext == THEME_EXT:
+        return ("theme", *import_palette(path))
+    try:
+        return ("skin", *import_skin(path))
+    except LookFileError as exc:
+        if str(exc) != "not a Mandible skin file":
+            raise
+    try:
+        return ("theme", *import_palette(path))
+    except LookFileError as exc:
+        if str(exc) == "not a Mandible theme file":
+            raise LookFileError("not a Mandible skin or theme file") from None
+        raise
 
 
 # ------------------------------------------------------------ appearance migration

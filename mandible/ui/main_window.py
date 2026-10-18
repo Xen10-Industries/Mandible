@@ -7,7 +7,7 @@ import time
 from functools import partial
 
 import numpy as np
-from PySide6.QtCore import QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout,
                                QInputDialog, QLabel, QLineEdit, QListWidgetItem,
@@ -22,6 +22,8 @@ from ..config import Chain, PluginSlot
 from ..core import Core, inst, slot_error
 from ..factory_presets import get_factory_presets, instantiate_factory_preset
 from .dialogs.add_plugin import AddPluginDialog
+from .dialogs.customize import DEFAULT_WIDTH as CUSTOMIZE_WIDTH
+from .dialogs.customize import CustomizePanel
 from .dialogs.hotkey import HotkeyDialog
 from .dialogs.param_map import PluginParamMapDialog
 from .dialogs.prefx import PreFXDialog
@@ -471,6 +473,7 @@ class MainWindow(QMainWindow):
         self.cfg = core.cfg
         self._editor_event: threading.Event | None = None
         self._quitting = False
+        self.customize_panel: CustomizePanel | None = None   # docked on first use (Customize…)
         self.setWindowTitle("Mandible")
         self.setWindowIcon(branding.app_icon())
         self.resize(1280, 820)
@@ -479,6 +482,8 @@ class MainWindow(QMainWindow):
         central = QWidget()
         root = self._spaced.add(QVBoxLayout(central), spacing=0, margins=2)
         self.setCentralWidget(central)
+        self._central = central
+        central.installEventFilter(self)   # breakpoints follow it (a docked panel narrows it)
 
         # Outer 19" Rack Chassis
         self.chassis = ChassisWrapperFrame()
@@ -821,9 +826,22 @@ class MainWindow(QMainWindow):
         super().resizeEvent(ev)
         self._apply_breakpoints()
 
+    def eventFilter(self, obj, ev):  # noqa: N802 - Qt naming
+        if obj is self.__dict__.get("_central") and ev.type() == QEvent.Resize:
+            self._apply_breakpoints()
+        return super().eventFilter(obj, ev)
+
+    def _layout_width(self) -> int:
+        """The width the window's own content gets: the central area once shown (narrower than
+        the window while the Customize panel is docked), else the window width."""
+        central = self.centralWidget()
+        if central is not None and central.isVisible() and central.width() > 0:
+            return central.width()
+        return self.width()
+
     def _apply_breakpoints(self):
-        """Header zones follow the window width, the channel strips its height (spec 7.6)."""
-        self.header.apply_window_width(self.width())
+        """Header zones follow the content width, the channel strips the height (spec 7.6)."""
+        self.header.apply_window_width(self._layout_width())
         self._apply_strip_collapse()
         self._restore_left_panel_width()
 
@@ -879,15 +897,7 @@ class MainWindow(QMainWindow):
         self._update_limiter_ui()
 
     def _open_limiter_settings(self):
-        dlg = SettingsDialog(self.core, self.core.engine.running, self, initial_section="output_safety")
-        if dlg.exec():
-            dlg.apply_all()
-            self.cfg.audio = dlg.result_settings()
-            self.core.save()
-            if self.core.engine.running or self.cfg.autostart_audio:
-                self.start_audio()
-            self._update_limiter_ui()
-            self.sync_status_controls()
+        self._run_settings("output_safety")
 
     def _update_limiter_ui(self):
         l_on = bool(self.cfg.limiter.enabled)
@@ -1302,7 +1312,14 @@ class MainWindow(QMainWindow):
             self.tray.setIcon(branding.tray_icon(self._tray_on))
 
     def _settings(self):
-        dlg = SettingsDialog(self.core, self.core.engine.running, self)
+        self._run_settings()
+
+    def _run_settings(self, initial_section: str = "audio"):
+        """Settings (modal). Its *Customize…* button applies Settings, closes it and then opens
+        the Customize panel docked here."""
+        dlg = SettingsDialog(self.core, self.core.engine.running, self, initial_section=initial_section)
+        customize = []
+        dlg.customizeRequested.connect(lambda: customize.append(True))
         if dlg.exec():
             dlg.apply_all()
             self.cfg.audio = dlg.result_settings()
@@ -1311,6 +1328,22 @@ class MainWindow(QMainWindow):
                 self.start_audio()
             self._update_limiter_ui()
             self.sync_status_controls()
+        if customize:
+            self.open_customize()
+
+    def open_customize(self) -> CustomizePanel:
+        """Show (and raise) the Customize panel on the right; built once, then reused."""
+        panel = self.customize_panel
+        if panel is None:
+            panel = CustomizePanel(self.core, self)
+            self.customize_panel = panel
+            self.addDockWidget(Qt.RightDockWidgetArea, panel)
+            self.resizeDocks([panel], [CUSTOMIZE_WIDTH], Qt.Horizontal)
+        else:
+            panel.reload()
+        panel.show()
+        panel.raise_()
+        return panel
 
     def _update_status(self):
         e = self.core.engine

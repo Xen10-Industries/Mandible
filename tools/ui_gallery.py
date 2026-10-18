@@ -12,9 +12,10 @@ page with the images and a table of report counts) and ``DIR/report.json``::
     {"<screen>|<skin>|<theme>|<WxH>": {"min_size": [w, h], "overflow": [...],
      "clipped_text": [...], "untiered_buttons": [...], "contrast": [...]}}
 
-Screens are ``main`` plus one per dialog. Sizes apply to the main window, captured from the
-largest down (so all but the first capture follow a shrink); dialogs are captured at their
-default size. Nothing is ever shown on the desktop (WA_DontShowOnScreen),
+Screens are ``main`` plus one per dialog (the Customize dock panel counts as one). Sizes apply
+to the main window, captured from the largest down (so all but the first capture follow a
+shrink); dialogs are captured at their default size, and the panels in ``NARROW_SCREENS`` again
+at their minimum width (``_min`` images, merged into the same report entry). Nothing is ever shown on the desktop (WA_DontShowOnScreen),
 and %APPDATA% is pointed at a temp dir before ``mandible`` is imported. QT_QPA_PLATFORM
 defaults to ``offscreen``; set it to ``windows`` on Windows for real font metrics (minimum
 sizes differ between the two because the offscreen platform substitutes fonts). ``--strict`` exits 1
@@ -38,7 +39,8 @@ DEFAULT_SKINS = "skeuomorphic,vintage,minimal"
 DEFAULT_THEMES = "scarlet,cyan,stealth,amber"
 DEFAULT_SIZES = "1024x640,1280x720,1920x1080"
 DIALOGS = ("settings", "prefx", "soundboard", "hotkey", "add_plugin", "param_map",
-           "setup_assistant", "about")
+           "setup_assistant", "about", "customize")
+NARROW_SCREENS = ("customize",)   # docked panels: also captured at their minimum width
 _LISTS = ("overflow", "clipped_text", "untiered_buttons", "contrast")
 
 
@@ -90,12 +92,16 @@ def _merge(into: dict, more: dict) -> None:
                 into[name].append(item)
 
 
-def _states(dialog):
+def _states(dialog, review: bool = False):
     """Yield ``(suffix, label)`` after switching the dialog to each section / tab / wizard
     page, starting from the first. Wizard pages are reached through the wizard's own
-    navigation, so its step header is right."""
+    navigation, so its step header is right. ``review`` adds states that only matter on the
+    contact sheet and cost a live look change (the Customize panel's contrast warnings)."""
     from PySide6.QtWidgets import QTabWidget
 
+    if hasattr(dialog, "gallery_states"):        # a panel that lists its own states
+        yield from dialog.gallery_states(warnings=review)
+        return
     sections = getattr(dialog, "sections", None)
     if sections is not None and hasattr(dialog, "show_section"):
         ids = dialog.section_ids()
@@ -129,6 +135,7 @@ def dialog_builders(core) -> dict:
     """``screen name -> zero-argument callable`` building that dialog on the sample core."""
     from mandible.ui.dialogs.about import AboutDialog
     from mandible.ui.dialogs.add_plugin import AddPluginDialog
+    from mandible.ui.dialogs.customize import CustomizePanel
     from mandible.ui.dialogs.hotkey import HotkeyDialog
     from mandible.ui.dialogs.param_map import PluginParamMapDialog
     from mandible.ui.dialogs.prefx import PreFXDialog
@@ -146,6 +153,7 @@ def dialog_builders(core) -> dict:
         "param_map": lambda: PluginParamMapDialog(slot, core, None),
         "setup_assistant": lambda: SetupAssistantDialog(core, None),
         "about": lambda: AboutDialog(None),
+        "customize": lambda: CustomizePanel(core, None),
     }
 
 
@@ -274,10 +282,18 @@ def run_gallery(out: pathlib.Path, skins: list[str], themes: list[str],
                          "overflow": [], "clipped_text": [], "untiered_buttons": [],
                          "contrast": contrast}
                 images[key] = []
-                for suffix, _label in _states(dlg):
+                for suffix, _label in _states(dlg, review=True):
                     app.processEvents()
                     _merge(entry, _inspect(dlg, contrast))
                     images[key].append(snap(dlg, key + suffix))
+                if screen in NARROW_SCREENS:
+                    dlg.resize(hint.width(), dlg.height())
+                    app.processEvents()
+                    entry["min_width"] = dlg.width()
+                    for suffix, _label in _states(dlg, review=True):
+                        app.processEvents()
+                        _merge(entry, _inspect(dlg, contrast))
+                        images[key].append(snap(dlg, key + "_min" + suffix))
                 report[key] = entry
             finally:
                 dlg.close()

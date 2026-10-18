@@ -1038,6 +1038,57 @@ QLabel#wizardGuideText {{
     font-size: {f_small};
 }}
 
+QWidget#customizeBody {{
+    background-color: {card};
+}}
+QWidget#customizeTitleBar {{
+    background-color: {alt};
+    border-bottom: {bw} solid {line};
+}}
+QLabel#customizeTitle {{
+    font-size: {f_title};
+    font-weight: bold;
+    color: {text};
+}}
+QLabel#customizeSlotLabel {{
+    color: {muted};
+    font-size: {f_small};
+    font-weight: 600;
+}}
+QLabel#customizeMessage {{
+    color: {muted};
+    font-size: {f_small};
+}}
+QLabel#customizeMessage[state="warn"], QLabel#customizeNotice {{
+    color: {warn};
+    font-size: {f_small};
+    font-weight: 600;
+}}
+QLabel#customizeMessage[state="danger"] {{
+    color: {danger};
+    font-weight: 600;
+}}
+QFrame#customizeBanner {{
+    background-color: {warn_bg};
+    border: {bw} solid {warn};
+    border-radius: {r_pnl};
+}}
+QFrame#customizeBanner[state="danger"] {{
+    background-color: {danger_bg};
+    border-color: {danger};
+}}
+QLabel#tokenName, QLabel#tokenRatio, QLineEdit#hexEdit {{
+    font-family: Consolas, "Cascadia Mono", monospace;
+    font-size: {f_small};
+}}
+QLabel#tokenRatio {{
+    color: {muted};
+}}
+QPushButton[tier="secondary"][chip="true"]:checked {{
+    background-color: {accent_subtle};
+    color: {text};
+}}
+
 QTabWidget::pane {{
     border: {bw} solid {line};
     border-radius: {r_pnl};

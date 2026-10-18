@@ -610,6 +610,7 @@ def test_unexpected_error_while_parsing_one_file_skips_only_that_file(monkeypatc
         return real(doc)
 
     monkeypatch.setattr(UL, "_parse_skin", flaky)
+    UL.invalidate_cache()          # the listing may already be cached from before the swap
     loaded, notices = UL.load_user_skins()
     assert list(loaded) == ["user:alpha", "user:gamma"]
     assert len(notices) == 1 and "beta.json" in notices[0] and "RuntimeError" in notices[0]

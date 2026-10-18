@@ -186,14 +186,27 @@ def test_appearance_customize_button_emits_signal(settings):
     assert got == [1]
 
 
-def test_appearance_groups_frame_and_switch_under_skin_elements(settings):
-    from PySide6.QtWidgets import QLabel
+def test_appearance_leaves_frame_and_switch_to_customize(settings):
+    """R5: the old frame / switch pickers are gone from Appearance (Customize swaps elements)."""
+    from PySide6.QtWidgets import QComboBox, QLabel
 
     dlg = settings()
     page = dlg.pages.widget(SECTION_IDS.index("appearance"))
     labels = [w.text().lower() for w in page.findChildren(QLabel, "settingsGroupLabel")]
-    assert "skin elements" in labels
-    assert page.isAncestorOf(dlg.frame_combo) and page.isAncestorOf(dlg.switch_combo)
+    assert "skin elements" not in labels
+    assert page.findChildren(QComboBox) == [dlg.skin_combo, dlg.theme_combo]
+    assert not hasattr(dlg, "frame_combo") and not hasattr(dlg, "switch_combo")
+
+
+def test_appearance_customize_applies_and_closes_settings(settings, core):
+    from PySide6.QtWidgets import QDialog
+
+    dlg = settings(initial_section="appearance")
+    dlg.show()
+    asked = []
+    dlg.customizeRequested.connect(lambda: asked.append(dlg.isVisible()))
+    dlg.customize_btn.click()
+    assert asked == [True] and dlg.result() == QDialog.Accepted and not dlg.isVisible()
 
 
 @pytest.fixture
@@ -356,7 +369,7 @@ def test_every_dialog_meets_the_standard_at_default_and_minimum_size(qapp, sampl
     """No overflow, no clipped text, no untiered buttons and at most one primary button, in
     every dialog, at its default size and at the smallest size it allows (font-dependent
     findings are re-checked with real Windows metrics by tests/test_skins.py)."""
-    from PySide6.QtCore import Qt
+    from PySide6.QtCore import QCoreApplication, QEvent, Qt
 
     gallery = _gallery()
     gallery._apply(qapp, skin, theme, sample_core)
@@ -380,6 +393,8 @@ def test_every_dialog_meets_the_standard_at_default_and_minimum_size(qapp, sampl
         finally:
             dlg.close()
             dlg.deleteLater()
+            # delete it now: a leftover would be restyled by every later look switch
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     assert failures == {}
 
 

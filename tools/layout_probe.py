@@ -383,12 +383,12 @@ def run_standard(skin: str, themes: list[str], sizes: list[tuple[int, int]],
                     hint = dlg.minimumSizeHint().expandedTo(dlg.minimumSize())
                     m = {"size": [dlg.width(), dlg.height()],
                          "min_size": [hint.width(), hint.height()]}
-                    for _suffix, _label in gallery._states(dlg):
+                    for _suffix, _label in gallery._states(dlg, review=True):
                         app.processEvents()
                         _merge_lists(m, _standard_lists(dlg, allowed))
                     # Again at the smallest size the dialog allows: pages must scroll, not clip.
                     dlg.resize(hint)
-                    for _suffix, _label in gallery._states(dlg):
+                    for _suffix, _label in gallery._states(dlg, review=True):
                         app.processEvents()
                         _merge_lists(m, _standard_lists(dlg, allowed))
                     entry["screens"][name] = m

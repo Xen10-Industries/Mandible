@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import os
+from types import SimpleNamespace
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QAbstractScrollArea, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
@@ -15,7 +16,7 @@ from ... import devices as D
 from ...config import APP_DIR, AudioSettings, MidiBinding, is_startup_enabled, set_startup_enabled
 from ...core import Core
 from ...midi import list_midi_inputs
-from ..look import Look, current_look, look_for, set_look, space
+from ..look import Look, current_look, look_bus, look_from_config, set_look, space
 from ..user_looks import all_palettes, all_skins
 from ..widgets.base import SpacedLayouts, _follow_look
 from ..widgets.buttons import make_button, tier_button_box
@@ -53,6 +54,8 @@ class SettingsDialog(QDialog):
     """Settings in eight sections (see ``SECTIONS``): Up / Down move between sections in the
     list, Tab moves into the page. OK applies (``apply_all``); Cancel reverts the live look."""
 
+    # Customize... asks the main window for the Customize panel. Settings applies its pending
+    # changes and closes first (it is modal; the panel is docked to the main window).
     customizeRequested = Signal()
 
     def __init__(self, core: Core, running: bool, parent=None, initial_section: str = "audio"):
@@ -416,31 +419,36 @@ class SettingsDialog(QDialog):
         self.theme_combo.currentIndexChanged.connect(self._on_appearance_preview_changed)
         form.addRow("Theme", self.theme_combo)
 
-        self.customize_btn = make_button("Customize…",
-                                         tooltip="Edit the colours, shape and elements of the current look")
-        self.customize_btn.clicked.connect(self.customizeRequested)
+        self.customize_btn = make_button(
+            "Customize…", tooltip="Swap the skin's elements and edit its colours in a panel beside "
+                                  "the main window (applies these settings first)")
+        self.customize_btn.clicked.connect(self._open_customize)
         form.addRow(self._left(self.customize_btn))
-        form.addRow(self._hint("Changes preview straight away. Cancel restores the look you had."))
-
-        self._group(form, "Skin elements")
-        self.frame_combo = self._combo(10)
-        self.frame_combo.addItem("Auto (matched to the skin)", "auto")
-        self.frame_combo.addItem("19\" brushed steel rack ears", "metal_rack")
-        self.frame_combo.addItem("Sculpted walnut cheek blocks", "wood_cheeks")
-        self.frame_combo.addItem("Frameless matte border", "frameless")
-        cur_frame = getattr(self.cfg, "chassis_frame", "auto")
-        self.frame_combo.setCurrentIndex(max(0, self.frame_combo.findData(cur_frame)))
-        self.frame_combo.currentIndexChanged.connect(self._on_appearance_preview_changed)
-        form.addRow("Frame", self.frame_combo)
-
-        self.switch_combo = self._combo(10)
-        self.switch_combo.addItem("Bat-handle metal toggle (classic studio)", "bat_toggle")
-        self.switch_combo.addItem("Studio beveled rocker (80s/90s rackmount)", "rocker")
-        cur_sw = getattr(self.cfg, "switch_style", "bat_toggle")
-        self.switch_combo.setCurrentIndex(max(0, self.switch_combo.findData(cur_sw)))
-        self.switch_combo.currentIndexChanged.connect(self._on_appearance_preview_changed)
-        form.addRow("Switch style", self.switch_combo)
+        form.addRow(self._hint("Changes preview straight away. Cancel restores the look you had. "
+                               "Frame, switches, knobs and meters are chosen in Customize."))
+        look_bus().userLooksChanged.connect(self.refresh_appearance_pickers)
         return page
+
+    def refresh_appearance_pickers(self) -> None:
+        """Re-read the user skins and themes (Customize saved, deleted or imported one), keeping
+        each picker's selection when it still exists, else the configured one."""
+        for combo, looks, configured in (
+                (self.skin_combo, appearance_skins(), getattr(self.cfg, "ui_skin", "skeuomorphic")),
+                (self.theme_combo, appearance_palettes(), getattr(self.cfg, "theme", "scarlet"))):
+            want = combo.currentData()
+            combo.blockSignals(True)
+            try:
+                combo.clear()
+                for look in looks:
+                    combo.addItem(look.name, look.id)
+                index = combo.findData(want)
+                combo.setCurrentIndex(index if index >= 0 else max(0, combo.findData(configured)))
+            finally:
+                combo.blockSignals(False)
+
+    def _open_customize(self) -> None:
+        self.customizeRequested.emit()
+        self.accept()
 
     # ------------------------------------------------------------------ General
     def _build_general(self) -> QWidget:
@@ -799,17 +807,13 @@ class SettingsDialog(QDialog):
         # Monitor Mode
         self.core.set_monitor_mode(self.mon_mode.currentData())
 
-        # Appearance: store every id first so the core setters apply the final look once
+        # Appearance: store both ids first so the core setters apply the final look once. The old
+        # chassis_frame / switch_style fields are never written (spec 7.5; Customize owns them).
         new_skin = self.skin_combo.currentData() or self.cfg.ui_skin
-        new_frame = self.frame_combo.currentData() or self.cfg.chassis_frame
         new_theme = self.theme_combo.currentData() or self.cfg.theme
-        new_switch_style = self.switch_combo.currentData() or self.cfg.switch_style
-        self.cfg.ui_skin, self.cfg.chassis_frame = new_skin, new_frame
-        self.cfg.theme, self.cfg.switch_style = new_theme, new_switch_style
+        self.cfg.ui_skin, self.cfg.theme = new_skin, new_theme
         self.core.set_ui_skin(new_skin)
-        self.core.set_chassis_frame(new_frame)
         self.core.set_theme(new_theme)
-        self.core.set_switch_style(new_switch_style)
 
         # Normalizer
         if hasattr(self, "norm_en"):
@@ -826,10 +830,13 @@ class SettingsDialog(QDialog):
             self._fill_drivers(self.cfg.audio)
 
     def _preview_look(self) -> Look:
-        return look_for(self.theme_combo.currentData() or "scarlet",
-                        self.skin_combo.currentData() or "skeuomorphic",
-                        self.frame_combo.currentData() or "auto",
-                        self.switch_combo.currentData() if hasattr(self, "switch_combo") else None)
+        """The look the pickers select, resolved exactly as the config will be after OK."""
+        return look_from_config(SimpleNamespace(
+            theme=self.theme_combo.currentData() or "scarlet",
+            ui_skin=self.skin_combo.currentData() or "skeuomorphic",
+            chassis_frame=getattr(self.cfg, "chassis_frame", "auto"),
+            switch_style=getattr(self.cfg, "switch_style", None),
+            appearance_migrated=getattr(self.cfg, "appearance_migrated", False)))
 
     def _on_appearance_preview_changed(self, _=None):
         look = self._preview_look()

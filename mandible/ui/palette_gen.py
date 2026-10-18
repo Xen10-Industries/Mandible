@@ -33,14 +33,17 @@ PALETTE_TOKENS: tuple[str, ...] = (
 )
 
 # (token, partner token, minimum ratio). text.on_accent is checked against the
-# accent only (it sits on the accent fill, never on a surface).
+# accent only (it sits on the accent fill, never on a surface). readout.text is read on
+# the inset readout windows (the header's telemetry display); the accent's hover and
+# pressed fills must stay as visible against the panel as the accent itself.
 CONTRAST_PAIRS: tuple[tuple[str, str, float], ...] = (
     *((t, bg, TEXT_MIN)
       for t in ("text.primary", "text.secondary")
       for bg in ("bg.window", "bg.panel", "bg.raised")),
     ("text.on_accent", "accent", TEXT_MIN),
+    ("readout.text", "bg.inset", TEXT_MIN),
     *((t, "bg.panel", UI_MIN)
-      for t in ("accent", "focus.ring", "line.strong",
+      for t in ("accent", "accent.hover", "accent.pressed", "focus.ring", "line.strong",
                 "status.ok", "status.warn", "status.danger")),
 )
 
@@ -222,8 +225,10 @@ def derive_colors(accent: str, tint: str = "neutral",
     if changed:
         notes.append("accent: adjusted for readability")
     cc = min(ac, hex_to_oklch(out["accent"])[1])  # chroma after any gamut reduction
-    out["accent.hover"] = oklch_to_hex(cl + 0.05 * step, cc, ah)
-    out["accent.pressed"] = oklch_to_hex(cl - 0.05 * step, cc, ah)
+    # Hover moves away from the panel; pressed moves towards it, so it is held at 3:1 too (it
+    # can meet the accent itself when the accent was nudged up to the limit).
+    out["accent.hover"], _, _ = _nudge(cl + 0.05 * step, cc, ah, panel, UI_MIN, step)
+    out["accent.pressed"], _, _ = _nudge(cl - 0.05 * step, cc, ah, panel, UI_MIN, step)
     out["accent.subtle"] = oklch_to_hex(spec["accent_subtle"], min(cc, 0.07), ah)
     out["focus.ring"], _, _ = _nudge(cl + 0.12 * step, cc, ah, panel, UI_MIN, step)
 
@@ -242,6 +247,7 @@ def derive_colors(accent: str, tint: str = "neutral",
         out["status.ok"], out["status.warn"], out["status.danger"])
     out["meter.off"] = oklch_to_hex(spec["meter_off"], tc, th)
 
-    out["readout.text"] = oklch_to_hex(max(cl, 0.80) if dark else min(cl, 0.45), cc, ah)
+    out["readout.text"], _, _ = _nudge(max(cl, 0.80) if dark else min(cl, 0.45), cc, ah,
+                                       out["bg.inset"], TEXT_MIN, step)
 
     return {k: out[k] for k in PALETTE_TOKENS}, notes

@@ -23,6 +23,7 @@ __all__ = [
     "PALETTE_TOKENS", "SKIN_SLOTS", "SHAPE_TOKENS", "Palette", "Skin", "Look",
     "BUILTIN_PALETTES", "BUILTIN_SKINS", "LookBus", "space", "font_px",
     "current_look", "set_look", "qpalette", "look_bus", "with_elements", "look_for", "look_from_config",
+    "notify_user_looks_changed",
 ]
 
 SKIN_SLOTS = ("frame", "switch", "knob", "meter", "panel", "screws", "density")
@@ -238,9 +239,12 @@ _current: Look = _DEFAULT_LOOK
 
 
 class LookBus(QObject):
-    """Carries ``lookChanged`` so custom-painted widgets can ``update()``."""
+    """Carries ``lookChanged`` so custom-painted widgets can ``update()``, and
+    ``userLooksChanged`` when a user skin or theme was saved, deleted or imported (pickers
+    listing ``user_looks.all_skins()`` / ``all_palettes()`` re-read them)."""
 
     lookChanged = Signal()
+    userLooksChanged = Signal()
 
 
 _bus: LookBus | None = None
@@ -255,6 +259,12 @@ def look_bus() -> LookBus:
 
 def current_look() -> Look:
     return _current
+
+
+def notify_user_looks_changed() -> None:
+    """Emit ``userLooksChanged`` (only once something listens: the bus exists)."""
+    if _bus is not None:
+        _bus.userLooksChanged.emit()
 
 
 _PALETTE_ROLES = (
@@ -340,9 +350,17 @@ def look_for(theme: str, skin: str, frame: str = "auto", switch_style: str | Non
 
 
 def look_from_config(cfg) -> Look:
-    """The Look an ``AppConfig`` selects (``theme``, ``ui_skin``, ``chassis_frame``, ``switch_style``)."""
-    return look_for(getattr(cfg, "theme", "scarlet"), getattr(cfg, "ui_skin", "skeuomorphic"),
-                    getattr(cfg, "chassis_frame", "auto"), getattr(cfg, "switch_style", None))
+    """The Look an ``AppConfig`` selects (``theme``, ``ui_skin``).
+
+    The old ``chassis_frame`` / ``switch_style`` fields only count until the config has been
+    migrated (``appearance_migrated``, spec 7.5): from then on they are ignored, kept in the file
+    only so an older build still finds them."""
+    theme = getattr(cfg, "theme", "scarlet")
+    skin = getattr(cfg, "ui_skin", "skeuomorphic")
+    if getattr(cfg, "appearance_migrated", False):
+        return look_for(theme, skin)
+    return look_for(theme, skin, getattr(cfg, "chassis_frame", "auto"),
+                    getattr(cfg, "switch_style", None))
 
 
 # ------------------------------------------------------------- spacing and type

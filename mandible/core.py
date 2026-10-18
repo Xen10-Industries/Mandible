@@ -635,16 +635,6 @@ class Core(QObject):
         self._apply_look()
         self.save()
 
-    def set_chassis_frame(self, frame: str):
-        self.cfg.chassis_frame = frame
-        self._apply_look()
-        self.save()
-
-    def set_switch_style(self, style: str):
-        self.cfg.switch_style = style
-        self._apply_look()
-        self.save()
-
     def set_soundboard_ducking(self, enabled: bool, duck_db: float):
         self.cfg.soundboard_ducking_enabled = bool(enabled)
         self.cfg.soundboard_duck_db = float(duck_db)

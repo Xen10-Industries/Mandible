@@ -216,15 +216,16 @@ def test_frame_and_switch_overrides_keep_skin_id():
     assert look_for("cyan", "vintage", switch_style="bat_toggle").skin.elements["switch"] == "rocker"
 
 
-def test_core_frame_and_switch_setters_apply_look(core, restore_look):
+def test_unmigrated_legacy_frame_and_switch_still_apply_through_the_config(core, restore_look):
+    """Before migration the old fields still shape the look (spec 7.5); Customize owns them now,
+    so the core no longer has setters for them."""
+    core.cfg.chassis_frame, core.cfg.switch_style = "wood_cheeks", "rocker"
     core.set_ui_skin("skeuomorphic")
-    core.set_chassis_frame("wood_cheeks")
-    core.set_switch_style("rocker")
     look = current_look()
     assert look.skin.id == "skeuomorphic"
     assert look.skin.elements["frame"] == "wood_cheeks"
     assert look.skin.elements["switch"] == "rocker"
-    assert core.cfg.chassis_frame == "wood_cheeks" and core.cfg.switch_style == "rocker"
+    assert not hasattr(core, "set_chassis_frame") and not hasattr(core, "set_switch_style")
 
 
 # ------------------------------------------------------------- old theming is gone
@@ -250,11 +251,9 @@ def test_settings_pickers_show_palette_names_and_preview(core, restore_look):
 
         dlg.theme_combo.setCurrentIndex(dlg.theme_combo.findData("amber"))
         assert current_look().palette.id == "amber"
-        dlg.frame_combo.setCurrentIndex(dlg.frame_combo.findData("frameless"))
-        assert current_look().skin.id == "skeuomorphic"
-        assert current_look().skin.elements["frame"] == "frameless"
-        dlg.switch_combo.setCurrentIndex(dlg.switch_combo.findData("rocker"))
-        assert current_look().skin.elements["switch"] == "rocker"
+        dlg.skin_combo.setCurrentIndex(dlg.skin_combo.findData("vintage"))
+        assert current_look().skin.id == "vintage"
+        assert current_look().skin.elements["frame"] == "wood_cheeks"
 
         dlg.reject()
         assert current_look() == _look("skeuomorphic", "scarlet")
@@ -270,13 +269,12 @@ def test_settings_apply_persists_look(core, restore_look):
     try:
         dlg.skin_combo.setCurrentIndex(dlg.skin_combo.findData("minimal"))
         dlg.theme_combo.setCurrentIndex(dlg.theme_combo.findData("stealth"))
-        dlg.frame_combo.setCurrentIndex(dlg.frame_combo.findData("wood_cheeks"))
         dlg.apply_all()
     finally:
         dlg.deleteLater()
-    assert (core.cfg.ui_skin, core.cfg.theme, core.cfg.chassis_frame) == ("minimal", "stealth", "wood_cheeks")
+    assert (core.cfg.ui_skin, core.cfg.theme, core.cfg.chassis_frame) == ("minimal", "stealth", "auto")
     look = current_look()
-    assert (look.skin.id, look.palette.id, look.skin.elements["frame"]) == ("minimal", "stealth", "wood_cheeks")
+    assert (look.skin.id, look.palette.id, look.skin.elements["frame"]) == ("minimal", "stealth", "frameless")
 
 
 # ------------------------------------------------------------- widgets delegate to elements
