@@ -211,6 +211,7 @@ class AppConfig:
     chassis_frame: str = "auto"                # "auto" | "metal_rack" | "wood_cheeks" | "frameless"
     theme: str = "scarlet"                     # "scarlet" | "cyan" | "stealth" | "amber"
     switch_style: str = "bat_toggle"           # "bat_toggle" | "rocker"
+    appearance_migrated: bool = False          # old frame/switch settings already baked into a user skin
     soundboard_ducking_enabled: bool = False   # duck mic input when soundboard plays
     soundboard_duck_db: float = -12.0          # dB attenuation during soundboard playback
     normalizer_enabled: bool = False           # output loudness normalizer

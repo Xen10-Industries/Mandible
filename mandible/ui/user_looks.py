@@ -28,6 +28,7 @@ __all__ = [
     "SKINS_DIR", "THEMES_DIR", "MAX_IMPORT_BYTES", "LookFileError", "slugify", "save_skin", "save_palette",
     "load_user_skins", "load_user_palettes", "delete_user_look", "all_skins", "all_palettes",
     "export_skin", "export_palette", "import_skin", "import_palette", "new_skin", "new_palette",
+    "migrate_appearance",
 ]
 
 SKINS_DIR = Path(APP_DIR) / "skins"
@@ -447,3 +448,71 @@ def import_palette(path: str | os.PathLike) -> tuple[Palette, list[str]]:
     palette, extra = _build_palette(look_id, unique, dark, source, colors)
     _write_json_atomic(THEMES_DIR / f"{_slug_of_id(look_id)}.json", _palette_doc(unique, dark, source, colors))
     return palette, [f"{unique}: {n}" for n in notes] + extra
+
+
+# ------------------------------------------------------------ appearance migration
+
+def migrate_appearance(cfg) -> str | None:
+    """One-time migration of the old per-setting frame / switch options into a saved user skin.
+
+    Returns the ``user:`` id of the skin created (or reused) and points ``cfg.ui_skin`` at it, or
+    None when there was nothing to migrate. ``cfg.appearance_migrated`` is set in every outcome
+    except a failed save, so a failure is retried on the next launch. Never raises.
+
+    ``chassis_frame == "auto"`` means "the skin's own frame". A skin is only created when the old
+    settings differ from the selected built-in skin: a frame other than that skin's, or (skeuomorphic
+    only, as ``look_for`` always did) a different switch style. An unknown or ``user:`` ``ui_skin`` is
+    left alone. Once migrated, ``cfg.chassis_frame`` is reset to ``"auto"`` so the legacy overrides do
+    not stack on top of the new skin; ``switch_style`` is left as is (ignored for non-built-in ids).
+    """
+    if getattr(cfg, "appearance_migrated", False):
+        return None
+    try:
+        return _migrate_appearance(cfg)
+    except Exception as exc:  # startup must never fail on this; retry next launch
+        print(f"[Mandible] could not migrate appearance settings ({_one_line(f'{type(exc).__name__}: {exc}')})")
+        return None
+
+
+def _migrate_appearance(cfg) -> str | None:
+    base = BUILTIN_SKINS.get(cfg.ui_skin) if isinstance(cfg.ui_skin, str) else None
+    overrides: dict[str, str] = {}
+    if base is not None:
+        frame = cfg.chassis_frame
+        if frame != "auto" and frame in registry.variants("frame") and frame != base.elements["frame"]:
+            overrides["frame"] = frame
+        switch = cfg.switch_style
+        if (base.id == "skeuomorphic" and switch in registry.variants("switch")
+                and switch != base.elements["switch"]):
+            overrides["switch"] = switch
+    if not overrides:
+        cfg.appearance_migrated = True
+        return None
+
+    elements = {**base.elements, **overrides}
+    shape = dict(base.shape)
+    name = f"{base.name} (my settings)"
+    skin_id = _existing_migrated_skin(name, elements, shape)
+    if skin_id is None:
+        try:
+            skin = new_skin(name, elements, shape)
+            save_skin(skin)
+        except (OSError, LookFileError, ValueError) as exc:
+            print(f"[Mandible] could not save the migrated skin ({_one_line(f'{type(exc).__name__}: {exc}')})")
+            return None
+        skin_id = skin.id
+    cfg.ui_skin = skin_id
+    cfg.chassis_frame = "auto"
+    cfg.appearance_migrated = True
+    return skin_id
+
+
+def _existing_migrated_skin(name: str, elements: Mapping, shape: Mapping) -> str | None:
+    """A saved user skin called ``name`` (or ``name (2)``, ``name (3)``... from an earlier collision)
+    with exactly these elements and shape, so a lost flag never produces a duplicate."""
+    pattern = re.compile(re.escape(name.casefold()) + r"(?: \(\d+\))?")
+    for skin in load_user_skins()[0].values():
+        if (pattern.fullmatch(skin.name.casefold()) and dict(skin.elements) == dict(elements)
+                and dict(skin.shape) == dict(shape)):
+            return skin.id
+    return None

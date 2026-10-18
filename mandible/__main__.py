@@ -79,8 +79,23 @@ def _migrate_startup_entry():
         config.set_startup_enabled(True, cfg.start_minimized)
 
 
+def _migrate_appearance():
+    """Bake the old frame/switch settings into a user skin, once. Never raises."""
+    try:
+        from mandible import config
+        from mandible.ui import user_looks
+        cfg = config.load_config()
+        before = config._to_dict(cfg)
+        user_looks.migrate_appearance(cfg)
+        if config._to_dict(cfg) != before:
+            config.save_config(cfg)
+    except Exception as exc:
+        print(f"[Mandible] appearance migration skipped ({type(exc).__name__}: {exc})")
+
+
 def main():
     _setup_logging()
+    _migrate_appearance()
     _tune_process()
     _migrate_startup_entry()
     from mandible.ui.app import main as gui_main

@@ -311,10 +311,11 @@ def look_for(theme: str, skin: str, frame: str = "auto", switch_style: str | Non
     """The Look for config ids: a built-in id or a ``user:`` id of a saved user theme/skin.
     Unknown ids fall back to ``scarlet`` / ``skeuomorphic``.
 
-    ``frame`` and ``switch_style`` are the old ``chassis_frame`` / ``switch_style`` settings
-    (Task 18 migrates them into user skins): a frame other than ``"auto"`` overrides the
-    skin's frame; the switch style only ever applied to the skeuomorphic skin, so it
-    overrides the switch there and is ignored elsewhere, as before.
+    ``frame`` and ``switch_style`` are the old ``chassis_frame`` / ``switch_style`` settings.
+    They exist only for unmigrated configs: ``user_looks.migrate_appearance`` bakes them into a
+    user skin at startup and resets ``chassis_frame`` to ``"auto"``, after which they add nothing.
+    A frame other than ``"auto"`` overrides the skin's frame; the switch style only ever applied
+    to the skeuomorphic skin, so it overrides the switch there and is ignored elsewhere.
     """
     from .elements import registry
 
