@@ -279,3 +279,11 @@ def test_set_look_is_exception_safe(qapp, restore_look, monkeypatch):
         assert seen == []
     finally:
         look_bus().lookChanged.disconnect(on_change)
+
+
+@pytest.mark.parametrize("bad", [["laser"], {"a": 1}, 3, None, 1.5])
+def test_resolve_never_raises_for_non_string_variants(bad):
+    # A hostile JSON file can put an unhashable value (list/dict) where a variant id goes.
+    resolved, notices = registry.resolve({"switch": bad})
+    assert resolved == registry.DEFAULTS
+    assert len(notices) == 1 and notices[0].startswith("switch:")

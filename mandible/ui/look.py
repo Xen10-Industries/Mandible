@@ -308,7 +308,8 @@ def with_elements(look: Look, **overrides: str) -> Look:
 
 
 def look_for(theme: str, skin: str, frame: str = "auto", switch_style: str | None = None) -> Look:
-    """The Look for config ids. Unknown ids fall back to ``scarlet`` / ``skeuomorphic``.
+    """The Look for config ids: a built-in id or a ``user:`` id of a saved user theme/skin.
+    Unknown ids fall back to ``scarlet`` / ``skeuomorphic``.
 
     ``frame`` and ``switch_style`` are the old ``chassis_frame`` / ``switch_style`` settings
     (Task 18 migrates them into user skins): a frame other than ``"auto"`` overrides the
@@ -317,8 +318,18 @@ def look_for(theme: str, skin: str, frame: str = "auto", switch_style: str | Non
     """
     from .elements import registry
 
-    palette = BUILTIN_PALETTES.get(theme, BUILTIN_PALETTES["scarlet"])
-    base = BUILTIN_SKINS.get(skin, BUILTIN_SKINS["skeuomorphic"])
+    palette = BUILTIN_PALETTES.get(theme)
+    if palette is None and isinstance(theme, str) and theme.startswith("user:"):
+        from . import user_looks
+
+        palette = user_looks.all_palettes().get(theme)
+    base = BUILTIN_SKINS.get(skin)
+    if base is None and isinstance(skin, str) and skin.startswith("user:"):
+        from . import user_looks
+
+        base = user_looks.all_skins().get(skin)
+    palette = palette or BUILTIN_PALETTES["scarlet"]
+    base = base or BUILTIN_SKINS["skeuomorphic"]
     overrides: dict[str, str] = {}
     if frame in registry.variants("frame"):
         overrides["frame"] = frame

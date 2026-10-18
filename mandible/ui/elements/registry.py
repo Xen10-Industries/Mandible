@@ -49,17 +49,19 @@ def resolve(elements: Mapping[str, str]) -> tuple[dict[str, str], list[str]]:
     Missing slots take their default silently. An unknown variant (a skin file
     from a newer build) falls back to the slot default with a notice such as
     ``"switch: 'laser' not available, using bat_toggle"``. An unknown slot is
-    dropped with a notice. Never raises.
+    dropped with a notice. A value that is not a string (a hostile or damaged skin
+    file can carry a list or number) is treated like an unknown variant. Never raises.
     """
     resolved: dict[str, str] = {}
     notices: list[str] = []
     for slot, default in DEFAULTS.items():
         variant = elements.get(slot, default)
-        if variant in _VARIANTS.get(slot, {}):
+        if isinstance(variant, str) and variant in _VARIANTS.get(slot, {}):
             resolved[slot] = variant
         else:
             resolved[slot] = default
-            notices.append(f"{slot}: {variant!r} not available, using {default}")
+            shown = repr(variant) if isinstance(variant, str) else f"a {type(variant).__name__} value"
+            notices.append(f"{slot}: {shown} not available, using {default}")
     for slot in elements:
         if slot not in DEFAULTS:
             notices.append(f"{slot}: unknown element slot, ignored")

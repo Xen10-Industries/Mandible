@@ -15,8 +15,8 @@ from ... import devices as D
 from ...config import APP_DIR, AudioSettings, MidiBinding, is_startup_enabled, set_startup_enabled
 from ...core import Core
 from ...midi import list_midi_inputs
-from ..look import (BUILTIN_PALETTES, BUILTIN_SKINS, Look, current_look, look_for, set_look,
-                    space)
+from ..look import Look, current_look, look_for, set_look, space
+from ..user_looks import all_palettes, all_skins
 from ..widgets.base import SpacedLayouts, _follow_look
 from ..widgets.buttons import make_button, tier_button_box
 from .hotkey import HotkeyDialog
@@ -40,13 +40,13 @@ SECTIONS = (
 
 
 def appearance_skins():
-    """The skins the Appearance picker offers (built-ins; user skins join here)."""
-    return tuple(BUILTIN_SKINS.values())
+    """The skins the Appearance picker offers: built-ins first, then user skins by name."""
+    return tuple(all_skins().values())
 
 
 def appearance_palettes():
-    """The themes the Appearance picker offers (built-ins; user themes join here)."""
-    return tuple(BUILTIN_PALETTES.values())
+    """The themes the Appearance picker offers: built-ins first, then user themes by name."""
+    return tuple(all_palettes().values())
 
 
 class SettingsDialog(QDialog):
