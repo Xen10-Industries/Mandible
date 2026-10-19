@@ -39,8 +39,24 @@ Loopback so Discord, OBS, games or any other app can use it as a microphone.
 1. Download the latest release from this repository's [**Releases** page](../../releases/latest):
    - `Mandible-<version>-Setup.exe` (installer), or
    - `Mandible-<version>-win64-portable.zip` (unzip anywhere and run `Mandible.exe`).
-2. *(Optional)* Check the download against `SHA256SUMS.txt`.
+2. *(Optional)* Check the download against `SHA256SUMS.txt` (see below).
 3. Run Mandible. The **Audio Setup Assistant** walks you through choosing your microphone and output.
+
+### "Windows protected your PC"
+
+Mandible's releases are not code-signed yet, so Windows SmartScreen may warn you the first time you run
+the installer or `Mandible.exe`. Click **More info**, check the app is `Mandible-<version>-Setup.exe` or
+`Mandible.exe`, then click **Run anyway**. Only do this for files downloaded from this repository's
+Releases page; every release is built by GitHub Actions from the source code here.
+
+To check a download wasn't altered, compare its SHA-256 hash with the matching line in that release's
+`SHA256SUMS.txt`. In PowerShell:
+
+```powershell
+Get-FileHash .\Mandible-0.1.1-Setup.exe -Algorithm SHA256
+```
+
+The `Hash` it prints must equal the value on the file's line in `SHA256SUMS.txt` (case doesn't matter).
 
 ### Routing with Focusrite Loopback
 
