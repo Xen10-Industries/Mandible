@@ -248,6 +248,9 @@ class PitchFormantPlugin(BaseInternalPlugin):
         self.formant_r.reset()
         self.dry_fifo = np.zeros((2, self.reported_latency_samples), dtype=np.float32)
 
+    def _write_delay(self, buf: np.ndarray, chunk: np.ndarray) -> None:
+        buf[(self.write_pos + np.arange(len(chunk))) % self.buffer_len] = chunk
+
     def _shift_pitch_mono(self, chunk: np.ndarray, buf: np.ndarray, pitch_st: float) -> np.ndarray:
         frames = len(chunk)
         ratio = 2.0 ** (pitch_st / 12.0)
@@ -273,7 +276,9 @@ class PitchFormantPlugin(BaseInternalPlugin):
         frac2 = (r2 - r2_idx).astype(np.float32)
         s2 = (1.0 - frac2) * buf[r2_idx] + frac2 * buf[(r2_idx + 1) % blen]
 
-        w1 = 0.5 * (1.0 + np.cos(2.0 * np.pi * phases)).astype(np.float32)
+        # Each tap's read position jumps by a whole window when its phase wraps (tap 1 at
+        # phase 0, tap 2 at phase 0.5); its weight must be zero there or every wrap clicks.
+        w1 = (0.5 * (1.0 - np.cos(2.0 * np.pi * phases))).astype(np.float32)
         w2 = 1.0 - w1
         return (w1 * s1 + w2 * s2).astype(np.float32)
 
@@ -309,16 +314,20 @@ class PitchFormantPlugin(BaseInternalPlugin):
             pitched_l = self._shift_pitch_mono(in_2d[0], self.buffer_l, pitch_st)
             if is_mono:
                 pitched_r = pitched_l
+                self._write_delay(self.buffer_r, in_2d[1])
             else:
                 pitched_r = self._shift_pitch_mono(in_2d[1], self.buffer_r, pitch_st)
 
             # Advance pitch phase and write position once per block
             rate = (1.0 - pitch_ratio) / self.window_size
-            self.write_pos = (self.write_pos + frames) % self.buffer_len
             self.phase = (self.phase + frames * rate) % 1.0
         else:
             pitched_l = in_2d[0]
             pitched_r = in_2d[1]
+            # Keep the delay lines current so turning the pitch back on doesn't read stale audio.
+            self._write_delay(self.buffer_l, in_2d[0])
+            self._write_delay(self.buffer_r, in_2d[1])
+        self.write_pos = (self.write_pos + frames) % self.buffer_len
 
         # Formant stage always runs (identity when alpha ~ 1) so latency stays constant.
         out_l = self.formant_l.process(pitched_l, alpha)

@@ -156,6 +156,46 @@ def test_formant_level_independent_of_block_size():
     assert max(levels) - min(levels) < 0.2, levels
 
 
+def _second_diff_peak(p, x, bs=480, skip=24000):
+    stereo = np.vstack([x, x])
+    y = np.concatenate([p.process(stereo[:, i:i + bs], 48000, bs)[0]
+                        for i in range(0, stereo.shape[1] - bs + 1, bs)])
+    return float(np.max(np.abs(np.diff(y[skip:], 2))))
+
+
+@pytest.mark.parametrize("pitch", [-12.0, -5.0, 5.0, 12.0])
+def test_pitch_shift_has_no_clicks(pitch):
+    """Each delay tap jumps a whole window when its phase wraps; its crossfade weight must be
+    zero there. With the weights inverted every wrap clicked (2nd-difference peaks ~0.59)."""
+    from mandible.internal_dsp import PitchFormantPlugin
+
+    p = PitchFormantPlugin()
+    p.p_pitch.value = pitch
+    p.p_preserve.value = 0.0
+    clean = 0.5 * (2 * np.pi * 220 * 2 ** (pitch / 12) / 48000) ** 2   # a sine's own peak
+    assert _second_diff_peak(p, _sine(220, 2.0)) < 3 * clean
+
+
+def test_pitch_turned_on_reads_current_audio_not_stale():
+    """At 0 st the delay lines still record, so turning the pitch on doesn't replay old audio."""
+    from mandible.internal_dsp import PitchFormantPlugin
+
+    p = PitchFormantPlugin()
+    p.p_preserve.value = 0.0
+    loud = np.vstack([_sine(220, 0.5)] * 2) * 1.6           # fills the delay lines
+    for i in range(0, loud.shape[1] - 480 + 1, 480):
+        p.p_pitch.value = 5.0
+        p.process(loud[:, i:i + 480], 48000, 480)
+    quiet = np.zeros((2, 48000), dtype=np.float32)          # silence at 0 st...
+    p.p_pitch.value = 0.0
+    for i in range(0, 24000, 480):
+        p.process(quiet[:, i:i + 480], 48000, 480)
+    p.p_pitch.value = 5.0                                    # ...then back on
+    out = np.concatenate([p.process(quiet[:, i:i + 480], 48000, 480)[0]
+                          for i in range(24000, 48000, 480)])
+    assert float(np.max(np.abs(out))) < 1e-6
+
+
 @pytest.mark.parametrize("mix", [100.0, 50.0])
 def test_formant_identity_latency_exact(mix):
     from mandible.internal_dsp import PitchFormantPlugin
