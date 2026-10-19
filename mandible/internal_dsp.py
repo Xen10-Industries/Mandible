@@ -207,6 +207,7 @@ class PitchFormantPlugin(BaseInternalPlugin):
     """
 
     reported_latency_samples = _FormantStage.LATENCY
+    FADE_S = 0.010  # dry <-> shifted crossfade when the pitch crosses 0 st
 
     def __init__(self, samplerate: int = 48000):
         super().__init__("Mandible Pitch & Formant", "internal:pitch_formant")
@@ -220,6 +221,9 @@ class PitchFormantPlugin(BaseInternalPlugin):
         self.buffer_r = np.zeros(self.buffer_len, dtype=np.float32)
         self.write_pos = 0
         self.phase = 0.0
+        self.was_shifting = False
+        self.last_shift_st = 0.0
+        self.fade_len = self.fade_left = 0
         self.window_size = float(self.max_delay_samples)
 
         self.formant_l = _FormantStage()
@@ -244,6 +248,9 @@ class PitchFormantPlugin(BaseInternalPlugin):
         self.buffer_r.fill(0.0)
         self.write_pos = 0
         self.phase = 0.0
+        self.was_shifting = False
+        self.last_shift_st = 0.0
+        self.fade_len = self.fade_left = 0
         self.formant_l.reset()
         self.formant_r.reset()
         self.dry_fifo = np.zeros((2, self.reported_latency_samples), dtype=np.float32)
@@ -310,17 +317,37 @@ class PitchFormantPlugin(BaseInternalPlugin):
         # Fast path for mono mic on stereo buffer
         is_mono = np.array_equal(in_2d[0], in_2d[1])
 
-        if abs(pitch_st) > 0.05:
-            pitched_l = self._shift_pitch_mono(in_2d[0], self.buffer_l, pitch_st)
+        shifting = abs(pitch_st) > 0.05
+        if shifting != self.was_shifting:
+            # Crossfade between dry and shifted over FADE_S instead of jumping (a click). A
+            # reversal mid-fade continues from the current mix.
+            total = max(1, int(self.FADE_S * sample_rate))
+            self.fade_len = total
+            self.fade_left = total - self.fade_left if self.fade_left else total
+            self.was_shifting = shifting
+        if shifting:
+            self.last_shift_st = pitch_st
+
+        if shifting or self.fade_left:
+            # While fading out the shift keeps running at the last pitch.
+            st = pitch_st if shifting else self.last_shift_st
+            pitched_l = self._shift_pitch_mono(in_2d[0], self.buffer_l, st)
             if is_mono:
                 pitched_r = pitched_l
                 self._write_delay(self.buffer_r, in_2d[1])
             else:
-                pitched_r = self._shift_pitch_mono(in_2d[1], self.buffer_r, pitch_st)
+                pitched_r = self._shift_pitch_mono(in_2d[1], self.buffer_r, st)
 
             # Advance pitch phase and write position once per block
-            rate = (1.0 - pitch_ratio) / self.window_size
+            rate = (1.0 - 2.0 ** (st / 12.0)) / self.window_size
             self.phase = (self.phase + frames * rate) % 1.0
+            if self.fade_left:
+                done = self.fade_len - self.fade_left
+                g = np.clip((done + np.arange(1, frames + 1)) / self.fade_len, 0.0, 1.0)
+                wet = (g if shifting else 1.0 - g).astype(np.float32)
+                pitched_l = in_2d[0] + wet * (pitched_l - in_2d[0])
+                pitched_r = in_2d[1] + wet * (pitched_r - in_2d[1])
+                self.fade_left = max(0, self.fade_left - frames)
         else:
             pitched_l = in_2d[0]
             pitched_r = in_2d[1]

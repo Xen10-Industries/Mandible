@@ -409,3 +409,22 @@ def test_radio_gate_silences_pauses_without_touching_speech():
     assert float(np.max(np.abs(y_on[36000:48000]))) == 0.0          # after hold + release
     assert np.array_equal(y_on[60000:90000], y_off[60000:90000])    # speech untouched
     assert float(np.max(np.abs(np.diff(y_on[24000:36000])))) < 0.05  # release ramps, no click
+
+
+@pytest.mark.parametrize("bs", [64, 480, 1024])
+def test_pitch_crossing_zero_crossfades_instead_of_clicking(bs):
+    """At 0 st the effect switches between the dry and the shifted path; the switch is a
+    fixed 10 ms crossfade (any buffer size), not a jump (2nd-difference peaks were ~0.25)."""
+    from mandible.internal_dsp import PitchFormantPlugin
+
+    x = _sine(220, 3.0, amp=0.5)
+    stereo = np.vstack([x, x])
+    p = PitchFormantPlugin()
+    p.p_preserve.value = 0.0
+    every = 12000 // bs                                     # toggle about every 0.25 s
+    out = []
+    for k, i in enumerate(range(0, stereo.shape[1] - bs + 1, bs)):
+        p.p_pitch.value = 1.0 if (k // every) % 2 == 0 else 0.0
+        out.append(p.process(stereo[:, i:i + bs], 48000, bs)[0])
+    y = np.concatenate(out)[24000:]
+    assert float(np.max(np.abs(np.diff(y, 2)))) < 0.005     # crossfade, no step
