@@ -248,6 +248,9 @@ class PitchFormantPlugin(BaseInternalPlugin):
         self.formant_r.reset()
         self.dry_fifo = np.zeros((2, self.reported_latency_samples), dtype=np.float32)
 
+    def _write_delay(self, buf: np.ndarray, chunk: np.ndarray) -> None:
+        buf[(self.write_pos + np.arange(len(chunk))) % self.buffer_len] = chunk
+
     def _shift_pitch_mono(self, chunk: np.ndarray, buf: np.ndarray, pitch_st: float) -> np.ndarray:
         frames = len(chunk)
         ratio = 2.0 ** (pitch_st / 12.0)
@@ -273,7 +276,9 @@ class PitchFormantPlugin(BaseInternalPlugin):
         frac2 = (r2 - r2_idx).astype(np.float32)
         s2 = (1.0 - frac2) * buf[r2_idx] + frac2 * buf[(r2_idx + 1) % blen]
 
-        w1 = 0.5 * (1.0 + np.cos(2.0 * np.pi * phases)).astype(np.float32)
+        # Each tap's read position jumps by a whole window when its phase wraps (tap 1 at
+        # phase 0, tap 2 at phase 0.5); its weight must be zero there or every wrap clicks.
+        w1 = (0.5 * (1.0 - np.cos(2.0 * np.pi * phases))).astype(np.float32)
         w2 = 1.0 - w1
         return (w1 * s1 + w2 * s2).astype(np.float32)
 
@@ -309,16 +314,20 @@ class PitchFormantPlugin(BaseInternalPlugin):
             pitched_l = self._shift_pitch_mono(in_2d[0], self.buffer_l, pitch_st)
             if is_mono:
                 pitched_r = pitched_l
+                self._write_delay(self.buffer_r, in_2d[1])
             else:
                 pitched_r = self._shift_pitch_mono(in_2d[1], self.buffer_r, pitch_st)
 
             # Advance pitch phase and write position once per block
             rate = (1.0 - pitch_ratio) / self.window_size
-            self.write_pos = (self.write_pos + frames) % self.buffer_len
             self.phase = (self.phase + frames * rate) % 1.0
         else:
             pitched_l = in_2d[0]
             pitched_r = in_2d[1]
+            # Keep the delay lines current so turning the pitch back on doesn't read stale audio.
+            self._write_delay(self.buffer_l, in_2d[0])
+            self._write_delay(self.buffer_r, in_2d[1])
+        self.write_pos = (self.write_pos + frames) % self.buffer_len
 
         # Formant stage always runs (identity when alpha ~ 1) so latency stays constant.
         out_l = self.formant_l.process(pitched_l, alpha)
@@ -380,13 +389,64 @@ class TacticalRadioPlugin(BaseInternalPlugin):
         self.p_drive = InternalParameter("drive", "Drive", 1.0, 5.0, 2.0, unit="", step=0.1)
         self.p_bits = InternalParameter("bits", "Crush", 4.0, 12.0, 7.0, unit="bits", step=0.5)
         self.p_noise = InternalParameter("noise", "Radio Squelch", 0.0, 0.20, 0.02, unit="", step=0.01)
+        # Gate threshold on the clean input; at the bottom of the range the gate is off.
+        self.p_gate = InternalParameter("gate", "Gate", self.GATE_OFF_DB, -20.0, self.GATE_OFF_DB,
+                                        unit="dB", step=1.0)
         self.parameters = {
             "drive": self.p_drive,
             "bits": self.p_bits,
             "noise": self.p_noise,
+            "gate": self.p_gate,
         }
+        self.reset()
+
+    GATE_OFF_DB = -80.0
+    GATE_CHUNK = 32          # samples per gate decision (0.67 ms at 48 kHz)
+    GATE_ATTACK_S = 0.002
+    GATE_HOLD_S = 0.080
+    GATE_RELEASE_S = 0.150
+
+    def reset(self):
+        self.gate_gain = 1.0
+        self.gate_hold = 0
+
+    def _gate(self, dry: np.ndarray, sample_rate: float) -> np.ndarray | None:
+        """Per-sample gain (or None when the gate is off). Opens fast when the clean input peaks
+        above the threshold, holds, then releases linearly: the whole radio, squelch noise
+        included, goes quiet between words."""
+        thr_db = self.p_gate.value
+        if thr_db <= self.GATE_OFF_DB + 0.05:
+            self.gate_gain, self.gate_hold = 1.0, 0
+            return None
+        c, frames = self.GATE_CHUNK, dry.shape[1]
+        n = -(-frames // c)
+        padded = np.zeros((dry.shape[0], n * c), dtype=np.float32)
+        padded[:, :frames] = np.abs(dry)
+        peaks = padded.reshape(dry.shape[0], n, c).max(axis=(0, 2))
+        thr = 10.0 ** (thr_db / 20.0)
+        attack = c / (self.GATE_ATTACK_S * sample_rate)
+        release = c / (self.GATE_RELEASE_S * sample_rate)
+        hold = int(self.GATE_HOLD_S * sample_rate / c)
+        g, held, gains = self.gate_gain, self.gate_hold, np.empty(n, dtype=np.float32)
+        for k in range(n):
+            if peaks[k] >= thr:
+                held = hold
+                g = min(1.0, g + attack)
+            elif held > 0:
+                held -= 1
+                g = min(1.0, g + attack)
+            else:
+                g = max(0.0, g - release)
+            gains[k] = g
+        knots = np.minimum(np.arange(1, n + 1) * c, frames) - 1
+        out = np.interp(np.arange(frames), np.concatenate(([-1], knots)),
+                        np.concatenate(([self.gate_gain], gains))).astype(np.float32)
+        self.gate_gain, self.gate_hold = g, held
+        return out
 
     def process(self, input_array: np.ndarray, sample_rate: float, buffer_size: int = 512, reset: bool = False) -> np.ndarray:
+        if reset:
+            self.reset()
         if input_array.ndim == 1:
             in_2d = np.repeat(input_array.reshape(1, -1), 2, axis=0)
         else:
@@ -412,12 +472,17 @@ class TacticalRadioPlugin(BaseInternalPlugin):
         exp = sgn * (1.0 / mu) * ((1.0 + mu) ** np.abs(quant) - 1.0)
 
         # 3. Soft clipping
-        clipped = np.tanh(exp)
+        clipped = np.tanh(exp).astype(np.float32)
 
         # 4. Radio noise
         if noise_lvl > 0.001:
             noise = np.random.randn(*in_2d.shape).astype(np.float32) * (noise_lvl * 0.1)
             clipped += noise
+
+        # 5. Gate (keyed on the clean input)
+        gain = self._gate(in_2d, sample_rate)
+        if gain is not None:
+            clipped *= gain
 
         return clipped
 
@@ -466,11 +531,59 @@ def create_tube_drive() -> PedalboardWrapper:
     return PedalboardWrapper("Tube Drive", "internal:distortion", fx, [p_drive])
 
 
-def create_lofi_bitcrush() -> PedalboardWrapper:
-    fx = pedalboard.Bitcrush()
-    p_bits = InternalParameter("bit_depth", "Bit Depth", 2.0, 16.0, 8.0, unit="bits", step=0.5,
-                               on_change=lambda v: setattr(fx, "bit_depth", v))
-    return PedalboardWrapper("Lo-Fi Bitcrush", "internal:bitcrush", fx, [p_bits])
+class BitcrushPlugin(BaseInternalPlugin):
+    """
+    Lo-fi bitcrusher: sample-rate reduction (sample-and-hold, deliberately without an
+    anti-alias filter: the aliasing is the sound), then bit-depth quantisation onto
+    ``2 ** bit_depth`` steps (same rounding as pedalboard.Bitcrush), then a dry/wet mix.
+    No added latency; the hold phase carries across blocks, so any buffer size sounds the same.
+    """
+
+    def __init__(self):
+        super().__init__("Lo-Fi Bitcrush", "internal:bitcrush")
+        self.p_bits = InternalParameter("bit_depth", "Bit Depth", 2.0, 16.0, 8.0, unit="bits", step=0.5)
+        self.p_rate = InternalParameter("sample_rate", "Sample Rate", 1000.0, 48000.0, 48000.0,
+                                        unit="Hz", step=100.0)
+        self.p_mix = InternalParameter("mix", "Mix", 0.0, 100.0, 100.0, unit="%", step=1.0)
+        self.parameters = {"bit_depth": self.p_bits, "sample_rate": self.p_rate, "mix": self.p_mix}
+        self.reset()
+
+    def reset(self):
+        self.count = 0  # host samples seen, modulo the host rate (exact integer phase)
+        self.held = np.zeros(2, dtype=np.float32)
+
+    def _downsample(self, x: np.ndarray, target: int, host: int) -> np.ndarray:
+        """Sample-and-hold at ``target`` Hz: a new value is taken whenever
+        ``count * target // host`` steps up. Integer maths, so it never drifts and the result
+        doesn't depend on the host buffer size."""
+        frames = x.shape[1]
+        n = self.count + np.arange(frames + 1, dtype=np.int64)
+        update = np.diff(n * target // host) > 0
+        src = np.maximum.accumulate(np.where(update, np.arange(frames), -1))
+        out = np.where(src >= 0, x[:, np.maximum(src, 0)], self.held[:, None])
+        self.held = out[:, -1].astype(np.float32)
+        self.count = (self.count + frames) % host
+        return out
+
+    def process(self, input_array: np.ndarray, sample_rate: float, buffer_size: int = 512, reset: bool = False) -> np.ndarray:
+        if reset:
+            self.reset()
+        x = input_array if input_array.ndim == 2 else input_array.reshape(1, -1)
+        if x.shape[1] == 0:
+            return x
+        if x.shape[0] != self.held.shape[0]:
+            self.held = np.zeros(x.shape[0], dtype=np.float32)
+        host, target = int(round(sample_rate)), int(round(self.p_rate.value))
+        wet = self._downsample(x, target, host) if target < host else x
+        levels = 2.0 ** self.p_bits.value
+        wet = np.round(wet * levels) / levels
+        mix = self.p_mix.value / 100.0
+        out = wet if mix >= 0.999 else (1.0 - mix) * x + mix * wet
+        return out.astype(np.float32, copy=False)
+
+
+def create_lofi_bitcrush() -> BaseInternalPlugin:
+    return BitcrushPlugin()
 
 
 def create_tactical_gsm() -> BaseInternalPlugin:

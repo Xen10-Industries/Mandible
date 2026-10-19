@@ -156,6 +156,46 @@ def test_formant_level_independent_of_block_size():
     assert max(levels) - min(levels) < 0.2, levels
 
 
+def _second_diff_peak(p, x, bs=480, skip=24000):
+    stereo = np.vstack([x, x])
+    y = np.concatenate([p.process(stereo[:, i:i + bs], 48000, bs)[0]
+                        for i in range(0, stereo.shape[1] - bs + 1, bs)])
+    return float(np.max(np.abs(np.diff(y[skip:], 2))))
+
+
+@pytest.mark.parametrize("pitch", [-12.0, -5.0, 5.0, 12.0])
+def test_pitch_shift_has_no_clicks(pitch):
+    """Each delay tap jumps a whole window when its phase wraps; its crossfade weight must be
+    zero there. With the weights inverted every wrap clicked (2nd-difference peaks ~0.59)."""
+    from mandible.internal_dsp import PitchFormantPlugin
+
+    p = PitchFormantPlugin()
+    p.p_pitch.value = pitch
+    p.p_preserve.value = 0.0
+    clean = 0.5 * (2 * np.pi * 220 * 2 ** (pitch / 12) / 48000) ** 2   # a sine's own peak
+    assert _second_diff_peak(p, _sine(220, 2.0)) < 3 * clean
+
+
+def test_pitch_turned_on_reads_current_audio_not_stale():
+    """At 0 st the delay lines still record, so turning the pitch on doesn't replay old audio."""
+    from mandible.internal_dsp import PitchFormantPlugin
+
+    p = PitchFormantPlugin()
+    p.p_preserve.value = 0.0
+    loud = np.vstack([_sine(220, 0.5)] * 2) * 1.6           # fills the delay lines
+    for i in range(0, loud.shape[1] - 480 + 1, 480):
+        p.p_pitch.value = 5.0
+        p.process(loud[:, i:i + 480], 48000, 480)
+    quiet = np.zeros((2, 48000), dtype=np.float32)          # silence at 0 st...
+    p.p_pitch.value = 0.0
+    for i in range(0, 24000, 480):
+        p.process(quiet[:, i:i + 480], 48000, 480)
+    p.p_pitch.value = 5.0                                    # ...then back on
+    out = np.concatenate([p.process(quiet[:, i:i + 480], 48000, 480)[0]
+                          for i in range(24000, 48000, 480)])
+    assert float(np.max(np.abs(out))) < 1e-6
+
+
 @pytest.mark.parametrize("mix", [100.0, 50.0])
 def test_formant_identity_latency_exact(mix):
     from mandible.internal_dsp import PitchFormantPlugin
@@ -289,3 +329,83 @@ def test_midi_cc_midpoint_edges(core):
     core._handle_midi_msg(0x80, 60, 0)
     assert events == ["press", "release"]
     assert core.target() == DRY_ID
+
+
+# ------------------------------------------------------------- built-in bitcrush and radio gate
+
+def _run(p, x, bs):
+    return np.concatenate([p.process(x[:, i:i + bs], 48000, bs)
+                           for i in range(0, x.shape[1] - bs + 1, bs)], axis=1)
+
+
+def test_bitcrush_defaults_match_the_old_pedalboard_bitcrush():
+    """Existing chains and the factory preset (bit depth only) must sound the same."""
+    import pedalboard
+
+    from mandible.internal_dsp import load_internal_plugin
+
+    x = np.vstack([_sine(440, 0.5, amp=0.6)] * 2)
+    p = load_internal_plugin("internal:bitcrush")
+    assert set(p.parameters) == {"bit_depth", "sample_rate", "mix"}
+    for bits in (8.0, 6.0, 3.5):
+        p.parameters["bit_depth"].value = bits
+        ref = pedalboard.Bitcrush(bit_depth=bits)(x[:, :23520], 48000)
+        assert float(np.max(np.abs(_run(p, x[:, :23520], 480) - ref))) < 1e-6   # float32 rounding
+
+
+def test_bitcrush_sample_rate_holds_exactly_and_ignores_block_size():
+    from mandible.internal_dsp import load_internal_plugin
+
+    x = np.vstack([_sine(440, 1.0, amp=0.6)] * 2)
+    outs = []
+    for bs in (64, 333, 1024):
+        p = load_internal_plugin("internal:bitcrush")
+        p.parameters["bit_depth"].value = 16.0
+        p.parameters["sample_rate"].value = 8000.0
+        outs.append(_run(p, x, bs)[:, :40000])
+    for o in outs[1:]:
+        assert np.array_equal(o, outs[0])
+    holds = np.diff(np.flatnonzero(np.diff(outs[0][0]) != 0))
+    assert set(np.unique(holds)) == {6}                      # 48000 / 8000
+
+
+def test_bitcrush_mix_zero_is_dry():
+    from mandible.internal_dsp import load_internal_plugin
+
+    x = np.vstack([_sine(440, 0.1, amp=0.6)] * 2)
+    p = load_internal_plugin("internal:bitcrush")
+    p.parameters["sample_rate"].value = 4000.0
+    p.parameters["mix"].value = 0.0
+    assert float(np.max(np.abs(_run(p, x, 480) - x[:, :_run(p, x, 480).shape[1]]))) < 1e-7
+
+
+def _talk_with_pause():
+    talk = _sine(300, 2.0)
+    talk[24000:48000] = 0.0                                  # pause 0.5-1.0 s
+    return np.vstack([talk, talk])
+
+
+def test_radio_gate_off_by_default_keeps_the_hiss():
+    from mandible.internal_dsp import load_internal_plugin
+
+    np.random.seed(0)
+    p = load_internal_plugin("internal:gsm")
+    assert p.parameters["gate"].value == p.GATE_OFF_DB
+    y = _run(p, _talk_with_pause(), 480)[0]
+    assert float(np.sqrt(np.mean(y[36000:48000] ** 2))) > 1e-3   # squelch noise as before
+
+
+def test_radio_gate_silences_pauses_without_touching_speech():
+    from mandible.internal_dsp import load_internal_plugin
+
+    x = _talk_with_pause()
+    np.random.seed(0)
+    off = load_internal_plugin("internal:gsm")
+    y_off = _run(off, x, 480)[0]
+    np.random.seed(0)
+    on = load_internal_plugin("internal:gsm")
+    on.parameters["gate"].value = -50.0
+    y_on = _run(on, x, 480)[0]
+    assert float(np.max(np.abs(y_on[36000:48000]))) == 0.0          # after hold + release
+    assert np.array_equal(y_on[60000:90000], y_off[60000:90000])    # speech untouched
+    assert float(np.max(np.abs(np.diff(y_on[24000:36000])))) < 0.05  # release ramps, no click
