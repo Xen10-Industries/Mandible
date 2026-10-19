@@ -35,6 +35,10 @@ jobs:
       # clipped text or contrast problem.
       - name: UI gallery
         if: success() || failure()   # still runs when a test failed
+        env:
+          # Real Windows font metrics, as the layout tests use (offscreen substitutes fonts and
+          # reports overflow the real UI doesn't have). Nothing is shown: WA_DontShowOnScreen.
+          QT_QPA_PLATFORM: windows
         run: python tools/ui_gallery.py --out gallery --strict
 
       - name: Upload UI gallery
