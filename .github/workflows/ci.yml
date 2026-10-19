@@ -16,9 +16,9 @@ jobs:
       # Look-switch limit for CI runners (~2.3x slower than a desktop PC, where it is 150 ms).
       MANDIBLE_SWITCH_MS: "350"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
 
@@ -43,7 +43,7 @@ jobs:
 
       - name: Upload UI gallery
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ui-gallery
           path: gallery/
