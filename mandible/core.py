@@ -16,6 +16,7 @@ from .midi import MidiManager
 from .overlay import VoiceOverlay
 from .soundboard import SoundboardClip
 from .api import ApiManager
+from .ui.look import current_look, look_from_config, set_look
 
 
 def inst(slot: PluginSlot):
@@ -61,6 +62,7 @@ class Core(QObject):
         self.hotkeys.enabled = cfg.hotkeys_enabled
 
         self.midi = MidiManager()
+        self._midi_cc_down: dict[tuple, bool] = {}
         self.overlay = VoiceOverlay(cfg.overlay.position, cfg.overlay.opacity)
 
         self._toggled: str | None = None
@@ -342,6 +344,13 @@ class Core(QObject):
         self.engine.soundboard.stop_all()
         self._apply()
 
+    def select_clean(self):
+        """Release every toggled/held chain (like panic, but leaves the soundboard playing)."""
+        with self._ctl_lock:
+            self._toggled = None
+            self._holds.clear()
+        self._apply()
+
     def clear_chain_state(self, cid: str):
         with self._ctl_lock:
             if self._toggled == cid:
@@ -410,17 +419,42 @@ class Core(QObject):
         self.midi.open_device(dev_name, self._handle_midi_msg)
         self.save()
 
+    _CONTINUOUS_ACTIONS = ("monitor_vol", "out_vol", "in_vol")
+
     def _handle_midi_msg(self, status: int, data1: int, data2: int):
-        # status: 0x90 = Note On, 0xB0 = CC
-        msg_type = "note_on" if (status & 0xF0) == 0x90 and data2 > 0 else ("cc" if (status & 0xF0) == 0xB0 else None)
+        kind = status & 0xF0
+        ch = (status & 0x0F) + 1
+        # Note Off arrives as 0x80, or as Note On with velocity 0 (running status).
+        if kind == 0x80 or (kind == 0x90 and data2 == 0):
+            for b in self.cfg.midi_bindings:
+                if b.event_type == "note_on" and b.note_or_cc == data1 and b.channel in (0, ch):
+                    self._release_action(b.action)
+            return
+        msg_type = "note_on" if kind == 0x90 else ("cc" if kind == 0xB0 else None)
         if not msg_type:
             return
-        ch = (status & 0x0F) + 1
         self.midiMessageReceived.emit(msg_type, int(data1), int(ch))
 
         for b in self.cfg.midi_bindings:
-            if b.event_type == msg_type and b.note_or_cc == data1 and (b.channel == 0 or b.channel == ch):
-                self._execute_action(b.action, data2)
+            if b.event_type != msg_type or b.note_or_cc != data1 or b.channel not in (0, ch):
+                continue
+            if msg_type == "cc" and b.action not in self._CONTINUOUS_ACTIONS:
+                # Knobs/faders/CC buttons send a stream of values: treat >= 64 as "down" and only
+                # act when the control crosses the midpoint, instead of on every message.
+                key = (b.note_or_cc, b.channel, b.action)
+                down = data2 >= 64
+                if down == self._midi_cc_down.get(key, False):
+                    continue
+                self._midi_cc_down[key] = down
+                if not down:
+                    self._release_action(b.action)
+                    continue
+            self._execute_action(b.action, data2)
+
+    def _release_action(self, action: str):
+        """Key-up counterpart of _execute_action: releases hold-mode chains."""
+        if action.startswith("chain:"):
+            self.release(action[len("chain:"):])
 
     def _execute_action(self, action: str, value: int = 127):
         if not action:
@@ -584,20 +618,21 @@ class Core(QObject):
         self.engine.update_limiter(lim_cfg)
         self.save()
 
+    # Appearance: store the id, then make the Look the config selects current. Changing
+    # the look restyles and repaints widgets only; it never touches the audio engine.
+    def _apply_look(self):
+        look = look_from_config(self.cfg)
+        if look != current_look():
+            set_look(look)
+
     def set_theme(self, theme: str):
         self.cfg.theme = theme
+        self._apply_look()
         self.save()
 
     def set_ui_skin(self, skin: str):
         self.cfg.ui_skin = skin
-        self.save()
-
-    def set_chassis_frame(self, frame: str):
-        self.cfg.chassis_frame = frame
-        self.save()
-
-    def set_switch_style(self, style: str):
-        self.cfg.switch_style = style
+        self._apply_look()
         self.save()
 
     def set_soundboard_ducking(self, enabled: bool, duck_db: float):

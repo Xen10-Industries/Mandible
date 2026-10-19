@@ -8,7 +8,7 @@ from dataclasses import dataclass, field, fields
 
 from .prefx import PreFXSettings
 
-from .paths import APP_DIR, LOG_PATH  # noqa: F401  (re-exported)
+from .paths import APP_DIR
 
 CONFIG_PATH = os.path.join(APP_DIR, "config.json")
 STARTUP_REG_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
@@ -211,6 +211,7 @@ class AppConfig:
     chassis_frame: str = "auto"                # "auto" | "metal_rack" | "wood_cheeks" | "frameless"
     theme: str = "scarlet"                     # "scarlet" | "cyan" | "stealth" | "amber"
     switch_style: str = "bat_toggle"           # "bat_toggle" | "rocker"
+    appearance_migrated: bool = False          # old frame/switch settings already baked into a user skin
     soundboard_ducking_enabled: bool = False   # duck mic input when soundboard plays
     soundboard_duck_db: float = -12.0          # dB attenuation during soundboard playback
     normalizer_enabled: bool = False           # output loudness normalizer
@@ -219,6 +220,7 @@ class AppConfig:
     api_port: int = 38420                      # local API port
     extra_plugin_dirs: list[str] = field(default_factory=list)
     plugin_param_mappings: dict[str, list[str]] = field(default_factory=dict)
+    left_panel_width: int = 300                # main window preset panel (splitter), 240..420 px
 
 
 # ---------------------------------------------------------------- (de)serialisation

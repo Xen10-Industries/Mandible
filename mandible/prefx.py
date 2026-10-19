@@ -78,15 +78,45 @@ def _get_rnnoise_lib():
 
 
 class RNNoiseStream:
-    """Streams mono audio through RNNoise (processes in 480-sample blocks)."""
+    """Streams mono audio through RNNoise.
+
+    RNNoise only works on 48 kHz audio in 480-sample frames. Other device rates are resampled to
+    48 kHz and back with pedalboard's streaming resampler. The output FIFO is primed with silence
+    so a whole RNNoise frame (plus resampler delay) is always buffered: the latency is constant
+    (~10 ms at 48 kHz) and the stream never has to pad gaps into the audio.
+    """
+
+    FRAME = 480
+    RATE = 48000
 
     def __init__(self, samplerate: int = 48000):
         self.lib = _get_rnnoise_lib()
         self.state = self.lib.rnnoise_create(None) if self.lib else None
-        self.samplerate = samplerate
-        self.in_buf = np.zeros(0, dtype=np.float32)
-        self.out_buf = np.zeros(0, dtype=np.float32)
         self.last_speech_prob = 1.0
+        self.samplerate = 0
+        self.set_samplerate(samplerate)
+
+    def set_samplerate(self, samplerate: int) -> None:
+        samplerate = int(samplerate or self.RATE)
+        if samplerate == self.samplerate:
+            return
+        self.samplerate = samplerate
+        self.reset()
+
+    def reset(self) -> None:
+        """Drop buffered audio (call when the stream (re)starts or suppression is switched on)."""
+        sr = self.samplerate
+        if sr != self.RATE:
+            from pedalboard.io import StreamResampler
+            self._down = StreamResampler(sr, self.RATE, 1)
+            self._up = StreamResampler(self.RATE, sr, 1)
+            resampler_delay = self._down.input_latency + self._up.input_latency * sr / self.RATE
+        else:
+            self._down = self._up = None
+            resampler_delay = 0
+        prime = int(np.ceil(self.FRAME * sr / self.RATE + resampler_delay))
+        self.in_buf = np.zeros(0, dtype=np.float32)      # 48 kHz samples waiting for a full frame
+        self.out_buf = np.zeros(prime, dtype=np.float32)  # device-rate samples ready to return
 
     def close(self):
         if self.state and self.lib:
@@ -100,42 +130,37 @@ class RNNoiseStream:
         if not self.state or not self.lib or wet <= 0.001:
             return chunk
 
-        self.in_buf = np.concatenate((self.in_buf, chunk.astype(np.float32)))
+        x = chunk.astype(np.float32, copy=False)
+        if self._down is not None:
+            x = self._down.process(x.reshape(1, -1))[0]
+        self.in_buf = np.concatenate((self.in_buf, x))
+
         out_chunks = []
-
-        # Process 480-sample frames
-        while len(self.in_buf) >= 480:
-            frame = self.in_buf[:480]
-            self.in_buf = self.in_buf[480:]
-
-            # RNNoise works best with input scaled roughly [-32768, 32767]
+        n_frames = len(self.in_buf) // self.FRAME
+        for k in range(n_frames):
+            frame = self.in_buf[k * self.FRAME:(k + 1) * self.FRAME]
+            # RNNoise expects 16-bit-scaled float samples
             scaled = (frame * 32767.0).astype(np.float32)
             c_ptr = scaled.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
             self.last_speech_prob = float(self.lib.rnnoise_process_frame(self.state, c_ptr, c_ptr))
-            clean_frame = scaled / 32767.0
-
+            clean = scaled * np.float32(1.0 / 32767.0)
             if wet < 0.999:
-                clean_frame = (1.0 - wet) * frame + wet * clean_frame
-            out_chunks.append(clean_frame)
-
-        if out_chunks:
+                clean = (1.0 - wet) * frame + wet * clean
+            out_chunks.append(clean)
+        if n_frames:
+            self.in_buf = self.in_buf[n_frames * self.FRAME:]
             processed = np.concatenate(out_chunks)
+            if self._up is not None:
+                processed = self._up.process(processed.reshape(1, -1))[0]
             self.out_buf = np.concatenate((self.out_buf, processed))
 
-        # Return matching number of samples as requested
         needed = len(chunk)
-        if len(self.out_buf) >= needed:
-            res = self.out_buf[:needed]
-            self.out_buf = self.out_buf[needed:]
-            return res
-        else:
-            # Latency ramp-up at initial startup
-            res = np.zeros(needed, dtype=np.float32)
-            avail = len(self.out_buf)
-            if avail > 0:
-                res[needed - avail :] = self.out_buf
-                self.out_buf = np.zeros(0, dtype=np.float32)
-            return res
+        if len(self.out_buf) < needed:
+            # Should not happen after priming; pad at the front rather than glitch the stream.
+            self.out_buf = np.concatenate((np.zeros(needed - len(self.out_buf), np.float32), self.out_buf))
+        res = self.out_buf[:needed]
+        self.out_buf = self.out_buf[needed:]
+        return res
 
 
 class PreFXProcessor:
@@ -145,6 +170,7 @@ class PreFXProcessor:
         self.cfg = cfg
         self.samplerate = samplerate
         self.rnnoise = RNNoiseStream(samplerate)
+        self._rnnoise_was_on = False
         self._hp_filter = None
         self._gate = None
         self._rebuild_filters()
@@ -153,10 +179,10 @@ class PreFXProcessor:
         self.cfg = cfg
         if samplerate:
             self.samplerate = samplerate
+            self.rnnoise.set_samplerate(samplerate)
         self._rebuild_filters()
 
     def _rebuild_filters(self):
-        sr = self.samplerate or 48000
         # Highpass filter
         if self.cfg.highpass_enabled and self.cfg.highpass_cutoff_hz > 10:
             self._hp_filter = pedalboard.HighpassFilter(cutoff_frequency_hz=float(self.cfg.highpass_cutoff_hz))
@@ -190,9 +216,12 @@ class PreFXProcessor:
             except Exception:
                 pass
 
-        # 2. AI RNNoise suppression
+        # 2. AI RNNoise suppression (flush stale buffered audio when it is switched back on)
         if self.cfg.rnnoise_enabled:
+            if not self._rnnoise_was_on:
+                self.rnnoise.reset()
             out = self.rnnoise.process(out, wet=self.cfg.rnnoise_wet)
+        self._rnnoise_was_on = self.cfg.rnnoise_enabled
 
         # 3. Noise gate
         if self._gate is not None:

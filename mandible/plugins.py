@@ -8,7 +8,8 @@ import os
 import pedalboard
 
 from .config import APP_DIR, Chain, PluginSlot
-from .internal_dsp import get_internal_plugin_catalog, is_internal_plugin, load_internal_plugin
+from .internal_dsp import (InternalParameter, get_internal_plugin_catalog, is_internal_plugin,
+                           load_internal_plugin)
 
 CACHE_PATH = os.path.join(APP_DIR, "plugin_cache.json")
 
@@ -111,13 +112,6 @@ def get_cached_plugins(extra_dirs: list[str] | None = None, force_rescan: bool =
 
     save_plugin_cache(results)
     return results
-
-
-def set_plugin_favorite(path: str, favorite: bool):
-    cache = load_plugin_cache()
-    if path in cache:
-        cache[path]["favorite"] = favorite
-        save_plugin_cache(list(cache.values()))
 
 
 def plugin_names_in_file(path: str) -> list[str]:
@@ -416,48 +410,75 @@ def _extract_first_float(text: str) -> float | None:
     return None
 
 
+def _text_at_raw(param, raw: float) -> str:
+    """The plugin's display text for a raw value, without changing the live parameter if possible."""
+    getter = getattr(param, "get_text_for_raw_value", None)
+    if getter is not None:
+        try:
+            text = getter(raw)
+            if text:
+                return str(text)
+        except Exception:
+            pass
+    # Some plugins only format their current value: probe it, then restore.
+    orig = float(param.raw_value)
+    try:
+        param.raw_value = raw
+        return clean_param_string(param)
+    finally:
+        param.raw_value = orig
+
+
 def set_param_from_text(param, user_text: str) -> bool:
     """
-    Set a VST3 parameter from user-typed text (e.g. '-18.5', '25 ms', '4:1', '50%').
-    Uses binary search over param.raw_value in [0.0, 1.0] against the VST's own
-    string_value formatter so non-linear/logarithmic VST curves are matched accurately.
+    Set a parameter from user-typed text (e.g. '-18.5', '25 ms', '4:1', '50%').
+
+    Order of attempts, so the audio never hears intermediate values:
+    1. Mandible's internal DSP parameters take engineering values directly.
+    2. The plugin's own text parser (pedalboard ``get_raw_value_for``).
+    3. A binary search over raw values against the plugin's formatter, then a single final set.
+    4. Fallback: treat the number as normalized 0..1 or a 0..100 percentage.
     """
     target = _extract_first_float(user_text)
     if target is None:
         return False
-    try:
-        orig_raw = float(param.raw_value)
-        param.raw_value = 0.0
-        v0 = _extract_first_float(clean_param_string(param))
-        param.raw_value = 1.0
-        v1 = _extract_first_float(clean_param_string(param))
 
+    if isinstance(param, InternalParameter):
+        param.value = target
+        return True
+
+    lo_v, hi_v = getattr(param, "min_value", None), getattr(param, "max_value", None)
+    if isinstance(lo_v, (int, float)) and isinstance(hi_v, (int, float)) and not isinstance(lo_v, bool):
+        target = max(float(lo_v), min(float(hi_v), target))
+    try:
+        param.raw_value = float(param.get_raw_value_for(target))
+        return True
+    except Exception:
+        pass
+
+    try:
+        v0 = _extract_first_float(_text_at_raw(param, 0.0))
+        v1 = _extract_first_float(_text_at_raw(param, 1.0))
         if v0 is not None and v1 is not None and abs(v1 - v0) > 1e-9:
             inc = v1 >= v0
-            lo_val, hi_val = (v0, v1) if inc else (v1, v0)
-            if target <= lo_val:
-                param.raw_value = 0.0 if inc else 1.0
-                return True
-            if target >= hi_val:
-                param.raw_value = 1.0 if inc else 0.0
-                return True
-
             lo, hi = 0.0, 1.0
-            for _ in range(14):
-                mid = 0.5 * (lo + hi)
-                param.raw_value = mid
-                vm = _extract_first_float(clean_param_string(param))
-                if vm is None:
-                    break
-                if (vm < target) == inc:
-                    lo = mid
-                else:
-                    hi = mid
+            if target <= min(v0, v1):
+                lo = hi = 0.0 if inc else 1.0
+            elif target >= max(v0, v1):
+                lo = hi = 1.0 if inc else 0.0
+            else:
+                for _ in range(14):
+                    mid = 0.5 * (lo + hi)
+                    vm = _extract_first_float(_text_at_raw(param, mid))
+                    if vm is None:
+                        break
+                    if (vm < target) == inc:
+                        lo = mid
+                    else:
+                        hi = mid
             param.raw_value = max(0.0, min(1.0, 0.5 * (lo + hi)))
             return True
 
-        # Fallback: direct normalized [0..1] or [0..100]%
-        param.raw_value = orig_raw
         if 0.0 <= target <= 1.0:
             param.raw_value = target
             return True
@@ -488,12 +509,6 @@ def get_slot_latency_samples(slot: PluginSlot) -> int:
 
 def get_chain_latency_samples(chain: Chain) -> int:
     return sum(get_slot_latency_samples(s) for s in chain.plugins if s.enabled)
-
-
-def has_editor(plugin) -> bool:
-    if is_internal_plugin(getattr(plugin, "path", "")):
-        return False
-    return hasattr(plugin, "show_editor")
 
 
 def make_board(plugins: list):

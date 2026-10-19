@@ -9,16 +9,20 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QColor, QFont, QPainter, QLinearGradient
+from PySide6.QtGui import QFont, QPainter, QLinearGradient
 from PySide6.QtWidgets import (
-    QComboBox, QDialog, QFrame, QHBoxLayout, QLabel,
-    QPushButton, QSlider, QStackedWidget, QVBoxLayout, QWidget, QMessageBox
+    QComboBox, QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel,
+    QStackedWidget, QVBoxLayout, QWidget, QMessageBox
 )
 
-from . import devices as D
+from ... import devices as D
+from ..look import font_px
+from ..widgets.base import SpacedLayouts, _follow_look, look_color, set_style_property
+from ..widgets.buttons import make_button
+from .parts import keep_wrapped_text_visible
 
 if TYPE_CHECKING:
-    from .core import Core
+    from ...core import Core
 
 
 class LiveVuBar(QWidget):
@@ -28,6 +32,10 @@ class LiveVuBar(QWidget):
         super().__init__(parent)
         self.setFixedHeight(18)
         self._peak = 0.0
+        _follow_look(self)
+
+    def _on_look_changed(self):
+        self.update()
 
     def set_peak(self, val: float):
         # Slower decay
@@ -44,22 +52,24 @@ class LiveVuBar(QWidget):
         w, h = self.width(), self.height()
 
         # Background trough
-        p.fillRect(0, 0, w, h, QColor("#10141d"))
-        p.setPen(QColor("#242c3d"))
+        p.fillRect(0, 0, w, h, look_color("bg.inset"))
+        p.setPen(look_color("line.subtle"))
         p.drawRect(0, 0, w - 1, h - 1)
 
         # Active LED bar
         fill_w = int(w * self._peak)
         if fill_w > 0:
             grad = QLinearGradient(0, 0, w, 0)
-            grad.setColorAt(0.0, QColor("#10b981"))
-            grad.setColorAt(0.70, QColor("#f59e0b"))
-            grad.setColorAt(0.92, QColor("#ef4444"))
+            grad.setColorAt(0.0, look_color("status.ok"))
+            grad.setColorAt(0.70, look_color("status.warn"))
+            grad.setColorAt(0.92, look_color("status.danger"))
             p.fillRect(1, 1, fill_w, h - 2, grad)
 
         # Scale markings
-        p.setPen(QColor("#64748b"))
-        p.setFont(QFont("Consolas", 6))
+        p.setPen(look_color("text.secondary"))
+        f = QFont("Consolas")
+        f.setPixelSize(font_px("readout"))
+        p.setFont(f)
         for frac, label in [(0.5, "-12dB"), (0.75, "-6dB"), (0.9, "0dB")]:
             x = int(w * frac)
             p.drawLine(x, 0, x, 3)
@@ -72,54 +82,21 @@ class SetupAssistantDialog(QDialog):
     def __init__(self, core: Core, parent=None):
         super().__init__(parent)
         self.core = core
-        self.setWindowTitle("Mandible - Audio Setup Assistant")
+        self.setWindowTitle("Audio setup assistant")
         self.resize(680, 520)
-        self.setStyleSheet("""
-            QDialog {
-                background: #0f121a;
-                color: #f1f5f9;
-                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            }
-            QLabel {
-                color: #e2e8f0;
-            }
-            QComboBox {
-                background: #171c28;
-                border: 1px solid #2d3748;
-                border-radius: 4px;
-                padding: 6px 10px;
-                color: #f8fafc;
-                font-size: 9pt;
-            }
-            QComboBox:hover {
-                border-color: #4a5568;
-            }
-            QPushButton {
-                background: #1e2433;
-                border: 1px solid #334155;
-                color: #f1f5f9;
-                padding: 7px 16px;
-                border-radius: 4px;
-                font-weight: bold;
-                font-size: 8.5pt;
-            }
-            QPushButton:hover {
-                background: #283347;
-                border-color: #475569;
-            }
-        """)
+        self.setObjectName("setupAssistant")
+        self._spaced = SpacedLayouts()
+        _follow_look(self)
 
-        main_lay = QVBoxLayout(self)
-        main_lay.setContentsMargins(24, 20, 24, 20)
-        main_lay.setSpacing(16)
+        main_lay = self._spaced.add(QVBoxLayout(self), spacing=4, margins=(4, 5, 4, 5))
 
         # Header
-        head_box = QHBoxLayout()
-        title_box = QVBoxLayout()
+        head_box = self._spaced.add(QHBoxLayout(), spacing=0, margins=0)
+        title_box = self._spaced.add(QVBoxLayout(), spacing=1, margins=0)
         self.step_lbl = QLabel("STEP 1 OF 4")
-        self.step_lbl.setStyleSheet("color: #e11d48; font-weight: 800; font-size: 8pt; letter-spacing: 1px;")
-        self.main_title = QLabel("Select Your Microphone")
-        self.main_title.setStyleSheet("font-size: 15pt; font-weight: bold; color: #ffffff;")
+        self.step_lbl.setObjectName("wizardStep")
+        self.main_title = QLabel("Select your microphone")
+        self.main_title.setObjectName("wizardTitle")
         title_box.addWidget(self.step_lbl)
         title_box.addWidget(self.main_title)
         head_box.addLayout(title_box)
@@ -135,26 +112,15 @@ class SetupAssistantDialog(QDialog):
         main_lay.addWidget(self.pages, 1)
 
         # Bottom navigation
-        nav_box = QHBoxLayout()
-        self.back_btn = QPushButton("< BACK")
+        nav_box = self._spaced.add(QHBoxLayout(), spacing=2, margins=0)
+        self.back_btn = make_button("Back", "secondary", icon="chevron_left")
         self.back_btn.clicked.connect(self._prev_step)
         self.back_btn.setEnabled(False)
         nav_box.addWidget(self.back_btn)
         nav_box.addStretch()
 
-        self.next_btn = QPushButton("NEXT: OUTPUT ROUTING >")
-        self.next_btn.setStyleSheet("""
-            QPushButton {
-                background: #e11d48;
-                border: 1px solid #f43f5e;
-                color: #ffffff;
-                padding: 7px 20px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background: #f43f5e;
-            }
-        """)
+        self.next_btn = make_button("Next: output routing", "primary")
+        self.next_btn.setObjectName("wizardNextBtn")
         self.next_btn.clicked.connect(self._next_step)
         nav_box.addWidget(self.next_btn)
         main_lay.addLayout(nav_box)
@@ -166,6 +132,25 @@ class SetupAssistantDialog(QDialog):
 
         # Populate initial device states
         self._load_current_settings()
+        keep_wrapped_text_visible(self)
+
+    def _on_look_changed(self) -> None:
+        self._spaced.apply()
+
+    def _page(self) -> tuple[QWidget, QVBoxLayout]:
+        """A wizard page: its own layout flush with the header and the navigation row."""
+        w = QWidget()
+        lay = self._spaced.add(QVBoxLayout(w), spacing=3, margins=0)
+        return w, lay
+
+    def _field(self, lay: QVBoxLayout, text: str, widget: QWidget) -> None:
+        """A label over its control."""
+        box = self._spaced.add(QVBoxLayout(), spacing=1, margins=0)
+        label = QLabel(text)
+        label.setObjectName("wizardFieldLabel")
+        box.addWidget(label)
+        box.addWidget(widget)
+        lay.addLayout(box)
 
     def _load_current_settings(self):
         # Driver
@@ -182,54 +167,34 @@ class SetupAssistantDialog(QDialog):
 
     # ------------------------------------------------------------- Step 1: Mic
     def _build_step1_mic(self) -> QWidget:
-        w = QWidget()
-        lay = QVBoxLayout(w)
-        lay.setSpacing(14)
+        w, lay = self._page()
 
         desc = QLabel(
             "Choose the microphone you speak into. If you have an audio interface (Focusrite, Motu, etc.), "
             "select ASIO or WASAPI. For USB mics (NexiGo, Blue Yeti, HyperX), select WASAPI."
         )
         desc.setWordWrap(True)
-        desc.setStyleSheet("color: #94a3b8; font-size: 9pt;")
+        desc.setObjectName("wizardDesc")
         lay.addWidget(desc)
 
-        # Driver
-        drv_box = QVBoxLayout()
-        drv_lbl = QLabel("AUDIO DRIVER:")
-        drv_lbl.setStyleSheet("color: #94a3b8; font-size: 7.5pt; font-weight: bold;")
         self.mic_drv = QComboBox()
         self.mic_drv.currentIndexChanged.connect(self._on_driver_changed)
-        drv_box.addWidget(drv_lbl)
-        drv_box.addWidget(self.mic_drv)
-        lay.addLayout(drv_box)
+        self._field(lay, "Audio driver", self.mic_drv)
 
-        # Input device
-        dev_box = QVBoxLayout()
-        dev_lbl = QLabel("INPUT MICROPHONE:")
-        dev_lbl.setStyleSheet("color: #94a3b8; font-size: 7.5pt; font-weight: bold;")
         self.mic_dev = QComboBox()
         self.mic_dev.currentIndexChanged.connect(self._on_mic_device_changed)
-        dev_box.addWidget(dev_lbl)
-        dev_box.addWidget(self.mic_dev)
-        lay.addLayout(dev_box)
+        self._field(lay, "Input microphone", self.mic_dev)
 
-        # Input channel
-        ch_box = QVBoxLayout()
-        ch_lbl = QLabel("MIC INPUT CHANNEL:")
-        ch_lbl.setStyleSheet("color: #94a3b8; font-size: 7.5pt; font-weight: bold;")
         self.mic_ch = QComboBox()
-        ch_box.addWidget(ch_lbl)
-        ch_box.addWidget(self.mic_ch)
-        lay.addLayout(ch_box)
+        self._field(lay, "Mic input channel", self.mic_ch)
 
         # Live VU meter
-        meter_box = QVBoxLayout()
-        m_head = QHBoxLayout()
-        m_lbl = QLabel("LIVE MICROPHONE LEVEL (Speak to test):")
-        m_lbl.setStyleSheet("color: #94a3b8; font-size: 7.5pt; font-weight: bold;")
-        self.mic_status_lbl = QLabel("Awaiting sound...")
-        self.mic_status_lbl.setStyleSheet("color: #64748b; font-size: 7.5pt; font-family: Consolas;")
+        meter_box = self._spaced.add(QVBoxLayout(), spacing=1, margins=0)
+        m_head = self._spaced.add(QHBoxLayout(), spacing=2, margins=0)
+        m_lbl = QLabel("Live microphone level (speak to test)")
+        m_lbl.setObjectName("wizardFieldLabel")
+        self.mic_status_lbl = QLabel("Awaiting sound…")
+        self.mic_status_lbl.setObjectName("wizardMicStatus")
         m_head.addWidget(m_lbl)
         m_head.addStretch()
         m_head.addWidget(self.mic_status_lbl)
@@ -277,66 +242,50 @@ class SetupAssistantDialog(QDialog):
         if pk > 0.05:
             db = 20.0 * np.log10(max(1e-4, pk))
             self.mic_status_lbl.setText(f"SIGNAL OK: {db:.1f} dBFS")
-            self.mic_status_lbl.setStyleSheet("color: #10b981; font-weight: bold; font-family: Consolas;")
+            if not self.mic_status_lbl.property("ok"):
+                set_style_property(self.mic_status_lbl, "ok", True)
 
     # ------------------------------------------------------------- Step 2: Cable
     def _build_step2_cable(self) -> QWidget:
-        w = QWidget()
-        lay = QVBoxLayout(w)
-        lay.setSpacing(14)
+        w, lay = self._page()
 
         desc = QLabel(
-            "Mandible modifies your voice in real time, then sends the audio to a Virtual Audio Cable "
-            "(or Focusrite Loopback). In Discord and OBS, you simply select that cable as your microphone!"
+            "Mandible modifies your voice in real time, then sends the audio to a virtual audio cable "
+            "(or Focusrite Loopback). In Discord and OBS, you simply select that cable as your microphone."
         )
         desc.setWordWrap(True)
-        desc.setStyleSheet("color: #94a3b8; font-size: 9pt;")
+        desc.setObjectName("wizardDesc")
         lay.addWidget(desc)
 
         # Status card
         self.cable_card = QFrame()
-        self.cable_card.setStyleSheet("background: #141824; border: 1px solid #2d3748; border-radius: 6px; padding: 12px;")
-        card_lay = QVBoxLayout(self.cable_card)
-        self.cable_card_title = QLabel("DETECTING VIRTUAL AUDIO CABLES...")
-        self.cable_card_title.setStyleSheet("font-weight: bold; font-size: 10pt;")
-        self.cable_card_desc = QLabel("Checking Windows for VB-Audio Virtual Cable and Focusrite Loopback...")
+        self.cable_card.setObjectName("wizardCard")
+        card_lay = self._spaced.add(QVBoxLayout(self.cable_card), spacing=1, margins=3)
+        self.cable_card_title = QLabel("Detecting virtual audio cables…")
+        self.cable_card_title.setObjectName("wizardCardTitle")
+        self.cable_card_desc = QLabel("Checking Windows for VB-Audio Virtual Cable and Focusrite Loopback…")
         self.cable_card_desc.setWordWrap(True)
-        self.cable_card_desc.setStyleSheet("color: #94a3b8; font-size: 8.5pt;")
+        self.cable_card_desc.setObjectName("wizardCardDesc")
         card_lay.addWidget(self.cable_card_title)
         card_lay.addWidget(self.cable_card_desc)
         lay.addWidget(self.cable_card)
 
         # Download / Refresh buttons
-        action_row = QHBoxLayout()
-        self.download_cable_btn = QPushButton("DOWNLOAD FREE VB-AUDIO CABLE")
-        self.download_cable_btn.setStyleSheet("""
-            QPushButton {
-                background: #1e3a5f;
-                border: 1px solid #2563eb;
-                color: #bfdbfe;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background: #2563eb;
-                color: #ffffff;
-            }
-        """)
+        action_row = self._spaced.add(QHBoxLayout(), spacing=2, margins=0)
+        self.download_cable_btn = make_button("Download the free VB-Audio Cable", icon="open_window",
+                                              tooltip="Opens vb-audio.com in your browser")
+        self.download_cable_btn.setObjectName("wizardDownloadBtn")
         self.download_cable_btn.clicked.connect(lambda: webbrowser.open("https://vb-audio.com/Cable/"))
         action_row.addWidget(self.download_cable_btn)
 
-        self.rescan_btn = QPushButton("REFRESH DEVICE LIST")
+        self.rescan_btn = make_button("Refresh the device list")
         self.rescan_btn.clicked.connect(self._rescan_cable_devices)
         action_row.addWidget(self.rescan_btn)
         lay.addLayout(action_row)
 
         # Output device selector
-        out_box = QVBoxLayout()
-        out_lbl = QLabel("SEND MANDIBLE OUTPUT TO (Cable / Loopback):")
-        out_lbl.setStyleSheet("color: #94a3b8; font-size: 7.5pt; font-weight: bold;")
         self.cable_dev_combo = QComboBox()
-        out_box.addWidget(out_lbl)
-        out_box.addWidget(self.cable_dev_combo)
-        lay.addLayout(out_box)
+        self._field(lay, "Send the output to (cable or loopback)", self.cable_dev_combo)
 
         lay.addStretch()
         return w
@@ -347,6 +296,12 @@ class SetupAssistantDialog(QDialog):
         except Exception:
             pass
         self._refresh_cable_detection()
+
+    def _set_cable_state(self, state: str):
+        """``ok`` / ``warn`` on the card (fill and outline) and its title (colour): each widget
+        is styled by its own rule, so the state goes on each of them."""
+        for w in (self.cable_card, self.cable_card_title):
+            set_style_property(w, "state", state)
 
     def _refresh_cable_detection(self):
         cables = D.detect_virtual_cables()
@@ -360,9 +315,8 @@ class SetupAssistantDialog(QDialog):
 
         if cables:
             best = cables[0]
-            self.cable_card.setStyleSheet("background: #0f251e; border: 1px solid #10b981; border-radius: 6px; padding: 12px;")
-            self.cable_card_title.setText(f"READY: {best['desc']} Detected")
-            self.cable_card_title.setStyleSheet("font-weight: bold; font-size: 10pt; color: #34d399;")
+            self._set_cable_state("ok")
+            self.cable_card_title.setText(f"{best['desc']} detected")
             self.cable_card_desc.setText(f"Detected: {best['device']}. Mandible will stream processed voice here.")
             
             # Pre-select in combo
@@ -370,51 +324,38 @@ class SetupAssistantDialog(QDialog):
             if idx >= 0:
                 self.cable_dev_combo.setCurrentIndex(idx)
         else:
-            self.cable_card.setStyleSheet("background: #2a1810; border: 1px solid #f59e0b; border-radius: 6px; padding: 12px;")
-            self.cable_card_title.setText("NOTE: No Virtual Audio Cable Detected")
-            self.cable_card_title.setStyleSheet("font-weight: bold; font-size: 10pt; color: #fbbf24;")
+            self._set_cable_state("warn")
+            self.cable_card_title.setText("No virtual audio cable detected")
             self.cable_card_desc.setText(
-                "Windows doesn't have a virtual cable installed. Click 'Download Free VB-Audio Cable' below, "
-                "run the installer, and click 'Refresh Device List'."
+                "Windows doesn't have a virtual cable installed. Click 'Download the free VB-Audio Cable' "
+                "below, run the installer, and click 'Refresh the device list'."
             )
 
     # ------------------------------------------------------------- Step 3: Monitor
     def _build_step3_monitor(self) -> QWidget:
-        w = QWidget()
-        lay = QVBoxLayout(w)
-        lay.setSpacing(14)
+        w, lay = self._page()
 
         desc = QLabel(
             "Select your headphones or speakers so you can monitor your voice in real time and audition "
             "pitch, soundboard clips, and effects without hearing an echo in Discord."
         )
         desc.setWordWrap(True)
-        desc.setStyleSheet("color: #94a3b8; font-size: 9pt;")
+        desc.setObjectName("wizardDesc")
         lay.addWidget(desc)
 
-        mon_box = QVBoxLayout()
-        mon_lbl = QLabel("HEADPHONE / MONITOR DEVICE:")
-        mon_lbl.setStyleSheet("color: #94a3b8; font-size: 7.5pt; font-weight: bold;")
         self.mon_dev_combo = QComboBox()
-        mon_box.addWidget(mon_lbl)
-        mon_box.addWidget(self.mon_dev_combo)
-        lay.addLayout(mon_box)
+        self._field(lay, "Headphone or monitor device", self.mon_dev_combo)
 
         # Monitor feed mode
-        feed_box = QVBoxLayout()
-        feed_lbl = QLabel("WHAT DO YOU WANT TO HEAR IN HEADPHONES?:")
-        feed_lbl.setStyleSheet("color: #94a3b8; font-size: 7.5pt; font-weight: bold;")
         self.mon_feed_combo = QComboBox()
-        self.mon_feed_combo.addItem("Processed Voice (hear your effects & soundboard)", "processed")
-        self.mon_feed_combo.addItem("Clean Mic (zero-latency direct mic monitor)", "dry")
-        self.mon_feed_combo.addItem("50/50 Mix (blend of both)", "mix")
-        feed_box.addWidget(feed_lbl)
-        feed_box.addWidget(self.mon_feed_combo)
-        lay.addLayout(feed_box)
+        self.mon_feed_combo.addItem("Processed voice (hear your effects and soundboard)", "processed")
+        self.mon_feed_combo.addItem("Clean mic (zero-latency direct mic monitor)", "dry")
+        self.mon_feed_combo.addItem("50/50 mix (blend of both)", "mix")
+        self._field(lay, "What do you want to hear in your headphones?", self.mon_feed_combo)
 
         # Test headphone monitor button
-        test_box = QHBoxLayout()
-        self.test_audio_btn = QPushButton("TEST HEADPHONES (PLAY AUDIO CHIME)")
+        test_box = self._spaced.add(QHBoxLayout(), spacing=2, margins=0)
+        self.test_audio_btn = make_button("Test headphones (play a chime)", icon="play")
         self.test_audio_btn.clicked.connect(self._test_headphones)
         test_box.addWidget(self.test_audio_btn)
         lay.addLayout(test_box)
@@ -426,7 +367,7 @@ class SetupAssistantDialog(QDialog):
         drv = self.mic_drv.currentData() or "Windows WASAPI"
         outs = D.list_devices(drv, "output")
         self.mon_dev_combo.clear()
-        self.mon_dev_combo.addItem("Disabled (No headphone monitor)", "")
+        self.mon_dev_combo.addItem("Disabled (no headphone monitor)", "")
         for idx, name, chans in outs:
             # Filter out cables from headphone list
             nl = name.lower()
@@ -451,39 +392,40 @@ class SetupAssistantDialog(QDialog):
             stereo = np.column_stack([sig, sig])
             sd.play(stereo, sr)
         except Exception as exc:
-            QMessageBox.information(self, "Headphone Test", f"Could not play test sound: {exc}")
+            QMessageBox.information(self, "Headphone test", f"Could not play test sound: {exc}")
 
     # ------------------------------------------------------------- Step 4: Discord / OBS Guide
     def _build_step4_guide(self) -> QWidget:
-        w = QWidget()
-        lay = QVBoxLayout(w)
-        lay.setSpacing(14)
+        w, lay = self._page()
 
         guide_card = QFrame()
-        guide_card.setStyleSheet("background: #141824; border: 1px solid #2d3748; border-radius: 6px; padding: 14px;")
-        g_lay = QVBoxLayout(guide_card)
-        g_lay.setSpacing(10)
+        guide_card.setObjectName("wizardGuideCard")
+        g_lay = self._spaced.add(QVBoxLayout(guide_card), spacing=2, margins=3)
 
-        g_title = QLabel("CONNECTING TO DISCORD, OBS & GAMES:")
-        g_title.setStyleSheet("font-weight: 800; font-size: 8pt; color: #38bdf8; letter-spacing: 0.8px;")
+        g_title = QLabel("Connecting to Discord, OBS and games")
+        g_title.setObjectName("wizardGuideTitle")
         g_lay.addWidget(g_title)
 
+        # Numbered steps: the step names share one column, their explanations the next.
         steps = [
-            ("1. Open Discord Settings", "Go to User Settings -> Voice & Video."),
-            ("2. Set INPUT DEVICE", "Select 'CABLE Output (VB-Audio Virtual Cable)' or your Focusrite Loopback."),
-            ("3. Set OUTPUT DEVICE", "Select your standard headphones or speakers."),
-            ("4. Disable Discord Echo Cancellation", "Turn off Discord's 'Echo Cancellation' and 'Noise Suppression' (Mandible provides high-end studio noise gates and VSTs!)."),
-            ("5. OBS / Streamlabs", "Add an 'Audio Input Capture' source and select 'CABLE Output' as the device."),
+            ("1. Open Discord settings", "Go to User Settings \u2192 Voice & Video."),
+            ("2. Set the input device", "Select 'CABLE Output (VB-Audio Virtual Cable)' or your Focusrite Loopback."),
+            ("3. Set the output device", "Select your standard headphones or speakers."),
+            ("4. Turn off echo cancellation", "Turn off Discord's 'Echo Cancellation' and 'Noise Suppression' "
+                                              "(Mandible provides studio noise gates and VST plugins)."),
+            ("5. OBS or Streamlabs", "Add an 'Audio Input Capture' source and select 'CABLE Output' as the device."),
         ]
-        for num, text in steps:
-            row = QHBoxLayout()
+        grid = self._spaced.add(QGridLayout(), spacing=2, margins=0)
+        grid.setColumnStretch(1, 1)
+        for row, (num, text) in enumerate(steps):
             s_num = QLabel(num)
-            s_num.setStyleSheet("font-weight: bold; color: #f8fafc; font-size: 8.5pt;")
+            s_num.setObjectName("wizardGuideNum")
             s_txt = QLabel(text)
-            s_txt.setStyleSheet("color: #94a3b8; font-size: 8.5pt;")
-            row.addWidget(s_num)
-            row.addWidget(s_txt, 1)
-            g_lay.addLayout(row)
+            s_txt.setObjectName("wizardGuideText")
+            s_txt.setWordWrap(True)
+            grid.addWidget(s_num, row, 0, Qt.AlignTop)
+            grid.addWidget(s_txt, row, 1)
+        g_lay.addLayout(grid)
 
         lay.addWidget(guide_card)
         lay.addStretch()
@@ -513,41 +455,19 @@ class SetupAssistantDialog(QDialog):
         self.step_lbl.setText(f"STEP {idx + 1} OF 4")
         self.back_btn.setEnabled(idx > 0)
         titles = [
-            "Select Your Microphone",
-            "Output & Virtual Cable Setup",
-            "Headphone Monitoring",
-            "Discord & OBS Quick Connection",
+            "Select your microphone",
+            "Output and virtual cable setup",
+            "Headphone monitoring",
+            "Discord and OBS quick connection",
         ]
         self.main_title.setText(titles[idx])
         if idx == 3:
-            self.next_btn.setText("FINISH & APPLY ROUTING")
-            self.next_btn.setStyleSheet("""
-                QPushButton {
-                    background: #10b981;
-                    border: 1px solid #34d399;
-                    color: #ffffff;
-                    padding: 7px 22px;
-                    font-weight: bold;
-                }
-                QPushButton:hover {
-                    background: #059669;
-                }
-            """)
+            self.next_btn.setText("Finish && apply routing")   # && is one literal ampersand
+            set_style_property(self.next_btn, "final", True)
         else:
-            next_titles = ["OUTPUT ROUTING >", "HEADPHONE MONITOR >", "CONNECTION GUIDE >"]
-            self.next_btn.setText(f"NEXT: {next_titles[idx]}")
-            self.next_btn.setStyleSheet("""
-                QPushButton {
-                    background: #e11d48;
-                    border: 1px solid #f43f5e;
-                    color: #ffffff;
-                    padding: 7px 20px;
-                    font-weight: bold;
-                }
-                QPushButton:hover {
-                    background: #f43f5e;
-                }
-            """)
+            next_titles = ["output routing", "headphone monitor", "connection guide"]
+            self.next_btn.setText(f"Next: {next_titles[idx]}")
+            set_style_property(self.next_btn, "final", False)
 
     def _finish_and_apply(self):
         # Save audio configuration
@@ -570,6 +490,6 @@ class SetupAssistantDialog(QDialog):
         try:
             self.core.start_audio()
         except Exception as exc:
-            QMessageBox.warning(self, "Audio Start", f"Could not start audio with new settings:\n{exc}")
+            QMessageBox.warning(self, "Audio start", f"Could not start audio with new settings:\n{exc}")
 
         self.accept()

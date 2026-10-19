@@ -1,0 +1,49 @@
+# Compliance checks and the pytest suite on every push and pull request.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-2022
+    env:
+      QT_QPA_PLATFORM: offscreen
+      # Look-switch limit for CI runners (~2.3x slower than a desktop PC, where it is 150 ms).
+      MANDIBLE_SWITCH_MS: "350"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Compliance checks
+        run: python tools/check_release_compliance.py
+
+      - name: Tests
+        run: python -m pytest -q
+
+      # Every built-in skin x theme at 1024x640, 1280x720 and 1920x1080; fails on any overflow,
+      # clipped text or contrast problem.
+      - name: UI gallery
+        if: success() || failure()   # still runs when a test failed
+        env:
+          # Real Windows font metrics, as the layout tests use (offscreen substitutes fonts and
+          # reports overflow the real UI doesn't have). Nothing is shown: WA_DontShowOnScreen.
+          QT_QPA_PLATFORM: windows
+        run: python tools/ui_gallery.py --out gallery --strict
+
+      - name: Upload UI gallery
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-gallery
+          path: gallery/

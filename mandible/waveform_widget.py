@@ -4,17 +4,30 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QFont, QLinearGradient, QPainter, QPen
+from PySide6.QtCore import QRectF, Qt, Signal
+from PySide6.QtGui import QBrush, QFont, QLinearGradient, QPainter, QPen
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+    QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 )
 
 from .soundboard import SoundboardEngine
+from .ui.look import current_look, font_px, space
+from .ui.widgets.base import _follow_look, look_color
+from .ui.widgets.buttons import make_button
 
 if TYPE_CHECKING:
     from .config import SoundboardClipConfig
     from .core import Core
+
+
+EMPTY_TEXT = "Select a sound clip to view waveform"
+
+
+def _px_font(family: str, px: int, bold: bool = False) -> QFont:
+    f = QFont(family)
+    f.setPixelSize(px)
+    f.setBold(bold)
+    return f
 
 
 class WaveformCanvas(QWidget):
@@ -30,7 +43,12 @@ class WaveformCanvas(QWidget):
         self.duration_s: float = 0.0
         self.trim_start_s: float = 0.0
         self.trim_end_s: float = 0.0
+        self.empty_text = EMPTY_TEXT
         self._dragging: str | None = None  # "start" | "end" | None
+        _follow_look(self)
+
+    def _on_look_changed(self):
+        self.update()
 
     def set_audio_data(self, peaks: list[float], duration_s: float, start_s: float, end_s: float):
         self.peaks = peaks
@@ -105,19 +123,19 @@ class WaveformCanvas(QWidget):
         w, h = self.width(), self.height()
 
         # 1. Dark anodized backdrop
-        p.fillRect(0, 0, w, h, QColor("#090b10"))
-        p.setPen(QColor("#1e2433"))
+        p.fillRect(0, 0, w, h, look_color("bg.inset"))
+        p.setPen(look_color("line.subtle"))
         p.drawRect(0, 0, w - 1, h - 1)
 
         # Subtle center line
         mid_y = h / 2.0
-        p.setPen(QPen(QColor("#151a24"), 1, Qt.PenStyle.DashLine))
+        p.setPen(QPen(look_color("line.subtle"), 1, Qt.PenStyle.DashLine))
         p.drawLine(10, int(mid_y), w - 10, int(mid_y))
 
         if not self.peaks or self.duration_s <= 0.01:
-            p.setPen(QColor("#64748b"))
-            p.setFont(QFont("Consolas", 8))
-            p.drawText(QRectF(0, 0, w, h), Qt.AlignmentFlag.AlignCenter, "Select a sound clip to view waveform")
+            p.setPen(look_color("text.secondary"))
+            p.setFont(_px_font("Consolas", font_px("readout")))
+            p.drawText(QRectF(0, 0, w, h), Qt.AlignmentFlag.AlignCenter, self.empty_text)
             return
 
         # 2. Draw waveform peaks
@@ -126,9 +144,10 @@ class WaveformCanvas(QWidget):
         bar_w = max(1.0, wave_w / float(n_peaks))
 
         grad = QLinearGradient(0, 0, 0, h)
-        grad.setColorAt(0.0, QColor("#38bdf8"))
-        grad.setColorAt(0.5, QColor("#0284c7"))
-        grad.setColorAt(1.0, QColor("#38bdf8"))
+        wave = look_color("readout.text")
+        grad.setColorAt(0.0, wave)
+        grad.setColorAt(0.5, wave.darker(150))
+        grad.setColorAt(1.0, wave)
 
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(grad)
@@ -142,30 +161,34 @@ class WaveformCanvas(QWidget):
         xs = self._seconds_to_x(self.trim_start_s)
         xe = self._seconds_to_x(self.trim_end_s)
 
-        dim_brush = QBrush(QColor(0, 0, 0, 160))
+        dim = look_color("bg.window")
+        dim.setAlpha(160)
+        dim_brush = QBrush(dim)
         if xs > 10:
             p.fillRect(QRectF(10, 0, xs - 10, h), dim_brush)
         if xe < w - 10:
             p.fillRect(QRectF(xe, 0, w - 10 - xe, h), dim_brush)
 
         # 4. Draggable Handles (Left = Start, Right = End)
-        # Start handle (Cyan)
-        p.setPen(QPen(QColor("#38bdf8"), 2))
+        # Start handle (readout blue)
+        start_col = look_color("readout.text")
+        p.setPen(QPen(start_col, 2))
         p.drawLine(int(xs), 0, int(xs), h)
-        p.setBrush(QColor("#38bdf8"))
+        p.setBrush(start_col)
         p.drawRoundedRect(QRectF(xs - 5, 0, 10, 14), 2, 2)
-        p.setPen(QColor("#030712"))
-        p.setFont(QFont("Consolas", 6, QFont.Bold))
-        p.drawText(QRectF(xs - 5, 1, 10, 12), Qt.AlignmentFlag.AlignCenter, "S")
+        p.setPen(look_color("bg.window"))
+        p.setFont(_px_font("Consolas", font_px("readout"), bold=True))
+        p.drawText(QRectF(xs - 5, 0, 10, 14), Qt.AlignmentFlag.AlignCenter, "S")
 
-        # End handle (Scarlet)
-        p.setPen(QPen(QColor("#f43f5e"), 2))
+        # End handle (accent)
+        end_col = look_color("accent.hover")
+        p.setPen(QPen(end_col, 2))
         p.drawLine(int(xe), 0, int(xe), h)
-        p.setBrush(QColor("#f43f5e"))
+        p.setBrush(end_col)
         p.drawRoundedRect(QRectF(xe - 5, h - 14, 10, 14), 2, 2)
-        p.setPen(QColor("#ffffff"))
-        p.setFont(QFont("Consolas", 6, QFont.Bold))
-        p.drawText(QRectF(xe - 5, h - 13, 10, 12), Qt.AlignmentFlag.AlignCenter, "E")
+        p.setPen(look_color("text.on_accent"))
+        p.setFont(_px_font("Consolas", font_px("readout"), bold=True))
+        p.drawText(QRectF(xe - 5, h - 14, 10, 14), Qt.AlignmentFlag.AlignCenter, "E")
 
 
 class SoundboardWaveformWidget(QFrame):
@@ -176,25 +199,19 @@ class SoundboardWaveformWidget(QFrame):
         self.core = core
         self.current_clip: SoundboardClipConfig | None = None
         self.setObjectName("waveformPanel")
-        self.setStyleSheet("""
-            QFrame#waveformPanel {
-                background: #0d1017;
-                border: 1px solid #1c2230;
-                border-radius: 6px;
-                padding: 6px;
-            }
-        """)
+
 
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(8, 6, 8, 6)
-        lay.setSpacing(6)
+        lay.setContentsMargins(space(2), space(1), space(2), space(1))
+        lay.setSpacing(space(2))
 
         # Header info row
         head_row = QHBoxLayout()
-        self.clip_name_lbl = QLabel("NO CLIP SELECTED")
-        self.clip_name_lbl.setStyleSheet("font-weight: bold; font-size: 8.5pt; color: #f8fafc;")
+        self.clip_name_lbl = QLabel("No clip selected")
+        self.clip_name_lbl.setObjectName("waveformClipName")
         self.timing_lbl = QLabel("Start: 0.00s | End: 0.00s | Len: 0.00s")
-        self.timing_lbl.setStyleSheet("font-family: Consolas; font-size: 8pt; color: #94a3b8;")
+        self.timing_lbl.setObjectName("waveformTiming")
+        self._timing: tuple[float, float, float] | None = None
 
         head_row.addWidget(self.clip_name_lbl)
         head_row.addStretch()
@@ -206,54 +223,62 @@ class SoundboardWaveformWidget(QFrame):
         self.canvas.trimChanged.connect(self._on_canvas_trim_changed)
         lay.addWidget(self.canvas)
 
-        # Buttons row: [ PLAY TRIMMED ] [ STOP ] [ RESET TRIM ]
+        # Buttons row: [Play trimmed] [Stop] [Reset trim]
         btn_row = QHBoxLayout()
-        btn_row.setSpacing(8)
+        btn_row.setSpacing(space(2))
 
-        self.play_btn = QPushButton("PLAY TRIMMED")
-        self.play_btn.setStyleSheet("""
-            QPushButton {
-                background: #0f2b20;
-                border: 1px solid #10b981;
-                color: #6ee7b7;
-                font-weight: bold;
-                padding: 4px 12px;
-                border-radius: 4px;
-            }
-            QPushButton:hover {
-                background: #133a2b;
-            }
-        """)
+        self.play_btn = make_button("Play trimmed", icon="play")
+        self.play_btn.setObjectName("waveformPlayBtn")
+
         self.play_btn.clicked.connect(self._play_trimmed)
         btn_row.addWidget(self.play_btn)
 
-        self.stop_btn = QPushButton("STOP")
+        self.stop_btn = make_button("Stop", icon="stop")
         self.stop_btn.clicked.connect(self._stop_clip)
         btn_row.addWidget(self.stop_btn)
 
-        self.reset_btn = QPushButton("RESET TRIM")
-        self.reset_btn.setStyleSheet("color: #94a3b8; font-size: 8pt; padding: 4px 10px;")
+        self.reset_btn = make_button("Reset trim", "quiet")
+        self.reset_btn.setObjectName("waveformResetBtn")
         self.reset_btn.clicked.connect(self._reset_trim)
         btn_row.addWidget(self.reset_btn)
 
         btn_row.addStretch()
         hint = QLabel("Drag S (Start) and E (End) markers to trim audio")
-        hint.setStyleSheet("color: #64748b; font-size: 7.5pt; font-style: italic;")
+        hint.setObjectName("waveformHint")
         btn_row.addWidget(hint)
         lay.addLayout(btn_row)
+        _follow_look(self)
+
+    def _on_look_changed(self):
+        if self._timing is not None:
+            self._update_timing_label(*self._timing)
+
+    def _show_empty(self, title: str, tooltip: str, canvas_text: str) -> None:
+        """Nothing to show: say why (no selection, or the selected clip has no usable file),
+        and switch the clip actions off."""
+        self.clip_name_lbl.setText(title)
+        self.clip_name_lbl.setToolTip(tooltip)
+        self._timing = None
+        self.timing_lbl.setText("Start: 0.00s | End: 0.00s | Len: 0.00s")
+        self.canvas.empty_text = canvas_text
+        self.canvas.set_audio_data([], 0.0, 0.0, 0.0)
+        self.play_btn.setEnabled(False)
+        self.stop_btn.setEnabled(False)
+        self.reset_btn.setEnabled(False)
 
     def set_clip(self, clip: SoundboardClipConfig | None):
         self.current_clip = clip
-        if not clip or not clip.path or not os.path.isfile(clip.path):
-            self.clip_name_lbl.setText("NO CLIP SELECTED")
-            self.timing_lbl.setText("Start: 0.00s | End: 0.00s | Len: 0.00s")
-            self.canvas.set_audio_data([], 0.0, 0.0, 0.0)
-            self.play_btn.setEnabled(False)
-            self.stop_btn.setEnabled(False)
-            self.reset_btn.setEnabled(False)
+        if clip is None:
+            self._show_empty("No clip selected", "", EMPTY_TEXT)
+            return
+        if not clip.path or not os.path.isfile(clip.path):
+            self._show_empty(f"File not found: {clip.name}",
+                             clip.path or "This clip has no audio file.",
+                             "The audio file for this clip is missing")
             return
 
-        self.clip_name_lbl.setText(clip.name.upper())
+        self.clip_name_lbl.setText(clip.name)
+        self.clip_name_lbl.setToolTip("")
         self.play_btn.setEnabled(True)
         self.stop_btn.setEnabled(True)
         self.reset_btn.setEnabled(True)
@@ -268,11 +293,13 @@ class SoundboardWaveformWidget(QFrame):
         self._update_timing_label(start_s, end_s, dur)
 
     def _update_timing_label(self, start_s: float, end_s: float, dur: float):
+        self._timing = (start_s, end_s, dur)
         trimmed_len = max(0.0, end_s - start_s)
+        c = current_look().palette.color
         self.timing_lbl.setText(
-            f"Start: <span style='color:#38bdf8;'>{start_s:.2f}s</span> | "
-            f"End: <span style='color:#f43f5e;'>{end_s:.2f}s</span> | "
-            f"Trimmed: <span style='color:#10b981;font-weight:bold;'>{trimmed_len:.2f}s</span> / {dur:.2f}s"
+            f"Start: <span style='color:{c('readout.text')};'>{start_s:.2f}s</span> | "
+            f"End: <span style='color:{c('status.danger')};'>{end_s:.2f}s</span> | "
+            f"Trimmed: <span style='color:{c('status.ok')};font-weight:bold;'>{trimmed_len:.2f}s</span> / {dur:.2f}s"
         )
 
     def _on_canvas_trim_changed(self, start_s: float, end_s: float):
