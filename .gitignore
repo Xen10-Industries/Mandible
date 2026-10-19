@@ -33,3 +33,6 @@ scratch/
 .idea/
 Thumbs.db
 desktop.ini
+
+# UI gallery output (tools/ui_gallery.py --out gallery)
+gallery/

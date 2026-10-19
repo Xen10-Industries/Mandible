@@ -33,6 +33,18 @@ If a task conflicts with a rule, stop and ask the user before proceeding.
 - App icon: off-white mark on a graphite tile. Tray: bare mark, black or white to match the
   taskbar, in the current theme accent while an effect is active.
 
+## Skins and themes
+
+- Colours come only from palette tokens (`PALETTE_TOKENS` in `mandible/ui/palette_gen.py`, read via
+  `current_look()`). Shapes come from skin shape tokens or element variants.
+- No colour literals or inline stylesheets outside the look modules (`mandible/ui/look.py`,
+  `stylesheet.py`, `palette_gen.py`, `mandible/branding.py`). `tools/check_ui_tokens.py` enforces this.
+- A new element variant is one class plus one `register(slot, variant, cls, label)` call
+  (`mandible/ui/elements/registry.py`).
+- A new built-in skin or theme must pass `tests/test_skins.py` (add its id to `SKINS`) and
+  `python tools/ui_gallery.py --out gallery --strict` (CI runs it and uploads the gallery).
+- Keep skin and theme names free of third-party trademarks (no brand or product names).
+
 ## Stack (for orientation)
 
 Python 3.13 + PySide6 (LGPL-3.0) UI. VST3 hosting via Spotify **pedalboard** (GPL-3.0; bundles JUCE 6.1.4

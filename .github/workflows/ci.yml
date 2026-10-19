@@ -28,3 +28,15 @@ jobs:
 
       - name: Tests
         run: python -m pytest -q
+
+      # Every built-in skin x theme at 1024x640, 1280x720 and 1920x1080; fails on any overflow,
+      # clipped text or contrast problem.
+      - name: UI gallery
+        run: python tools/ui_gallery.py --out gallery --strict
+
+      - name: Upload UI gallery
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-gallery
+          path: gallery/

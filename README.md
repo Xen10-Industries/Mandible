@@ -19,6 +19,8 @@ Loopback so Discord, OBS, games or any other app can use it as a microphone.
   pre-processing: high-pass filter, RNNoise noise suppression and a noise gate.
 - **Clean pass-through, mute, or a default chain** when no hotkey is active, plus a **panic / all-off**
   hotkey.
+- **Skins and colour themes**, switched live, plus a **Customize** panel to build your own and share
+  them as files.
 - Soundboard, MIDI control, an on-screen overlay, a local HTTP API (127.0.0.1 only) for Stream Deck and
   OBS, and system tray integration.
 
