@@ -7,6 +7,7 @@ slot plus shape tokens. Widgets read ``current_look()`` and repaint on
 from __future__ import annotations
 
 import dataclasses
+import gc
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -302,8 +303,16 @@ def set_look(look: Look, app: "QApplication | None" = None) -> None:
     _current = look
     app = app or QApplication.instance()
     if app is not None:
-        app.setStyleSheet(qss)
-        app.setPalette(qpalette(look))
+        # Restyling walks every widget and calls back into Python. A cyclic collection there
+        # can free a widget Qt is still iterating over (a segfault), so it waits until after.
+        collecting = gc.isenabled()
+        gc.disable()
+        try:
+            app.setStyleSheet(qss)
+            app.setPalette(qpalette(look))
+        finally:
+            if collecting:
+                gc.enable()
     look_bus().lookChanged.emit()
 
 

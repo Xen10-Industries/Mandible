@@ -221,6 +221,24 @@ def test_set_look_keeps_the_native_palette_following_later_looks(qapp, restore_l
     assert first == BUILTIN_PALETTES["scarlet"].color("bg.window") != qapp.palette().color(QPalette.Window).name()
 
 
+def test_set_look_restyles_with_the_cyclic_collector_paused(qapp, restore_look, monkeypatch):
+    """A collection during restyling freed widgets Qt was still walking (gallery segfault)."""
+    import gc
+
+    from PySide6.QtWidgets import QApplication
+
+    seen = []
+    style, palette = QApplication.setStyleSheet, QApplication.setPalette   # setPalette is static
+    monkeypatch.setattr(QApplication, "setStyleSheet",
+                        lambda self, qss: seen.append(gc.isenabled()) or style(self, qss))
+    monkeypatch.setattr(QApplication, "setPalette",
+                        lambda self, pal: seen.append(gc.isenabled()) or palette(pal))
+    assert gc.isenabled()
+    set_look(Look(BUILTIN_PALETTES["cyan"], BUILTIN_SKINS["vintage"]))
+    assert seen == [False, False]
+    assert gc.isenabled()
+
+
 def test_set_look_without_app_does_not_fail(qapp, restore_look, monkeypatch):
     # Explicit app=None path with no QApplication instance must still swap + emit.
     from PySide6.QtWidgets import QApplication
