@@ -416,3 +416,31 @@ def test_flow_strip_icons_mode_shows_icons_with_tooltips(sample_core, look):
     finally:
         strip.deleteLater()
         _flush()
+
+
+def test_add_plugin_dialog_shows_built_ins_or_vst3_only(qapp, monkeypatch):
+    from mandible import plugins as P
+    from mandible.ui.dialogs.add_plugin import AddPluginDialog
+
+    catalog = [
+        {"name": "Lo-Fi Bitcrush", "path": "internal:bitcrush", "vendor": "Mandible DSP"},
+        {"name": "Mandible Pitch & Formant", "path": "internal:pitch_formant", "vendor": "Mandible DSP"},
+        {"name": "Some Reverb", "path": "C:/VST3/Some Reverb.vst3", "vendor": "Acme"},
+    ]
+    monkeypatch.setattr(P, "get_cached_plugins", lambda *_a, **_k: [dict(c) for c in catalog])
+    dlg = AddPluginDialog([], None)
+    try:
+        def visible():
+            return {dlg.list.item(i).data(Qt.UserRole) for i in range(dlg.list.count())
+                    if not dlg.list.item(i).isHidden()}
+
+        assert visible() == {c["path"] for c in catalog}
+        dlg.show_source("builtin")
+        assert visible() == {"internal:bitcrush", "internal:pitch_formant"}
+        dlg.search.setText("pitch")
+        assert visible() == {"internal:pitch_formant"}
+        dlg.search.clear()
+        dlg.show_source("vst3")
+        assert visible() == {"C:/VST3/Some Reverb.vst3"}
+    finally:
+        dlg.deleteLater()

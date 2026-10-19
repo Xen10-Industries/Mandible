@@ -4,12 +4,17 @@ from __future__ import annotations
 import os
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QFileDialog, QHBoxLayout, QLineEdit,
-                               QListWidget, QListWidgetItem,
-                               QVBoxLayout)
+from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFileDialog, QHBoxLayout,
+                               QLineEdit, QListWidget, QListWidgetItem, QVBoxLayout)
 
 from ... import plugins as P
+from ...internal_dsp import is_internal_plugin
 from ..widgets.buttons import make_button, tier_button_box
+
+
+# (label, key) for the Show filter
+SOURCES = (("All plugins", "all"), ("Built-in effects", "builtin"), ("VST3 plugins", "vst3"))
+_BUILTIN_ROLE = Qt.UserRole + 1
 
 
 class AddPluginDialog(QDialog):
@@ -25,9 +30,15 @@ class AddPluginDialog(QDialog):
         self.search = QLineEdit()
         self.search.setPlaceholderText("Search plugins by name or vendor…")
         self.search.setClearButtonEnabled(True)
+        self.source = QComboBox()
+        self.source.setAccessibleName("Show")
+        self.source.setToolTip("Show all plugins, only Mandible's built-in effects, or only VST3 plugins")
+        for label, key in SOURCES:
+            self.source.addItem(label, key)
         rescan_btn = make_button("Rescan")
         rescan_btn.setToolTip("Rescan system folders for newly installed VST3 plugins")
         top_row.addWidget(self.search, 1)
+        top_row.addWidget(self.source)
         top_row.addWidget(rescan_btn)
         lay.addLayout(top_row)
 
@@ -45,6 +56,7 @@ class AddPluginDialog(QDialog):
 
         self._populate(force_rescan=False)
         self.search.textChanged.connect(self._filter)
+        self.source.currentIndexChanged.connect(lambda _: self._filter())
         self.list.itemDoubleClicked.connect(lambda _: self._ok())
         bb.accepted.connect(self._ok)
         bb.rejected.connect(self.reject)
@@ -63,14 +75,23 @@ class AddPluginDialog(QDialog):
             text = f"{fav}{item['name']}{vendor}"
             it = QListWidgetItem(text)
             it.setData(Qt.UserRole, item["path"])
+            it.setData(_BUILTIN_ROLE, is_internal_plugin(item["path"]))
             it.setToolTip(f"{item['path']}\nRight-click to toggle Favorite")
             self.list.addItem(it)
+        self._filter()
 
-    def _filter(self, text):
-        t = text.lower()
+    def show_source(self, key: str) -> None:
+        """Select the Show filter by key (``all``, ``builtin`` or ``vst3``)."""
+        self.source.setCurrentIndex(max(0, self.source.findData(key)))
+
+    def _filter(self, _text: str | None = None):
+        t = self.search.text().lower()
+        source = self.source.currentData()
         for i in range(self.list.count()):
             it = self.list.item(i)
-            it.setHidden(t not in it.text().lower())
+            builtin = bool(it.data(_BUILTIN_ROLE))
+            wrong_source = (source == "builtin" and not builtin) or (source == "vst3" and builtin)
+            it.setHidden(wrong_source or t not in it.text().lower())
 
     def _ok(self):
         it = self.list.currentItem()
