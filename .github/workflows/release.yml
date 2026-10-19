@@ -29,7 +29,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: "Read version (single source of truth: mandible/_version.py)"
         id: version
@@ -39,7 +39,7 @@ jobs:
           "version=$v" >> $env:GITHUB_OUTPUT
           Write-Host "Mandible $v"
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
@@ -155,13 +155,13 @@ jobs:
       #
       # - name: Upload unsigned app for signing
       #   id: upload-unsigned-app
-      #   uses: actions/upload-artifact@v4
+      #   uses: actions/upload-artifact@v7
       #   with:
       #     name: unsigned-app
       #     path: dist/Mandible
       #
       # - name: Sign Mandible.exe with SignPath
-      #   uses: signpath/github-action-submit-signing-request@v1
+      #   uses: signpath/github-action-submit-signing-request@v3
       #   with:
       #     api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
       #     organization-id: "<SIGNPATH_ORGANIZATION_ID>"
@@ -195,7 +195,7 @@ jobs:
           [IO.File]::WriteAllText("$PWD\dist\SHA256SUMS.txt", (($lines -join "`n") + "`n"))
           Get-Content dist\SHA256SUMS.txt
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: mandible-${{ steps.version.outputs.version }}
           path: |
@@ -211,12 +211,12 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: mandible-${{ needs.build.outputs.version }}
           path: out
       # Creates a DRAFT release; a human reviews and publishes it.
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           draft: true
           name: Mandible ${{ needs.build.outputs.version }}
