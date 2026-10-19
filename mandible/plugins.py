@@ -77,9 +77,21 @@ def save_plugin_cache(items: list[dict]):
         print(f"[Mandible] could not save plugin cache: {exc}")
 
 
+def set_favorite(path: str, favorite: bool) -> bool:
+    """Mark the cached plugin at ``path`` as a favorite (or not). False if it isn't cached."""
+    items = list(load_plugin_cache().values())
+    for item in items:
+        if item["path"] == path:
+            item["favorite"] = bool(favorite)
+            save_plugin_cache(items)
+            return True
+    return False
+
+
 def get_cached_plugins(extra_dirs: list[str] | None = None, force_rescan: bool = False) -> list[dict]:
-    """Returns detailed plugin list with caching, vendor detection, and favorites."""
-    existing_cache = load_plugin_cache() if not force_rescan else {}
+    """Returns detailed plugin list with caching, vendor detection, and favorites.
+    ``force_rescan`` re-reads every plugin's details but keeps the user's favorites."""
+    existing_cache = load_plugin_cache()
     scanned = scan_vst3(extra_dirs)
     results = []
 

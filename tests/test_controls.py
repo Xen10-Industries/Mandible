@@ -444,3 +444,42 @@ def test_add_plugin_dialog_shows_built_ins_or_vst3_only(qapp, monkeypatch):
         assert visible() == {"C:/VST3/Some Reverb.vst3"}
     finally:
         dlg.deleteLater()
+
+
+def test_favorites_toggle_from_the_menu_persist_and_survive_a_rescan(qapp, monkeypatch):
+    from mandible import plugins as P
+    from mandible.ui.dialogs.add_plugin import _FAVORITE_ROLE, AddPluginDialog
+
+    reverb = "C:/VST3/Some Reverb.vst3"
+    monkeypatch.setattr(P, "scan_vst3", lambda *_a, **_k: [("Some Reverb", reverb)])
+    P.save_plugin_cache([])
+    P.get_cached_plugins([])
+
+    def rows(dlg):
+        return [dlg.list.item(i) for i in range(dlg.list.count())]
+
+    dlg = AddPluginDialog([], None)
+    try:
+        assert dlg.windowTitle() == "Insert plugin"
+        item = next(it for it in rows(dlg) if it.data(Qt.UserRole) == reverb)
+        assert not item.data(_FAVORITE_ROLE)
+        assert not item.icon().isNull()                       # outline star
+        assert "[FAV]" not in "".join(it.text() for it in rows(dlg))
+        dlg.toggle_favorite(item)
+        assert item.data(_FAVORITE_ROLE)
+    finally:
+        dlg.deleteLater()
+
+    assert P.load_plugin_cache()[reverb]["favorite"] is True
+    P.get_cached_plugins([], force_rescan=True)               # Rescan keeps favorites
+    assert P.load_plugin_cache()[reverb]["favorite"] is True
+
+    dlg = AddPluginDialog([], None)
+    try:
+        order = [(bool(it.data(_FAVORITE_ROLE)), it.data(Qt.UserRole)) for it in rows(dlg)]
+        assert order == sorted(order, key=lambda r: not r[0])  # favorites first
+        assert (True, reverb) in order
+        dlg.toggle_favorite(next(it for it in rows(dlg) if it.data(Qt.UserRole) == reverb))
+    finally:
+        dlg.deleteLater()
+    assert P.load_plugin_cache()[reverb]["favorite"] is False

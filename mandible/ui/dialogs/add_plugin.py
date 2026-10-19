@@ -1,27 +1,30 @@
-"""Pick a VST3 plugin to add to a chain."""
+"""Pick a plugin (built-in effect or VST3) to insert into a chain."""
 from __future__ import annotations
 
 import os
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFileDialog, QHBoxLayout,
-                               QLineEdit, QListWidget, QListWidgetItem, QVBoxLayout)
+                               QLineEdit, QListWidget, QListWidgetItem, QMenu, QVBoxLayout)
 
 from ... import plugins as P
 from ...internal_dsp import is_internal_plugin
+from ..icons import icon
+from ..look import look_bus
 from ..widgets.buttons import make_button, tier_button_box
 
 
 # (label, key) for the Show filter
 SOURCES = (("All plugins", "all"), ("Built-in effects", "builtin"), ("VST3 plugins", "vst3"))
 _BUILTIN_ROLE = Qt.UserRole + 1
+_FAVORITE_ROLE = Qt.UserRole + 2
 
 
 class AddPluginDialog(QDialog):
     def __init__(self, extra_dirs, parent=None):
         super().__init__(parent)
         self.extra_dirs = extra_dirs
-        self.setWindowTitle("Add VST3 plugin")
+        self.setWindowTitle("Insert plugin")
         self.resize(520, 560)
         self.path = ""
         lay = QVBoxLayout(self)
@@ -44,6 +47,9 @@ class AddPluginDialog(QDialog):
 
         self.list = QListWidget()
         self.list.setAlternatingRowColors(True)
+        self.list.setIconSize(QSize(16, 16))
+        self.list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.list.customContextMenuRequested.connect(self._context_menu)
         lay.addWidget(self.list, 1)
 
         row = QHBoxLayout()
@@ -62,6 +68,7 @@ class AddPluginDialog(QDialog):
         bb.rejected.connect(self.reject)
         browse.clicked.connect(self._browse)
         rescan_btn.clicked.connect(lambda: self._populate(force_rescan=True))
+        look_bus().lookChanged.connect(self._refresh_icons)
         self.search.setFocus()
 
     def _populate(self, force_rescan: bool):
@@ -71,14 +78,39 @@ class AddPluginDialog(QDialog):
         plugins.sort(key=lambda x: (not x.get("favorite", False), x["name"].lower()))
         for item in plugins:
             vendor = f"  [{item['vendor']}]" if item.get("vendor") else ""
-            fav = "[FAV] " if item.get("favorite") else ""
-            text = f"{fav}{item['name']}{vendor}"
-            it = QListWidgetItem(text)
+            it = QListWidgetItem(f"{item['name']}{vendor}")
             it.setData(Qt.UserRole, item["path"])
             it.setData(_BUILTIN_ROLE, is_internal_plugin(item["path"]))
-            it.setToolTip(f"{item['path']}\nRight-click to toggle Favorite")
+            it.setToolTip(f"{item['path']}\nRight-click to add to or remove from favorites")
+            self._set_favorite_display(it, bool(item.get("favorite")))
             self.list.addItem(it)
         self._filter()
+
+    @staticmethod
+    def _set_favorite_display(it: QListWidgetItem, favorite: bool) -> None:
+        it.setData(_FAVORITE_ROLE, favorite)
+        it.setIcon(icon("star", "accent") if favorite else icon("star_outline", "text.disabled"))
+
+    def _refresh_icons(self) -> None:
+        for i in range(self.list.count()):
+            it = self.list.item(i)
+            self._set_favorite_display(it, bool(it.data(_FAVORITE_ROLE)))
+
+    def toggle_favorite(self, it: QListWidgetItem) -> None:
+        """Flip ``it``'s favorite flag, saved to the plugin cache. The row stays where it is;
+        favorites sort to the top the next time the list is built."""
+        favorite = not bool(it.data(_FAVORITE_ROLE))
+        if P.set_favorite(it.data(Qt.UserRole), favorite):
+            self._set_favorite_display(it, favorite)
+
+    def _context_menu(self, pos) -> None:
+        it = self.list.itemAt(pos)
+        if it is None:
+            return
+        menu = QMenu(self)
+        label = ("Remove from favorites" if it.data(_FAVORITE_ROLE) else "Add to favorites")
+        menu.addAction(icon("star", "text.primary"), label, lambda: self.toggle_favorite(it))
+        menu.exec(self.list.viewport().mapToGlobal(pos))
 
     def show_source(self, key: str) -> None:
         """Select the Show filter by key (``all``, ``builtin`` or ``vst3``)."""
