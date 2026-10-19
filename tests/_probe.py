@@ -15,6 +15,12 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 WIN32 = sys.platform == "win32"
 
+# Look-switch limits (spec 7.2: a live switch, layout and repaint included). 150 ms is the
+# budget on a desktop PC; CI runners are ~2.3x slower, so ci.yml sets MANDIBLE_SWITCH_MS=350.
+# The ledger median (Customize panel open or closed) stays at 90% of the limit.
+SWITCH_MS = float(os.environ.get("MANDIBLE_SWITCH_MS", "150"))
+LEDGER_MS = SWITCH_MS * 0.9
+
 
 def run_probe(out_dir: pathlib.Path, sizes, scenario: str = "sample", scale: float | None = None,
               strict: bool = False, skins=("skeuomorphic", "vintage", "minimal"),

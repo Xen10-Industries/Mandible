@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import pytest
+from _probe import LEDGER_MS, SWITCH_MS
 
 from mandible.ui.look import (
     BUILTIN_PALETTES,
@@ -147,7 +148,6 @@ def test_switch_look_is_engine_free_and_error_free(sample_core, restore_look):
         app.processEvents()
 
 
-SWITCH_MS = 150          # spec 7.2: a live look switch, layout and repaint included
 MIN_SWITCH_SAMPLES = 24  # timed switches per skin, after the warm-up round
 
 
@@ -175,7 +175,6 @@ def test_switch_look_under_150_ms_in_a_clean_process(skin, tmp_path):
     assert res["median_ms"] < SWITCH_MS, res["ms"]
 
 
-LEDGER_MS = 135         # the ledger ruling: the median a look switch must stay at or under
 
 
 @pytest.mark.parametrize("skin,dock", [

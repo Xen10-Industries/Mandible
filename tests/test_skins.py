@@ -15,13 +15,12 @@ import statistics
 import sys
 
 import pytest
-from _probe import run_probe
+from _probe import SWITCH_MS, run_probe
 
 SKINS = ["skeuomorphic", "vintage", "minimal"]
 THEMES = ("scarlet", "cyan", "stealth", "amber")
 SIZES = [(1024, 640), (1280, 720), (1920, 1080)]
 WIN32 = sys.platform == "win32"
-SWITCH_MS = 150
 
 
 @pytest.fixture(scope="module", params=SKINS)

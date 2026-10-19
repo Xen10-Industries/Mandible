@@ -13,6 +13,8 @@ jobs:
     runs-on: windows-2022
     env:
       QT_QPA_PLATFORM: offscreen
+      # Look-switch limit for CI runners (~2.3x slower than a desktop PC, where it is 150 ms).
+      MANDIBLE_SWITCH_MS: "350"
     steps:
       - uses: actions/checkout@v4
 
@@ -32,6 +34,7 @@ jobs:
       # Every built-in skin x theme at 1024x640, 1280x720 and 1920x1080; fails on any overflow,
       # clipped text or contrast problem.
       - name: UI gallery
+        if: success() || failure()   # still runs when a test failed
         run: python tools/ui_gallery.py --out gallery --strict
 
       - name: Upload UI gallery
