@@ -7,6 +7,27 @@ It hosts VST3 plugins (voice changers, noise cleanup, EQ, reverb, and so on) in 
 switch with global hotkeys, then sends the processed voice to a virtual audio cable or Focusrite
 Loopback so Discord, OBS, games or any other app can use it as a microphone.
 
+![Mandible's main window in the Skeuomorphic skin with the Scarlet theme: a voice preset bank, an effects rack with three built-in effects and their knobs, and input/output channel strips](docs/images/main-skeuomorphic.png)
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/main-vintage.png" alt="The main window in the Vintage skin with the Amber theme"></td>
+    <td width="50%"><img src="docs/images/main-minimal.png" alt="The main window in the Minimal skin with the Cyan theme"></td>
+  </tr>
+  <tr>
+    <td align="center">Vintage skin, Amber theme</td>
+    <td align="center">Minimal skin, Cyan theme</td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/images/customize.png" width="300" alt="The Customize panel: pick frames, switches, knobs and meters, and colours"></td>
+    <td align="center"><img src="docs/images/mic-cleanup.png" width="380" alt="Mic cleanup: rumble filter, AI noise suppression and noise gate"></td>
+  </tr>
+  <tr>
+    <td align="center">Customize: build your own skin and colours</td>
+    <td align="center">Mic cleanup before your effects</td>
+  </tr>
+</table>
+
 ## Features
 
 - **Swappable chains (racks) of VST3 plugins**, switched with global hotkeys in **Toggle** or **Hold** mode.
