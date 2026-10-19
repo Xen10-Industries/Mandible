@@ -53,6 +53,17 @@ def _gear(cx: float, cy: float, r_out: float, r_in: float, teeth: int) -> list:
     return cmds
 
 
+def _star(cx: float, cy: float, r_out: float, r_in: float) -> list:
+    """A five-pointed star, point up."""
+    cmds = []
+    for i in range(10):
+        r = r_out if i % 2 == 0 else r_in
+        a = i * math.pi / 5 - math.pi / 2
+        cmds.append(("M" if i == 0 else "L", cx + r * math.cos(a), cy + r * math.sin(a)))
+    cmds.append(("Z",))
+    return cmds
+
+
 SHAPES: dict[str, tuple] = {
     "power": (("arc", 12, 13, 8, 60, -300),
               ("path", [("M", 12, 3), ("L", 12, 12)], False)),
@@ -90,6 +101,8 @@ SHAPES: dict[str, tuple] = {
                               ("L", 4.5, 5), ("L", 10.5, 5)], False),
                     ("path", [("M", 11, 13), ("L", 19.5, 4.5), ("M", 14, 4.5), ("L", 19.5, 4.5),
                               ("L", 19.5, 10)], False)),
+    "star": (("path", _star(12, 12.8, 9.5, 4.2), True),),
+    "star_outline": (("path", _star(12, 12.8, 9.5, 4.2), False),),
     "play": (("path", [("M", 7.5, 5), ("L", 19, 12), ("L", 7.5, 19), ("Z",)], True),),
     "stop": (("rect", 6.5, 6.5, 11, 11, 1.5, True),),
     "record": (("circle", 12, 12, 6, True),),

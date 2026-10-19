@@ -7,6 +7,27 @@ It hosts VST3 plugins (voice changers, noise cleanup, EQ, reverb, and so on) in 
 switch with global hotkeys, then sends the processed voice to a virtual audio cable or Focusrite
 Loopback so Discord, OBS, games or any other app can use it as a microphone.
 
+![Mandible's main window in the Skeuomorphic skin with the Scarlet theme: a voice preset bank, an effects rack with three built-in effects and their knobs, and input/output channel strips](docs/images/main-skeuomorphic.png)
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/main-vintage.png" alt="The main window in the Vintage skin with the Amber theme"></td>
+    <td width="50%"><img src="docs/images/main-minimal.png" alt="The main window in the Minimal skin with the Cyan theme"></td>
+  </tr>
+  <tr>
+    <td align="center">Vintage skin, Amber theme</td>
+    <td align="center">Minimal skin, Cyan theme</td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/images/customize.png" width="300" alt="The Customize panel: pick frames, switches, knobs and meters, and colours"></td>
+    <td align="center"><img src="docs/images/mic-cleanup.png" width="380" alt="Mic cleanup: rumble filter, AI noise suppression and noise gate"></td>
+  </tr>
+  <tr>
+    <td align="center">Customize: build your own skin and colours</td>
+    <td align="center">Mic cleanup before your effects</td>
+  </tr>
+</table>
+
 ## Features
 
 - **Swappable chains (racks) of VST3 plugins**, switched with global hotkeys in **Toggle** or **Hold** mode.
@@ -39,8 +60,24 @@ Loopback so Discord, OBS, games or any other app can use it as a microphone.
 1. Download the latest release from this repository's [**Releases** page](../../releases/latest):
    - `Mandible-<version>-Setup.exe` (installer), or
    - `Mandible-<version>-win64-portable.zip` (unzip anywhere and run `Mandible.exe`).
-2. *(Optional)* Check the download against `SHA256SUMS.txt`.
+2. *(Optional)* Check the download against `SHA256SUMS.txt` (see below).
 3. Run Mandible. The **Audio Setup Assistant** walks you through choosing your microphone and output.
+
+### "Windows protected your PC"
+
+Mandible's releases are not code-signed yet, so Windows SmartScreen may warn you the first time you run
+the installer or `Mandible.exe`. Click **More info**, check the app is `Mandible-<version>-Setup.exe` or
+`Mandible.exe`, then click **Run anyway**. Only do this for files downloaded from this repository's
+Releases page; every release is built by GitHub Actions from the source code here.
+
+To check a download wasn't altered, compare its SHA-256 hash with the matching line in that release's
+`SHA256SUMS.txt`. In PowerShell:
+
+```powershell
+Get-FileHash .\Mandible-0.1.1-Setup.exe -Algorithm SHA256
+```
+
+The `Hash` it prints must equal the value on the file's line in `SHA256SUMS.txt` (case doesn't matter).
 
 ### Routing with Focusrite Loopback
 
