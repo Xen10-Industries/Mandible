@@ -129,6 +129,7 @@ class AIVoiceDialog(QDialog):
             self.f0_combo.addItem(label, key)
         form.addRow("Pitch tracker", self.f0_combo)
 
+        self._slider_pairs: list[tuple[QSlider, QDoubleSpinBox, int]] = []
         self.pitch_slider, self.pitch_spin = self._slider_spin(
             min_v=-24.0, max_v=24.0, step=0.5, suffix=" st", decimals=1
         )
@@ -198,22 +199,31 @@ class AIVoiceDialog(QDialog):
         spin.setDecimals(decimals)
         spin.setSuffix(suffix)
 
-        def on_slider(val: int):
-            fval = val / scale
-            spin.blockSignals(True)
-            spin.setValue(fval)
-            spin.blockSignals(False)
-            self._sync_to_plugin()
-
-        def on_spin(fval: float):
-            slider.blockSignals(True)
-            slider.setValue(int(round(fval * scale)))
-            slider.blockSignals(False)
-            self._sync_to_plugin()
-
-        slider.valueChanged.connect(on_slider)
-        spin.valueChanged.connect(on_spin)
+        self._slider_pairs.append((slider, spin, scale))
+        slider.valueChanged.connect(self._on_any_slider_changed)
+        spin.valueChanged.connect(self._on_any_spin_changed)
         return slider, spin
+
+    def _on_any_slider_changed(self, _val: int) -> None:
+        sender = self.sender()
+        for slider, spin, scale in self._slider_pairs:
+            if sender is slider:
+                fval = slider.value() / scale
+                spin.blockSignals(True)
+                spin.setValue(fval)
+                spin.blockSignals(False)
+                break
+        self._sync_to_plugin()
+
+    def _on_any_spin_changed(self, _fval: float) -> None:
+        sender = self.sender()
+        for slider, spin, scale in self._slider_pairs:
+            if sender is spin:
+                slider.blockSignals(True)
+                slider.setValue(int(round(spin.value() * scale)))
+                slider.blockSignals(False)
+                break
+        self._sync_to_plugin()
 
     def _pair_row(self, slider: QSlider, spin: QDoubleSpinBox) -> QWidget:
         w = QWidget()

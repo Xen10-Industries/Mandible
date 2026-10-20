@@ -6,7 +6,7 @@ import json
 
 import numpy as np
 import pytest
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QCoreApplication, QEvent, Qt
 
 from mandible import ai_voice as AV
 from mandible import plugins as P
@@ -19,6 +19,11 @@ from mandible.ui.inspect import (find_clipped_text, find_overflow, off_scale_spa
                                  untiered_buttons)
 from mandible.ui.look import BUILTIN_PALETTES, BUILTIN_SKINS, Look
 from mandible.ui.widgets.plugin_card import PluginRackCard
+
+
+def _flush():
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    QCoreApplication.processEvents()
 
 
 def test_ai_voice_in_internal_catalog():
@@ -167,6 +172,9 @@ def test_add_plugin_dialog_disables_ai_voice_when_already_in_chain(qapp, monkeyp
     ]
     assert len(ai_items2) == 1
     assert bool(ai_items2[0].flags() & Qt.ItemIsEnabled)
+    dlg.deleteLater()
+    dlg2.deleteLater()
+    _flush()
 
 
 def test_plugin_rack_card_shows_open_ui_button_for_ai_voice(qapp, sample_core):
@@ -176,6 +184,8 @@ def test_plugin_rack_card_shows_open_ui_button_for_ai_voice(qapp, sample_core):
     card = PluginRackCard(slot, chain, sample_core)
     assert card.ui_btn.isHidden() is False
     assert "AI voice model" in card.ui_btn.toolTip()
+    card.deleteLater()
+    _flush()
 
 
 def test_ai_voice_dialog_ui_and_controls(qapp, sample_core):
@@ -185,23 +195,27 @@ def test_ai_voice_dialog_ui_and_controls(qapp, sample_core):
     slot._instance = plugin
 
     dlg = AIVoiceDialog(slot, sample_core)
-    dlg.setAttribute(Qt.WA_DontShowOnScreen)
-    dlg.show()
-    for _ in range(3):
-        qapp.processEvents()
+    try:
+        dlg.setAttribute(Qt.WA_DontShowOnScreen)
+        dlg.show()
+        for _ in range(3):
+            qapp.processEvents()
 
-    assert off_scale_spacing(dlg) == []
-    assert untiered_buttons(dlg) == []
-    assert find_clipped_text(dlg) == []
-    assert find_overflow(dlg) == []
+        assert off_scale_spacing(dlg) == []
+        assert untiered_buttons(dlg) == []
+        assert find_clipped_text(dlg) == []
+        assert find_overflow(dlg) == []
 
-    # Selecting another built-in model updates the plugin and persists state
-    idx = dlg.model_combo.findData("titan_brute")
-    assert idx >= 0
-    dlg.model_combo.setCurrentIndex(idx)
-    assert plugin.model_id == "titan_brute"
-    assert slot.state != ""
+        # Selecting another built-in model updates the plugin and persists state
+        idx = dlg.model_combo.findData("titan_brute")
+        assert idx >= 0
+        dlg.model_combo.setCurrentIndex(idx)
+        assert plugin.model_id == "titan_brute"
+        assert slot.state != ""
 
-    decoded = json.loads(base64.b64decode(slot.state).decode("utf-8"))
-    assert decoded["model_id"] == "titan_brute"
-    dlg.close()
+        decoded = json.loads(base64.b64decode(slot.state).decode("utf-8"))
+        assert decoded["model_id"] == "titan_brute"
+    finally:
+        dlg.hide()
+        dlg.deleteLater()
+        _flush()
