@@ -15,7 +15,7 @@ TYPED_ICON = re.compile(r"^[<>▲▼xX✕+]$|[←-⇿☀-➿\U0001F300-\U0001FAF
 # Words that are written in capitals anyway (sentence case allows them).
 ACRONYMS = {"MIDI", "ASIO", "WASAPI", "HTTP", "REST", "VST3", "CABLE"}
 DIALOGS = ("settings", "prefx", "soundboard", "hotkey", "add_plugin", "param_map",
-           "setup_assistant", "about")
+           "setup_assistant", "about", "updater")
 
 
 @pytest.fixture
@@ -219,6 +219,7 @@ def _views(sample_core):
 
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
     from mandible.ui.dialogs.about import AboutDialog
+    from mandible.ui.dialogs.updater import UpdateDialog
     from mandible.ui.dialogs.add_plugin import AddPluginDialog
     from mandible.ui.dialogs.hotkey import HotkeyDialog
     from mandible.ui.dialogs.param_map import PluginParamMapDialog
@@ -242,6 +243,7 @@ def _views(sample_core):
         "param_map": lambda: PluginParamMapDialog(slot, sample_core, None),
         "setup_assistant": lambda: SetupAssistantDialog(sample_core, None),
         "about": lambda: AboutDialog(None),
+        "updater": lambda: UpdateDialog(sample_core, None, auto_check=False),
     }
     return builders
 

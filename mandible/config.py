@@ -224,6 +224,9 @@ class AppConfig:
     extra_plugin_dirs: list[str] = field(default_factory=list)
     plugin_param_mappings: dict[str, list[str]] = field(default_factory=dict)
     left_panel_width: int = 300                # main window preset panel (splitter), 240..420 px
+    auto_check_updates: bool = True            # background GitHub Releases check on startup
+    check_prereleases: bool = True             # include pre-release tags in update checks
+    last_update_check: float = 0.0             # epoch timestamp of last background check
 
 
 # ---------------------------------------------------------------- (de)serialisation

@@ -489,12 +489,32 @@ class SettingsDialog(QDialog):
         self._update_panic_key_btn()
         form.addRow("All-off key", self._left(self.panic_key_btn))
 
+        self._group(form, "Updates")
+        self.auto_updates = self._check(
+            form, "Automatically check for updates on startup",
+            getattr(self.cfg, "auto_check_updates", True),
+            "Checks GitHub Releases at most once a day in the background.")
+        self.prerelease_updates = self._check(
+            form, "Include pre-release versions",
+            getattr(self.cfg, "check_prereleases", True))
+        self.check_updates_btn = make_button(
+            "Check for updates…",
+            tooltip="Check GitHub Releases for a newer version of Mandible")
+        self.check_updates_btn.clicked.connect(self._open_update_checker)
+        form.addRow(self._left(self.check_updates_btn))
+
         self._group(form, "Diagnostics")
         open_appdata_btn = make_button("Open config && logs folder…")
         open_appdata_btn.setToolTip(f"Open {APP_DIR} in Windows Explorer")
         open_appdata_btn.clicked.connect(lambda: os.startfile(APP_DIR) if os.path.isdir(APP_DIR) else None)
         form.addRow(self._left(open_appdata_btn))
         return page
+
+    def _open_update_checker(self) -> None:
+        from .updater import UpdateDialog
+        self.cfg.auto_check_updates = self.auto_updates.isChecked()
+        self.cfg.check_prereleases = self.prerelease_updates.isChecked()
+        UpdateDialog(self.core, self).exec()
 
     # ------------------------------------------------------------------ Local API
     def _build_api(self) -> QWidget:
@@ -787,6 +807,10 @@ class SettingsDialog(QDialog):
         self.cfg.start_minimized = self.minimized.isChecked()
         self.cfg.keep_chains_awake = self.keep_awake.isChecked()
         self.core.engine.keep_awake = self.keep_awake.isChecked()
+        if hasattr(self, "auto_updates"):
+            self.cfg.auto_check_updates = self.auto_updates.isChecked()
+        if hasattr(self, "prerelease_updates"):
+            self.cfg.check_prereleases = self.prerelease_updates.isChecked()
 
         # Limiter
         self.cfg.limiter.enabled = self.lim_en.isChecked()

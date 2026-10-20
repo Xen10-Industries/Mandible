@@ -466,6 +466,7 @@ def _monitor_and_center_plugin_window(plugin_title: str, parent_hwnd: int | None
 
 # =============================================================== main window
 class MainWindow(QMainWindow):
+    _updateFound = Signal(object)   # ReleaseInfo from background update check
     def __init__(self, core: Core, show_tray: bool = True):
         """``show_tray=False`` builds the tray icon (the rest of the window updates it) but never shows it."""
         super().__init__()
@@ -475,6 +476,8 @@ class MainWindow(QMainWindow):
         self._quitting = False
         self.customize_panel: CustomizePanel | None = None   # exists only while open
         self._pre_dock_width: int | None = None
+        self._available_update = None
+        self._updateFound.connect(self._on_update_found)
         self.setWindowTitle("Mandible")
         self.setWindowIcon(branding.app_icon())
         self.resize(1280, 820)
@@ -509,6 +512,9 @@ class MainWindow(QMainWindow):
         self.monitor = h.monitor
         self.panic_top_btn = h.panic_btn
         settings_btn = h.settings_btn
+        self.update_action = h.help_menu.addAction("Check for updates…")
+        self.update_action.triggered.connect(self._open_updater)
+        h.help_menu.addSeparator()
         h.help_menu.addAction("About Mandible…").triggered.connect(lambda: self._open_about(0))
         h.help_menu.addAction("Licenses…").triggered.connect(lambda: self._open_about(1))
         # The old bottom row (idle mode, hotkeys, all-off key) lives in the status zone.
@@ -761,6 +767,9 @@ class MainWindow(QMainWindow):
         menu.addAction(self.act_mon)
         menu.addAction(act_off)
         menu.addSeparator()
+        self.act_update = QAction("Check for updates…", self)
+        self.act_update.triggered.connect(self._open_updater)
+        menu.addAction(self.act_update)
         menu.addAction(act_about)
         act_about.triggered.connect(lambda: self._open_about(0))
         menu.addAction(act_quit)
@@ -1532,6 +1541,50 @@ class MainWindow(QMainWindow):
     def _open_about(self, start_tab: int = 0):
         from .dialogs.about import AboutDialog
         AboutDialog(self, start_tab).exec()
+
+    def _open_updater(self):
+        from .dialogs.updater import UpdateDialog
+        dlg = UpdateDialog(
+            self.core,
+            self,
+            initial_release=self._available_update,
+            auto_check=(self._available_update is None),
+        )
+        dlg.exec()
+
+    def check_updates_in_background(self, force: bool = False):
+        """Query GitHub Releases in a daemon thread (at most once per 24 h unless ``force``)."""
+        if not force and not getattr(self.cfg, "auto_check_updates", True):
+            return
+        now = time.time()
+        last = float(getattr(self.cfg, "last_update_check", 0.0) or 0.0)
+        if not force and (now - last) < 86400.0:
+            return
+        self.cfg.last_update_check = now
+        self.core.save()
+        include_pre = bool(getattr(self.cfg, "check_prereleases", True))
+
+        def worker():
+            from .. import updater as U
+            try:
+                rel, is_newer = U.check_for_updates(include_prereleases=include_pre)
+            except Exception:
+                rel, is_newer = None, False
+            if rel is not None and is_newer:
+                self._updateFound.emit(rel)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_update_found(self, release):
+        self._available_update = release
+        label = f"Update available ({release.tag_name})…"
+        if hasattr(self, "update_action"):
+            self.update_action.setText(label)
+        if hasattr(self, "act_update"):
+            self.act_update.setText(label)
+        if hasattr(self, "header") and hasattr(self.header, "help_btn"):
+            set_button_state(self.header.help_btn, "warn")
+            self.header.help_btn.setToolTip(f"Mandible {release.tag_name} is available — click to update")
 
     def _open_setup_assistant(self):
         dlg = SetupAssistantDialog(self.core, self)

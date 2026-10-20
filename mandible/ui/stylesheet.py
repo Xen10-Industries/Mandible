@@ -1131,6 +1131,21 @@ QHeaderView::section {{
     color: {text};
 }}
 
+QProgressBar {{
+    background-color: {inset};
+    border: {bw} solid {line};
+    border-radius: {r_ctl};
+    text-align: center;
+    color: {text};
+    font-size: {f_small};
+    font-weight: bold;
+    min-height: 18px;
+}}
+QProgressBar::chunk {{
+    background-color: {accent};
+    border-radius: {r_sm};
+}}
+
 QScrollBar:vertical {{
     border: none;
     background-color: {win};
