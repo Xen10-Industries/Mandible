@@ -27,6 +27,7 @@ from ...ai_trainer import (
     TrainingJobConfig,
     TrainingProgress,
     VoiceModelTrainer,
+    find_mandible_rvc_exe,
     inspect_audio_file,
 )
 from ...ai_voice import AI_MODELS_DIR, F0_METHODS, RVC_WEBUI_URL, detect_training_hardware
@@ -223,6 +224,11 @@ class AITrainerDialog(QDialog):
         name_row.addWidget(self.name_edit, 1)
         form.addRow("Voice name", name_row)
 
+        self.engine_combo = QComboBox()
+        self.engine_combo.addItem("In-app neural vocoder (~15\u201360s)", "builtin")
+        self.engine_combo.addItem("Full RVC v2 GAN (~15\u201325 min on GPU)", "rvc")
+        form.addRow("Training engine", self.engine_combo)
+
         self.f0_combo = QComboBox()
         for key, label in F0_METHODS:
             self.f0_combo.addItem(label, key)
@@ -364,6 +370,21 @@ class AITrainerDialog(QDialog):
             QMessageBox.warning(self, "No audio files", "Please add one or more voice recordings to train your model.")
             return
 
+        selected_engine = self.engine_combo.currentData() or "builtin"
+        if selected_engine == "rvc" and find_mandible_rvc_exe() is None:
+            ans = QMessageBox.question(
+                self,
+                "RVC Add-on Not Installed",
+                "Mandible's full RVC v2 deep-learning add-on is not installed on this PC yet.\n\n"
+                "Would you like to open the External Training Guide to learn how to download the "
+                "add-on or train on a free cloud GPU?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if ans == QMessageBox.StandardButton.Yes:
+                self._open_external_guide()
+            return
+
         name = self.name_edit.currentText().strip() or "Custom Voice"
         config = TrainingJobConfig(
             voice_name=name,
@@ -373,6 +394,7 @@ class AITrainerDialog(QDialog):
             f0_method=self.f0_combo.currentData() or "hybrid",
             normalize_loudness=self.clean_chk.isChecked(),
             clean_audio=self.clean_chk.isChecked(),
+            trainer_engine=selected_engine,
         )
 
         self.train_btn.setVisible(False)

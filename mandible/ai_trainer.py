@@ -37,6 +37,29 @@ class TrainingSampleInfo:
     error: str = ""
 
 
+MANDIBLE_RVC_DIR = os.path.join(AI_MODELS_DIR, "..", "tools", "mandible-rvc")
+
+
+def find_mandible_rvc_exe() -> str | None:
+    """Return path to mandible-rvc executable or python interpreter if installed."""
+    custom = os.environ.get("MANDIBLE_RVC_EXE")
+    if custom and os.path.isfile(custom):
+        return custom
+
+    # Standard tool directory in %APPDATA%/Xen10/Mandible/tools/mandible-rvc
+    candidates = [
+        os.path.join(MANDIBLE_RVC_DIR, "mandible-rvc.exe"),
+        os.path.join(MANDIBLE_RVC_DIR, ".venv", "Scripts", "python.exe"),
+        os.path.join(MANDIBLE_RVC_DIR, "venv", "Scripts", "python.exe"),
+        # Local developer sibling directory
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "mandible-rvc", ".venv", "Scripts", "python.exe")),
+    ]
+    for c in candidates:
+        if os.path.isfile(c):
+            return c
+    return None
+
+
 @dataclass
 class TrainingJobConfig:
     """Hyperparameters and configuration for voice model training."""
@@ -52,6 +75,7 @@ class TrainingJobConfig:
     sub_harmonic_depth: float = 0.0
     vocal_tract_bias: float = 0.0
     air_shimmer: float = 0.15
+    trainer_engine: str = "builtin"  # "builtin" or "rvc"
 
 
 @dataclass
@@ -168,12 +192,116 @@ class VoiceModelTrainer:
             except Exception:
                 pass
 
+    def _run_rvc_subprocess(self, rvc_exe: str, start_time: float) -> None:
+        import subprocess
+        cfg = self.config
+        total_epochs = max(10, cfg.epochs)
+
+        # Check if rvc_exe is a python interpreter or direct binary
+        is_python = rvc_exe.lower().endswith("python.exe") or rvc_exe.lower().endswith("python")
+        cmd = [rvc_exe]
+        if is_python:
+            cmd.extend(["-m", "mandible_rvc"])
+        cmd.extend([
+            "train",
+            "--input", *cfg.input_files,
+            "--name", cfg.voice_name,
+            "--output-dir", self.models_dir,
+            "--epochs", str(total_epochs),
+            "--batch-size", str(cfg.batch_size),
+            "--f0-method", cfg.f0_method,
+            "--sample-rate", str(cfg.target_sr),
+        ])
+
+        self._emit(TrainingProgress(
+            stage="preparing",
+            stage_description=f"Launching RVC v2 deep-learning sidecar ({os.path.basename(rvc_exe)})\u2026",
+            current_step=5,
+            total_steps=100,
+            epoch=0,
+            total_epochs=total_epochs,
+        ))
+
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+
+        try:
+            while True:
+                if self._cancel_event.is_set():
+                    proc.terminate()
+                    self._emit(TrainingProgress(stage="cancelled", stage_description="Training cancelled by user"))
+                    return
+                line = proc.stdout.readline() if proc.stdout else ""
+                if not line and proc.poll() is not None:
+                    break
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                    if isinstance(data, dict):
+                        stage = str(data.get("stage", "training"))
+                        desc = str(data.get("description", ""))
+                        step = int(data.get("step", 50))
+                        epoch = int(data.get("epoch", 0))
+                        loss = float(data.get("loss", 0.0))
+                        elapsed = time.time() - start_time
+                        if stage == "completed":
+                            self._emit(TrainingProgress(
+                                stage="completed",
+                                stage_description=desc or "RVC v2 training completed successfully!",
+                                current_step=100,
+                                total_steps=100,
+                                epoch=total_epochs,
+                                total_epochs=total_epochs,
+                                loss=loss,
+                                elapsed_s=elapsed,
+                            ))
+                            return
+                        elif stage == "error":
+                            raise RuntimeError(data.get("error", "RVC v2 training error"))
+                        else:
+                            self._emit(TrainingProgress(
+                                stage=stage,
+                                stage_description=desc,
+                                current_step=step,
+                                total_steps=100,
+                                epoch=epoch,
+                                total_epochs=total_epochs,
+                                loss=loss,
+                                elapsed_s=elapsed,
+                            ))
+                except json.JSONDecodeError:
+                    pass
+            ret = proc.wait()
+            if ret != 0:
+                raise RuntimeError(f"RVC v2 process exited with code {ret}")
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+
     def _run(self) -> None:
         start_time = time.time()
         cfg = self.config
         total_epochs = max(10, cfg.epochs)
 
         try:
+            if cfg.trainer_engine == "rvc":
+                rvc_exe = find_mandible_rvc_exe()
+                if rvc_exe is None:
+                    raise RuntimeError(
+                        "Mandible RVC Deep-Learning Add-on is not installed. "
+                        "Please download the mandible-rvc add-on or switch to the in-app neural vocoder."
+                    )
+                self._run_rvc_subprocess(rvc_exe, start_time)
+                return
+
             # 1. Dataset verification
             self._emit(TrainingProgress(
                 stage="preparing",
