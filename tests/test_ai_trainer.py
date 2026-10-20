@@ -181,3 +181,13 @@ def test_ai_trainer_and_external_guide_dialog_ui_compliance(qapp, sample_core, t
             w.hide()
             w.deleteLater()
         _flush()
+
+
+def test_rvc_engine_selector_and_detection(tmp_path, monkeypatch):
+    assert AT.find_mandible_rvc_exe() is None or isinstance(AT.find_mandible_rvc_exe(), str)
+
+    # Custom env var pointing to fake exe
+    fake_exe = tmp_path / "fake_rvc.exe"
+    fake_exe.write_text("dummy")
+    monkeypatch.setenv("MANDIBLE_RVC_EXE", str(fake_exe))
+    assert AT.find_mandible_rvc_exe() == str(fake_exe)
