@@ -36,7 +36,7 @@ Loopback so Discord, OBS, games or any other app can use it as a microphone.
   reverb and delay tails keep ringing for the tail time you set.
 - **Native plugin editors.** Double-click a plugin (or click **Open UI**) to open its own window.
   Audio and hotkeys keep running while you edit.
-- **Built-in effects** (pitch & formant, reverb, delay, chorus, drive, bitcrush, radio, filter), plus
+- **Built-in effects** (pitch & formant, compressor, parametric EQ, reverb, delay, chorus, phaser, tremolo, ring modulator, drive, bitcrush, radio, filter), plus
   pre-processing: high-pass filter, RNNoise noise suppression and a noise gate.
 - **Clean pass-through, mute, or a default chain** when no hotkey is active, plus a **panic / all-off**
   hotkey.

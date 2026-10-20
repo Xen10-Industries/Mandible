@@ -212,7 +212,7 @@ class PitchFormantPlugin(BaseInternalPlugin):
     FADE_S = 0.010  # dry <-> shifted crossfade when the pitch crosses 0 st
 
     def __init__(self, samplerate: int = 48000):
-        super().__init__("Mandible Pitch & Formant", "internal:pitch_formant")
+        super().__init__("Pitch & Formant", "internal:pitch_formant")
         self.sr = samplerate
 
         # Delay buffer for pitch shifting
@@ -602,8 +602,125 @@ def create_ladder_filter() -> PedalboardWrapper:
     return PedalboardWrapper("Ladder Filter", "internal:filter", fx, [p_cutoff, p_res, p_drive])
 
 
+def create_studio_compressor() -> PedalboardWrapper:
+    fx = pedalboard.Compressor()
+    p_thresh = InternalParameter("threshold_db", "Threshold", -40.0, 0.0, -16.0, unit="dB", step=0.5,
+                                 on_change=lambda v: setattr(fx, "threshold_db", v))
+    p_ratio = InternalParameter("ratio", "Ratio", 1.0, 20.0, 3.5, unit=":1", step=0.1,
+                                on_change=lambda v: setattr(fx, "ratio", v))
+    p_attack = InternalParameter("attack_ms", "Attack", 1.0, 100.0, 15.0, unit="ms", step=1.0,
+                                 on_change=lambda v: setattr(fx, "attack_ms", v))
+    p_release = InternalParameter("release_ms", "Release", 10.0, 500.0, 100.0, unit="ms", step=5.0,
+                                  on_change=lambda v: setattr(fx, "release_ms", v))
+    return PedalboardWrapper("Studio Compressor", "internal:compressor", fx, [p_thresh, p_ratio, p_attack, p_release])
+
+
+class ParametricEQPlugin(PedalboardWrapper):
+    def __init__(self):
+        self.hp = pedalboard.HighpassFilter(cutoff_frequency_hz=80.0)
+        self.low = pedalboard.LowShelfFilter(cutoff_frequency_hz=200.0, gain_db=0.0)
+        self.mid = pedalboard.PeakFilter(cutoff_frequency_hz=1200.0, gain_db=0.0, q=1.0)
+        self.high = pedalboard.HighShelfFilter(cutoff_frequency_hz=5000.0, gain_db=0.0)
+        board = pedalboard.Pedalboard([self.hp, self.low, self.mid, self.high])
+
+        p_low = InternalParameter("low_gain_db", "Low Gain", -12.0, 12.0, 0.0, unit="dB", step=0.5,
+                                  on_change=lambda v: setattr(self.low, "gain_db", v))
+        p_mid_freq = InternalParameter("mid_freq_hz", "Mid Freq", 200.0, 8000.0, 1200.0, unit="Hz", is_log=True, step=10.0,
+                                       on_change=lambda v: setattr(self.mid, "cutoff_frequency_hz", v))
+        p_mid_gain = InternalParameter("mid_gain_db", "Mid Gain", -12.0, 12.0, 0.0, unit="dB", step=0.5,
+                                       on_change=lambda v: setattr(self.mid, "gain_db", v))
+        p_high = InternalParameter("high_gain_db", "High Gain", -12.0, 12.0, 0.0, unit="dB", step=0.5,
+                                   on_change=lambda v: setattr(self.high, "gain_db", v))
+        super().__init__("Parametric EQ", "internal:eq", board, [p_low, p_mid_freq, p_mid_gain, p_high])
+
+
+def create_space_phaser() -> PedalboardWrapper:
+    fx = pedalboard.Phaser()
+    p_rate = InternalParameter("rate_hz", "Rate", 0.1, 8.0, 1.0, unit="Hz", step=0.1,
+                               on_change=lambda v: setattr(fx, "rate_hz", v))
+    p_depth = InternalParameter("depth", "Depth", 0.0, 1.0, 0.60, unit="", step=0.01,
+                                on_change=lambda v: setattr(fx, "depth", v))
+    p_feedback = InternalParameter("feedback", "Feedback", 0.0, 0.90, 0.35, unit="", step=0.01,
+                                   on_change=lambda v: setattr(fx, "feedback", v))
+    p_mix = InternalParameter("mix", "Mix", 0.0, 1.0, 0.50, unit="", step=0.01,
+                              on_change=lambda v: setattr(fx, "mix", v))
+    return PedalboardWrapper("Space Phaser", "internal:phaser", fx, [p_rate, p_depth, p_feedback, p_mix])
+
+
+class RingModulatorPlugin(BaseInternalPlugin):
+    """Ring Modulator / Frequency Shifter carrier simulation for sci-fi, robotic, and metallic tones."""
+
+    def __init__(self):
+        super().__init__("Ring Modulator", "internal:ring_mod")
+        self.p_freq = InternalParameter("freq_hz", "Frequency", 10.0, 2000.0, 80.0, unit="Hz", is_log=True, step=1.0)
+        self.p_depth = InternalParameter("depth", "Depth", 0.0, 1.0, 1.0, unit="", step=0.01)
+        self.p_mix = InternalParameter("mix", "Mix", 0.0, 100.0, 100.0, unit="%", step=1.0)
+        self.parameters = {"freq_hz": self.p_freq, "depth": self.p_depth, "mix": self.p_mix}
+        self.phase = 0.0
+
+    def reset(self):
+        self.phase = 0.0
+
+    def process(self, input_array: np.ndarray, sample_rate: float, buffer_size: int = 512, reset: bool = False) -> np.ndarray:
+        if reset:
+            self.reset()
+        x = input_array if input_array.ndim == 2 else input_array.reshape(1, -1)
+        frames = x.shape[1]
+        if frames == 0:
+            return x
+        sr = max(1.0, float(sample_rate))
+        freq = self.p_freq.value
+        depth = self.p_depth.value
+        mix = self.p_mix.value / 100.0
+
+        t = (self.phase + np.arange(frames, dtype=np.float64)) / sr
+        carrier = np.sin(2.0 * np.pi * freq * t).astype(np.float32)
+        self.phase = math.fmod(self.phase + frames, sr)
+
+        mod = x * ((1.0 - depth) + depth * carrier)
+        out = (1.0 - mix) * x + mix * mod
+        return out.astype(np.float32, copy=False)
+
+
+class TremoloPlugin(BaseInternalPlugin):
+    """Optical tremolo providing warm periodic volume modulation."""
+
+    def __init__(self):
+        super().__init__("Optical Tremolo", "internal:tremolo")
+        self.p_rate = InternalParameter("rate_hz", "Rate", 0.2, 15.0, 4.0, unit="Hz", step=0.1)
+        self.p_depth = InternalParameter("depth", "Depth", 0.0, 1.0, 0.65, unit="", step=0.01)
+        self.parameters = {"rate_hz": self.p_rate, "depth": self.p_depth}
+        self.phase = 0.0
+
+    def reset(self):
+        self.phase = 0.0
+
+    def process(self, input_array: np.ndarray, sample_rate: float, buffer_size: int = 512, reset: bool = False) -> np.ndarray:
+        if reset:
+            self.reset()
+        x = input_array if input_array.ndim == 2 else input_array.reshape(1, -1)
+        frames = x.shape[1]
+        if frames == 0:
+            return x
+        sr = max(1.0, float(sample_rate))
+        rate = self.p_rate.value
+        depth = self.p_depth.value
+
+        t = (self.phase + np.arange(frames, dtype=np.float64)) / sr
+        mod = (1.0 - depth) + depth * (0.5 + 0.5 * np.sin(2.0 * np.pi * rate * t)).astype(np.float32)
+        self.phase = math.fmod(self.phase + frames, sr)
+
+        out = x * mod
+        return out.astype(np.float32, copy=False)
+
+
 INTERNAL_FACTORIES: dict[str, Callable[[], BaseInternalPlugin]] = {
     "internal:pitch_formant": lambda: PitchFormantPlugin(),
+    "internal:eq": lambda: ParametricEQPlugin(),
+    "internal:compressor": create_studio_compressor,
+    "internal:phaser": create_space_phaser,
+    "internal:tremolo": lambda: TremoloPlugin(),
+    "internal:ring_mod": lambda: RingModulatorPlugin(),
     "internal:reverb": create_studio_reverb,
     "internal:delay": create_stereo_delay,
     "internal:chorus": create_vintage_chorus,
@@ -614,7 +731,12 @@ INTERNAL_FACTORIES: dict[str, Callable[[], BaseInternalPlugin]] = {
 }
 
 INTERNAL_DESCRIPTIONS = [
-    {"name": "Mandible Pitch & Formant", "path": "internal:pitch_formant", "vendor": "Mandible DSP", "favorite": True},
+    {"name": "Pitch & Formant", "path": "internal:pitch_formant", "vendor": "Mandible DSP", "favorite": True},
+    {"name": "Parametric EQ", "path": "internal:eq", "vendor": "Mandible DSP", "favorite": True},
+    {"name": "Studio Compressor", "path": "internal:compressor", "vendor": "Mandible DSP", "favorite": True},
+    {"name": "Space Phaser", "path": "internal:phaser", "vendor": "Mandible DSP", "favorite": False},
+    {"name": "Optical Tremolo", "path": "internal:tremolo", "vendor": "Mandible DSP", "favorite": False},
+    {"name": "Ring Modulator", "path": "internal:ring_mod", "vendor": "Mandible DSP", "favorite": False},
     {"name": "Studio Reverb", "path": "internal:reverb", "vendor": "Mandible DSP", "favorite": True},
     {"name": "Stereo Delay", "path": "internal:delay", "vendor": "Mandible DSP", "favorite": False},
     {"name": "Vintage Chorus", "path": "internal:chorus", "vendor": "Mandible DSP", "favorite": False},
