@@ -193,7 +193,10 @@ class PluginRackCard(QFrame):
         if self.is_builtin and not has_custom_ui:
             self.ui_btn.setVisible(False)
         elif self.is_builtin and has_custom_ui:
-            self.ui_btn.setToolTip("Open AI voice model settings")
+            if slot.path == "internal:lfo":
+                self.ui_btn.setToolTip("Open LFO modulation settings")
+            else:
+                self.ui_btn.setToolTip("Open AI voice model settings")
         elif inst(slot) is None:
             self.ui_btn.setEnabled(False)
             self.ui_btn.setToolTip("The plugin is not loaded, so it has no window to open")

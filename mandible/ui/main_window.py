@@ -23,6 +23,7 @@ from ..core import Core, inst, slot_error
 from ..factory_presets import get_factory_presets, instantiate_factory_preset
 from .dialogs.add_plugin import AddPluginDialog
 from .dialogs.ai_voice import AIVoiceDialog
+from .dialogs.lfo_mod import LFOModulatorDialog
 from .dialogs.customize import DEFAULT_WIDTH as CUSTOMIZE_WIDTH
 from .dialogs.customize import CustomizePanel
 from .dialogs.hotkey import HotkeyDialog
@@ -285,6 +286,11 @@ class ChainEditor(QWidget):
                 self.refresh_plugins(select_row=self.chain.plugins.index(slot))
 
     def tick_plugin_meters(self, running: bool, sync_knobs: bool = False):
+        has_active_lfo = bool(
+            running
+            and self.chain
+            and any(s.enabled and getattr(s, "path", "") == "internal:lfo" for s in self.chain.plugins)
+        )
         for i in range(self.plugins.count()):
             it = self.plugins.item(i)
             card = self.plugins.itemWidget(it) if it is not None else None
@@ -295,7 +301,7 @@ class ChainEditor(QWidget):
                 s._pre_peak = 0.0
                 s._post_peak = 0.0
                 card.pre_post_meter.push(pre_pk, post_pk, enabled=s.enabled)
-                if sync_knobs:
+                if sync_knobs or has_active_lfo:
                     card.sync_knobs_from_plugin()
 
     def _toggle_slot(self, slot: PluginSlot, enabled: bool):
@@ -1193,7 +1199,11 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Plugin not loaded", slot_error(slot) or "This plugin is not loaded.")
             return
         if getattr(p, "has_custom_editor", False):
-            dlg = AIVoiceDialog(slot, self.core, self)
+            if slot.path == "internal:lfo":
+                chain = self.editor.chain if hasattr(self, "editor") else None
+                dlg = LFOModulatorDialog(slot, chain, self.core, self)
+            else:
+                dlg = AIVoiceDialog(slot, self.core, self)
             dlg.exec()
             if hasattr(self, "editor"):
                 self.editor.tick_plugin_meters(self.core.engine.running, sync_knobs=True)

@@ -7,7 +7,6 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
-    QDialogButtonBox,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
@@ -33,24 +32,27 @@ from ...ai_voice import (
 from ...config import PluginSlot
 from ...core import Core, inst
 from ..widgets.base import SpacedLayouts, _follow_look, reserve_text_width, set_style_property
-from ..widgets.buttons import make_button, tier_button_box
+from ..widgets.buttons import make_button
+from .ai_trainer import AITrainerDialog
+from .model_hub import ModelHubDialog
 from .parts import group_label, hint_label, keep_wrapped_text_visible
 
 
 class AIVoiceDialog(QDialog):
     """Model manager and real-time voice conversion controls for an ``internal:ai_voice`` slot."""
 
-    def __init__(self, slot: PluginSlot, core: Core, parent=None):
+    def __init__(self, slot: PluginSlot, core: Core, parent=None, *, models_dir: str | None = None):
         super().__init__(parent)
         self.slot = slot
         self.core = core
+        self.models_dir = models_dir or AI_MODELS_DIR
         self.plugin = inst(slot)
         self._spaced = SpacedLayouts()
         _follow_look(self)
 
         self.setWindowTitle("AI Voice Changer — Model & Timbre")
-        self.setMinimumWidth(620)
-        self.resize(740, 560)
+        self.setMinimumWidth(680)
+        self.resize(800, 580)
 
         lay = self._spaced.add(QVBoxLayout(self), spacing=2, margins=4)
 
@@ -84,6 +86,8 @@ class AIVoiceDialog(QDialog):
         model_row = self._spaced.add(QHBoxLayout(), spacing=2, margins=0)
         self.model_combo = QComboBox()
         self.model_combo.setAccessibleName("Voice model")
+        self.model_combo.setMinimumContentsLength(18)
+        self.model_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         model_row.addWidget(self.model_combo, 1)
 
         self.defaults_btn = make_button(
@@ -91,6 +95,12 @@ class AIVoiceDialog(QDialog):
             "secondary",
             tooltip="Set pitch, vocal tract, and timbre controls to this model's recommended values",
         )
+        self.browse_btn = make_button(
+            "Browse models…",
+            "secondary",
+            tooltip="Browse and download trained .onnx voice models from the GitHub Model Hub",
+        )
+        model_row.addWidget(self.browse_btn)
         model_row.addWidget(self.defaults_btn)
         lay.addLayout(model_row)
 
@@ -98,6 +108,11 @@ class AIVoiceDialog(QDialog):
         lay.addWidget(self.model_desc_lbl)
 
         mgr_row = self._spaced.add(QHBoxLayout(), spacing=2, margins=0)
+        self.train_btn = make_button(
+            "Train voice…",
+            "secondary",
+            tooltip="Open the AI Voice Model Trainer to train a custom voice from recordings",
+        )
         self.import_btn = make_button(
             "Import .onnx…",
             "secondary",
@@ -111,8 +126,9 @@ class AIVoiceDialog(QDialog):
         self.folder_btn = make_button(
             "Open folder…",
             "secondary",
-            tooltip=f"Open {AI_MODELS_DIR} in Windows Explorer",
+            tooltip=f"Open {self.models_dir} in Windows Explorer",
         )
+        mgr_row.addWidget(self.train_btn)
         mgr_row.addWidget(self.import_btn)
         mgr_row.addWidget(self.remove_btn)
         mgr_row.addWidget(self.folder_btn)
@@ -172,6 +188,8 @@ class AIVoiceDialog(QDialog):
         self.model_combo.currentIndexChanged.connect(self._on_model_changed)
         self.f0_combo.currentIndexChanged.connect(self._on_f0_changed)
         self.defaults_btn.clicked.connect(self._apply_model_defaults)
+        self.browse_btn.clicked.connect(self._open_model_hub)
+        self.train_btn.clicked.connect(self._open_voice_trainer)
         self.import_btn.clicked.connect(self._import_model)
         self.remove_btn.clicked.connect(self._remove_selected_model)
         self.folder_btn.clicked.connect(self._open_models_folder)
@@ -183,7 +201,15 @@ class AIVoiceDialog(QDialog):
         self._reserve_button_widths()
 
     def _reserve_button_widths(self) -> None:
-        for btn in (self.defaults_btn, self.import_btn, self.remove_btn, self.folder_btn, self.close_btn):
+        for btn in (
+            self.defaults_btn,
+            self.browse_btn,
+            self.train_btn,
+            self.import_btn,
+            self.remove_btn,
+            self.folder_btn,
+            self.close_btn,
+        ):
             reserve_text_width(btn, btn.text())
 
     def _slider_spin(
@@ -233,23 +259,45 @@ class AIVoiceDialog(QDialog):
         return w
 
     def _populate_models(self, select_id: str | None = None) -> None:
-        target = select_id or getattr(self.plugin, "model_id", "xen_overmind")
+        target = select_id if select_id is not None else getattr(self.plugin, "model_id", "")
         self.model_combo.blockSignals(True)
         self.model_combo.clear()
-        models = list_voice_models()
-        for m in models:
-            self.model_combo.addItem(m.name, m.id)
-        idx = max(0, self.model_combo.findData(target))
-        self.model_combo.setCurrentIndex(idx)
+        models = list_voice_models(self.models_dir)
+        if not models:
+            self.model_combo.addItem(
+                "No .onnx voice models installed — click Browse models… or Train voice…",
+                "",
+            )
+            self.model_combo.setEnabled(False)
+        else:
+            self.model_combo.setEnabled(True)
+            for m in models:
+                self.model_combo.addItem(m.name, m.id)
+            idx = max(0, self.model_combo.findData(target))
+            self.model_combo.setCurrentIndex(idx)
+            cur_id = self.model_combo.currentData() or ""
+            if self.plugin is not None and hasattr(self.plugin, "set_model") and not getattr(self.plugin, "model_id", ""):
+                self.plugin.set_model(cur_id, apply_defaults=True, models_dir=self.models_dir)
+                self._persist_state()
         self.model_combo.blockSignals(False)
         self._update_model_info()
 
     def _update_model_info(self) -> None:
-        model_id = self.model_combo.currentData() or "xen_overmind"
-        info = get_voice_model(model_id)
-        self.model_desc_lbl.setText(info.description)
-        self.remove_btn.setEnabled(info.kind == "onnx")
-        self.status_title.setText(f"Active model: {info.name}")
+        model_id = self.model_combo.currentData() or ""
+        info = get_voice_model(model_id, self.models_dir)
+        if info is None:
+            self.model_desc_lbl.setText(
+                "Download a pre-trained voice from the GitHub Model Hub (Browse models…), "
+                "train your own in Train voice…, or import an .onnx model."
+            )
+            self.defaults_btn.setEnabled(False)
+            self.remove_btn.setEnabled(False)
+            self.status_title.setText("No .onnx voice model selected")
+        else:
+            self.model_desc_lbl.setText(info.description)
+            self.defaults_btn.setEnabled(True)
+            self.remove_btn.setEnabled(info.kind == "onnx")
+            self.status_title.setText(f"Active model: {info.name}")
 
     def _load_from_plugin(self) -> None:
         if self.plugin is None:
@@ -303,9 +351,9 @@ class AIVoiceDialog(QDialog):
                 self.core.save()
 
     def _on_model_changed(self, _idx: int) -> None:
-        model_id = self.model_combo.currentData() or "xen_overmind"
+        model_id = self.model_combo.currentData() or ""
         if self.plugin is not None and hasattr(self.plugin, "set_model"):
-            self.plugin.set_model(model_id, apply_defaults=True)
+            self.plugin.set_model(model_id, apply_defaults=True, models_dir=self.models_dir)
             self._load_from_plugin()
             self._persist_state()
         self._update_model_info()
@@ -316,11 +364,17 @@ class AIVoiceDialog(QDialog):
             self._persist_state()
 
     def _apply_model_defaults(self) -> None:
-        model_id = self.model_combo.currentData() or "xen_overmind"
-        if self.plugin is not None and hasattr(self.plugin, "set_model"):
-            self.plugin.set_model(model_id, apply_defaults=True)
+        model_id = self.model_combo.currentData() or ""
+        if model_id and self.plugin is not None and hasattr(self.plugin, "set_model"):
+            self.plugin.set_model(model_id, apply_defaults=True, models_dir=self.models_dir)
             self._load_from_plugin()
             self._persist_state()
+
+    def _open_model_hub(self) -> None:
+        dlg = ModelHubDialog(self.core, self, models_dir=self.models_dir)
+        if dlg.exec() and dlg.downloaded_model_id:
+            self._populate_models(select_id=dlg.downloaded_model_id)
+            self._on_model_changed(self.model_combo.currentIndex())
 
     def _import_model(self) -> None:
         onnx_path, _ = QFileDialog.getOpenFileName(
@@ -335,7 +389,7 @@ class AIVoiceDialog(QDialog):
             "FAISS index files (*.index)",
         )
         try:
-            info = import_voice_model(onnx_path, index_path=index_path or "")
+            info = import_voice_model(onnx_path, index_path=index_path or "", models_dir=self.models_dir)
         except Exception as exc:
             QMessageBox.warning(self, "Could not import model", str(exc))
             return
@@ -346,7 +400,9 @@ class AIVoiceDialog(QDialog):
         model_id = self.model_combo.currentData() or ""
         if not str(model_id).startswith("onnx:"):
             return
-        info = get_voice_model(model_id)
+        info = get_voice_model(model_id, self.models_dir)
+        if info is None:
+            return
         ans = QMessageBox.question(
             self,
             "Remove voice model",
@@ -355,14 +411,20 @@ class AIVoiceDialog(QDialog):
             QMessageBox.StandardButton.No,
         )
         if ans == QMessageBox.StandardButton.Yes:
-            remove_voice_model(model_id)
-            self._populate_models(select_id="xen_overmind")
+            remove_voice_model(model_id, self.models_dir)
+            self._populate_models()
+            self._on_model_changed(self.model_combo.currentIndex())
+
+    def _open_voice_trainer(self) -> None:
+        dlg = AITrainerDialog(self.core, self)
+        if dlg.exec() and dlg.trained_model_id:
+            self._populate_models(select_id=dlg.trained_model_id)
             self._on_model_changed(self.model_combo.currentIndex())
 
     def _open_models_folder(self) -> None:
-        os.makedirs(AI_MODELS_DIR, exist_ok=True)
+        os.makedirs(self.models_dir, exist_ok=True)
         if hasattr(os, "startfile"):
             try:
-                os.startfile(AI_MODELS_DIR)
+                os.startfile(self.models_dir)
             except OSError:
                 pass

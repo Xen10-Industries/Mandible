@@ -8,7 +8,7 @@ import json
 from .config import Chain, PluginSlot, _new_id
 
 
-def _create_slot(path: str, display_name: str, params: dict[str, float]) -> PluginSlot:
+def _create_slot(path: str, display_name: str, params: dict[str, object]) -> PluginSlot:
     state_json = json.dumps(params).encode("utf-8")
     state_b64 = base64.b64encode(state_json).decode("ascii")
     return PluginSlot(
@@ -32,6 +32,71 @@ def get_factory_presets() -> list[dict]:
                 ("internal:reverb", "Studio Reverb", {"room_size": 0.15, "damping": 0.80, "wet_level": 0.08, "dry_level": 1.0, "width": 0.7}),
             ],
             "gain_db": 1.0,
+            "dry_wet": 1.0,
+        },
+        {
+            "id": "factory_xen_overmind",
+            "name": "Xen Overmind",
+            "desc": "Ancient multidimensional entity: -4st pitch & -3.5st formant shift, sub-octave chest synthesizer, harmonic air exciter, and cosmic reverb.",
+            "plugins": [
+                ("internal:pitch_formant", "Pitch & Formant", {"pitch": -4.0, "formant": -3.5, "preserve_formants": 1.0, "mix": 100.0}),
+                ("internal:sub_exciter", "Sub-Harmonic & Exciter", {"sub_level": 35.0, "sub_freq_hz": 85.0, "air_exciter": 20.0, "mix": 100.0}),
+                ("internal:distortion", "Tube Drive", {"drive_db": 4.5}),
+                ("internal:reverb", "Studio Reverb", {"room_size": 0.65, "damping": 0.45, "wet_level": 0.22, "dry_level": 1.0, "width": 1.0}),
+            ],
+            "gain_db": 1.0,
+            "dry_wet": 1.0,
+        },
+        {
+            "id": "factory_cyber_valkyrie",
+            "name": "Cyber Valkyrie",
+            "desc": "Bright, articulate raised vocal tract (+5st pitch / +4st formant) with high-frequency harmonic air exciter and optical leveling.",
+            "plugins": [
+                ("internal:pitch_formant", "Pitch & Formant", {"pitch": 5.0, "formant": 4.0, "preserve_formants": 1.0, "mix": 100.0}),
+                ("internal:sub_exciter", "Sub-Harmonic & Exciter", {"sub_level": 0.0, "sub_freq_hz": 85.0, "air_exciter": 30.0, "mix": 100.0}),
+                ("internal:compressor", "Studio Compressor", {"threshold_db": -16.0, "ratio": 3.0, "attack_ms": 12.0, "release_ms": 90.0}),
+                ("internal:reverb", "Studio Reverb", {"room_size": 0.25, "damping": 0.70, "wet_level": 0.12, "dry_level": 1.0, "width": 0.85}),
+            ],
+            "gain_db": 0.5,
+            "dry_wet": 1.0,
+        },
+        {
+            "id": "factory_shadow_operative",
+            "name": "Shadow Operative",
+            "desc": "Covert low-formant voice mask (-3st pitch / -4.5st formant) with chest sub-harmonics and warm saturation for vocal anonymity.",
+            "plugins": [
+                ("internal:pitch_formant", "Pitch & Formant", {"pitch": -3.0, "formant": -4.5, "preserve_formants": 1.0, "mix": 100.0}),
+                ("internal:sub_exciter", "Sub-Harmonic & Exciter", {"sub_level": 22.0, "sub_freq_hz": 80.0, "air_exciter": 10.0, "mix": 100.0}),
+                ("internal:eq", "Parametric EQ", {"low_gain_db": 2.5, "mid_freq_hz": 1200.0, "mid_gain_db": -2.0, "high_gain_db": 1.5}),
+                ("internal:compressor", "Studio Compressor", {"threshold_db": -17.0, "ratio": 4.0, "attack_ms": 10.0, "release_ms": 100.0}),
+            ],
+            "gain_db": 1.5,
+            "dry_wet": 1.0,
+        },
+        {
+            "id": "factory_titan_brute",
+            "name": "Titan Brute",
+            "desc": "Massive vocal tract enlargement (-7st pitch / -6st formant) with heavy sub-octave chest weight and gritty tube drive.",
+            "plugins": [
+                ("internal:pitch_formant", "Pitch & Formant", {"pitch": -7.0, "formant": -6.0, "preserve_formants": 1.0, "mix": 100.0}),
+                ("internal:sub_exciter", "Sub-Harmonic & Exciter", {"sub_level": 50.0, "sub_freq_hz": 72.0, "air_exciter": 12.0, "mix": 100.0}),
+                ("internal:distortion", "Tube Drive", {"drive_db": 8.0}),
+                ("internal:reverb", "Studio Reverb", {"room_size": 0.70, "damping": 0.40, "wet_level": 0.25, "dry_level": 1.0, "width": 1.0}),
+            ],
+            "gain_db": 0.5,
+            "dry_wet": 1.0,
+        },
+        {
+            "id": "factory_ethereal_oracle",
+            "name": "Ethereal Oracle",
+            "desc": "Celestial harmonic-locked voice (+3st pitch / +2.5st formant) with airy shimmer exciter, LFO filter movement, and lush hall reverb.",
+            "plugins": [
+                ("internal:pitch_formant", "Pitch & Formant", {"pitch": 3.0, "formant": 2.5, "preserve_formants": 1.0, "mix": 100.0}),
+                ("internal:sub_exciter", "Sub-Harmonic & Exciter", {"sub_level": 0.0, "sub_freq_hz": 85.0, "air_exciter": 40.0, "mix": 100.0}),
+                ("internal:chorus", "Vintage Chorus", {"rate_hz": 1.1, "depth": 0.55, "mix": 0.35}),
+                ("internal:reverb", "Studio Reverb", {"room_size": 0.88, "damping": 0.25, "wet_level": 0.38, "dry_level": 1.0, "width": 1.0}),
+            ],
+            "gain_db": 0.0,
             "dry_wet": 1.0,
         },
         {

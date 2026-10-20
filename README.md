@@ -19,6 +19,14 @@ Loopback so Discord, OBS, games or any other app can use it as a microphone.
     <td align="center">Minimal skin, Cyan theme</td>
   </tr>
   <tr>
+    <td align="center"><img src="docs/images/ai-voice-changer.png" width="380" alt="AI Voice Changer: select models, pitch tracking, and timbre controls"></td>
+    <td align="center"><img src="docs/images/ai-voice-trainer.png" width="380" alt="AI Voice Model Trainer: dataset slicing, training epochs, and auto-export"></td>
+  </tr>
+  <tr>
+    <td align="center">Real-Time AI Voice Changer</td>
+    <td align="center">Built-in AI Voice Model Trainer</td>
+  </tr>
+  <tr>
     <td align="center"><img src="docs/images/customize.png" width="300" alt="The Customize panel: pick frames, switches, knobs and meters, and colours"></td>
     <td align="center"><img src="docs/images/mic-cleanup.png" width="380" alt="Mic cleanup: rumble filter, AI noise suppression and noise gate"></td>
   </tr>
@@ -30,19 +38,24 @@ Loopback so Discord, OBS, games or any other app can use it as a microphone.
 
 ## Features
 
+- **Real-Time Local AI Voice Changer & GitHub Model Hub.** Dedicated to genuine `.onnx` neural voice models (`RVC v2` / `ONNX`) with low-latency conversion, hardware detection (`CUDA`, `DirectML`, `CPU`), a built-in **GitHub Voice Model Hub** (**Browse models?**) to download pre-trained `.onnx` voices on demand, and custom `.onnx` + `.index` model import.
+- **Built-in AI Voice Model Trainer.** Train custom `.onnx` voice models locally directly from vocal audio recordings (`.wav`, `.mp3`, `.flac`, `.ogg`, `.m4a`), with automated silence slicing, loudness normalization, F0 pitch tracking, and zero-click export into your voice rack.
+- **LFO Parameter Modulator.** Map a real-time low-frequency oscillator (`Sine`, `Triangle`, `Saw Up`, `Saw Down`, `Square`, `Random S&H`) to automatically sweep any parameter knob on another plugin in your chain with live visual feedback on rack macro knobs.
+- **Multi-Module Voice Presets.** Ships with 11 factory chain presets?including `Xen Overmind`, `Cyber Valkyrie`, `Shadow Operative`, `Titan Brute`, and `Ethereal Oracle`?constructed transparently from multi-stage DSP modules so every stage can be inspected, tweaked, or modulated.
 - **Swappable chains (racks) of VST3 plugins**, switched with global hotkeys in **Toggle** or **Hold** mode.
   Modifiers (`Ctrl`, `Shift`, `Alt`, `Win`) are supported, and keys still reach your game or app.
 - **Natural tails.** When you switch an effect off, the input fades to dry within about 15 ms, while
   reverb and delay tails keep ringing for the tail time you set.
 - **Native plugin editors.** Double-click a plugin (or click **Open UI**) to open its own window.
   Audio and hotkeys keep running while you edit.
-- **Built-in effects** (pitch & formant, compressor, parametric EQ, reverb, delay, chorus, phaser, tremolo, ring modulator, drive, bitcrush, radio, filter), plus
+- **16 Built-in studio effects** (AI Voice Changer, LFO Modulator, Sub-Harmonic & Exciter, pitch & formant, parametric EQ, studio compressor, space phaser, optical tremolo, ring modulator, studio reverb, stereo delay, vintage chorus, tube drive, lo-fi bitcrush, tactical GSM radio, ladder filter), plus
   pre-processing: high-pass filter, RNNoise noise suppression and a noise gate.
+- **Click-to-favorite & fast filtering.** Click the star icon on any built-in effect or VST3 to pin your favorite plugins to the top of the browser.
 - **Clean pass-through, mute, or a default chain** when no hotkey is active, plus a **panic / all-off**
   hotkey.
 - **Skins and colour themes**, switched live, plus a **Customize** panel to build your own and share
   them as files.
-- Soundboard, MIDI control, an on-screen overlay, a local HTTP API (127.0.0.1 only) for Stream Deck and
+- Soundboard, MIDI control, in-app GitHub release update notifications, an on-screen overlay, a local HTTP API (127.0.0.1 only) for Stream Deck and
   OBS, and system tray integration.
 
 ## Requirements
