@@ -15,7 +15,7 @@ TYPED_ICON = re.compile(r"^[<>▲▼xX✕+]$|[←-⇿☀-➿\U0001F300-\U0001FAF
 # Words that are written in capitals anyway (sentence case allows them).
 ACRONYMS = {"MIDI", "ASIO", "WASAPI", "HTTP", "REST", "VST3", "CABLE"}
 DIALOGS = ("settings", "prefx", "soundboard", "hotkey", "add_plugin", "param_map",
-           "setup_assistant", "about", "updater", "ai_voice")
+           "setup_assistant", "about", "updater", "ai_voice", "ai_trainer")
 
 
 @pytest.fixture
@@ -221,6 +221,7 @@ def _views(sample_core):
     from mandible.config import PluginSlot
     from mandible.internal_dsp import load_internal_plugin
     from mandible.ui.dialogs.about import AboutDialog
+    from mandible.ui.dialogs.ai_trainer import AITrainerDialog
     from mandible.ui.dialogs.ai_voice import AIVoiceDialog
     from mandible.ui.dialogs.updater import UpdateDialog
     from mandible.ui.dialogs.add_plugin import AddPluginDialog
@@ -250,6 +251,7 @@ def _views(sample_core):
         "about": lambda: AboutDialog(None),
         "updater": lambda: UpdateDialog(sample_core, None, auto_check=False),
         "ai_voice": lambda: AIVoiceDialog(ai_slot, sample_core, None),
+        "ai_trainer": lambda: AITrainerDialog(sample_core, None),
     }
     return builders
 

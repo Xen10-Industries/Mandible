@@ -34,6 +34,7 @@ from ...config import PluginSlot
 from ...core import Core, inst
 from ..widgets.base import SpacedLayouts, _follow_look, reserve_text_width, set_style_property
 from ..widgets.buttons import make_button, tier_button_box
+from .ai_trainer import AITrainerDialog
 from .parts import group_label, hint_label, keep_wrapped_text_visible
 
 
@@ -98,6 +99,11 @@ class AIVoiceDialog(QDialog):
         lay.addWidget(self.model_desc_lbl)
 
         mgr_row = self._spaced.add(QHBoxLayout(), spacing=2, margins=0)
+        self.train_btn = make_button(
+            "Train voice…",
+            "secondary",
+            tooltip="Open the AI Voice Model Trainer to train a custom voice from recordings",
+        )
         self.import_btn = make_button(
             "Import .onnx…",
             "secondary",
@@ -113,6 +119,7 @@ class AIVoiceDialog(QDialog):
             "secondary",
             tooltip=f"Open {AI_MODELS_DIR} in Windows Explorer",
         )
+        mgr_row.addWidget(self.train_btn)
         mgr_row.addWidget(self.import_btn)
         mgr_row.addWidget(self.remove_btn)
         mgr_row.addWidget(self.folder_btn)
@@ -172,6 +179,7 @@ class AIVoiceDialog(QDialog):
         self.model_combo.currentIndexChanged.connect(self._on_model_changed)
         self.f0_combo.currentIndexChanged.connect(self._on_f0_changed)
         self.defaults_btn.clicked.connect(self._apply_model_defaults)
+        self.train_btn.clicked.connect(self._open_voice_trainer)
         self.import_btn.clicked.connect(self._import_model)
         self.remove_btn.clicked.connect(self._remove_selected_model)
         self.folder_btn.clicked.connect(self._open_models_folder)
@@ -183,7 +191,7 @@ class AIVoiceDialog(QDialog):
         self._reserve_button_widths()
 
     def _reserve_button_widths(self) -> None:
-        for btn in (self.defaults_btn, self.import_btn, self.remove_btn, self.folder_btn, self.close_btn):
+        for btn in (self.defaults_btn, self.train_btn, self.import_btn, self.remove_btn, self.folder_btn, self.close_btn):
             reserve_text_width(btn, btn.text())
 
     def _slider_spin(
@@ -357,6 +365,12 @@ class AIVoiceDialog(QDialog):
         if ans == QMessageBox.StandardButton.Yes:
             remove_voice_model(model_id)
             self._populate_models(select_id="xen_overmind")
+            self._on_model_changed(self.model_combo.currentIndex())
+
+    def _open_voice_trainer(self) -> None:
+        dlg = AITrainerDialog(self.core, self)
+        if dlg.exec() and dlg.trained_model_id:
+            self._populate_models(select_id=dlg.trained_model_id)
             self._on_model_changed(self.model_combo.currentIndex())
 
     def _open_models_folder(self) -> None:
