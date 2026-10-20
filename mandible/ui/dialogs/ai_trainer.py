@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import threading
 import webbrowser
 
 from PySide6.QtCore import Qt, Signal
@@ -24,9 +25,12 @@ from PySide6.QtWidgets import (
 )
 
 from ...ai_trainer import (
+    MANDIBLE_RVC_DIR,
+    MANDIBLE_RVC_REPO,
     TrainingJobConfig,
     TrainingProgress,
     VoiceModelTrainer,
+    download_and_install_rvc_addon,
     find_mandible_rvc_exe,
     inspect_audio_file,
 )
@@ -37,7 +41,175 @@ from ..widgets.buttons import make_button
 from .parts import group_label, hint_label, keep_wrapped_text_visible
 
 
-class ExternalTrainingGuideDialog(QDialog):
+class RVCAddonDialog(QDialog):
+    """Dialog for inspecting, downloading, and managing the Mandible RVC deep-learning add-on."""
+
+    addonInstalled = Signal(str)
+    _downloadProgress = Signal(int, int)
+    _downloadFinished = Signal(bool, str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._spaced = SpacedLayouts()
+        self._downloading = False
+        _follow_look(self)
+
+        self.setWindowTitle("Mandible RVC v2 Add-on")
+        self.setMinimumWidth(640)
+        self.resize(720, 520)
+
+        lay = self._spaced.add(QVBoxLayout(self), spacing=2, margins=4)
+
+        self.card = QFrame()
+        self.card.setObjectName("wizardCard")
+        self.card_lay = self._spaced.add(QVBoxLayout(self.card), spacing=1, margins=3)
+
+        self.title_lbl = QLabel("Mandible RVC Deep-Learning Add-on")
+        self.title_lbl.setObjectName("wizardCardTitle")
+        self.title_lbl.setWordWrap(True)
+        self.card_lay.addWidget(self.title_lbl)
+
+        self.status_lbl = QLabel("")
+        self.status_lbl.setObjectName("wizardCardDesc")
+        self.status_lbl.setWordWrap(True)
+        self.card_lay.addWidget(self.status_lbl)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setVisible(False)
+        self.card_lay.addWidget(self.progress_bar)
+
+        lay.addWidget(self.card)
+
+        group_label(lay, "Add-on overview")
+        lay.addWidget(
+            hint_label(
+                "The Mandible RVC add-on bundles headless 40M-parameter VITS neural vocoder training, "
+                "ContentVec acoustic feature extraction, and RMVPE GPU pitch tracking into an optional sidecar. "
+                "This keeps Mandible's main installer lightweight (~150 MB) while offering genuine "
+                "neural voice cloning."
+            )
+        )
+
+        group_label(lay, "Installation location")
+        self.location_lbl = hint_label(f"Installed at: {MANDIBLE_RVC_DIR}")
+        lay.addWidget(self.location_lbl)
+
+        lay.addStretch(1)
+
+        btn_row = self._spaced.add(QHBoxLayout(), spacing=2, margins=0)
+        self.download_btn = make_button("Download & install add-on", "primary")
+        self.guide_btn = make_button("RVC guide…", "secondary", tooltip="Open RVC training and cloud GPU guide")
+        self.folder_btn = make_button("Open tools folder…", "secondary", tooltip=f"Open {MANDIBLE_RVC_DIR} in Explorer")
+        self.close_btn = make_button("Close", "secondary")
+
+        btn_row.addWidget(self.download_btn)
+        btn_row.addWidget(self.guide_btn)
+        btn_row.addWidget(self.folder_btn)
+        btn_row.addStretch(1)
+        btn_row.addWidget(self.close_btn)
+        lay.addLayout(btn_row)
+
+        self.download_btn.clicked.connect(self._on_download_addon)
+        self.guide_btn.clicked.connect(self._open_guide)
+        self.folder_btn.clicked.connect(self._open_folder)
+        self.close_btn.clicked.connect(self.accept)
+
+        self._downloadProgress.connect(self._on_download_progress)
+        self._downloadFinished.connect(self._on_download_finished)
+
+        self._refresh_installed_state()
+        self._reserve_button_widths()
+        keep_wrapped_text_visible(self)
+
+    def _reserve_button_widths(self) -> None:
+        for btn in (self.download_btn, self.guide_btn, self.folder_btn, self.close_btn):
+            reserve_text_width(btn, btn.text())
+
+    def _on_look_changed(self) -> None:
+        self._spaced.apply()
+        self._reserve_button_widths()
+
+    def _refresh_installed_state(self) -> None:
+        exe = find_mandible_rvc_exe()
+        if exe:
+            set_style_property(self.card, "state", "ok")
+            set_style_property(self.title_lbl, "state", "ok")
+            self.status_lbl.setText(f"Status: Installed (ready) — detected at {exe}")
+            self.location_lbl.setText(f"Executable: {exe}")
+            self.download_btn.setText("Reinstall add-on")
+            self.download_btn.setEnabled(True)
+        else:
+            set_style_property(self.card, "state", "default")
+            set_style_property(self.title_lbl, "state", "default")
+            self.status_lbl.setText("Status: Not installed on this PC.")
+            self.location_lbl.setText(f"Target directory: {MANDIBLE_RVC_DIR}")
+            self.download_btn.setText("Download & install add-on")
+            self.download_btn.setEnabled(True)
+        self._reserve_button_widths()
+
+    def _open_folder(self) -> None:
+        os.makedirs(MANDIBLE_RVC_DIR, exist_ok=True)
+        if hasattr(os, "startfile"):
+            try:
+                os.startfile(MANDIBLE_RVC_DIR)
+            except OSError:
+                pass
+
+    def _open_guide(self) -> None:
+        RVCGuideDialog(AI_MODELS_DIR, self).exec()
+
+    def _on_download_addon(self) -> None:
+        if self._downloading:
+            return
+        self._downloading = True
+        self.download_btn.setEnabled(False)
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setValue(0)
+        self.status_lbl.setText("Downloading Mandible RVC add-on release from GitHub…")
+
+        def _worker():
+            try:
+                def _prog(read_bytes, total_bytes):
+                    if total_bytes > 0:
+                        pct = int(100 * read_bytes / total_bytes)
+                        self._downloadProgress.emit(pct, total_bytes)
+
+                exe = download_and_install_rvc_addon(progress_cb=_prog)
+                self._downloadFinished.emit(True, exe)
+            except Exception as exc:
+                self._downloadFinished.emit(False, str(exc))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_download_progress(self, pct: int, total: int) -> None:
+        self.progress_bar.setValue(pct)
+        mb = total / (1024 * 1024)
+        self.status_lbl.setText(f"Downloading Mandible RVC add-on ({pct}% of {mb:.1f} MB)…")
+
+    def _on_download_finished(self, success: bool, msg: str) -> None:
+        self._downloading = False
+        self.progress_bar.setVisible(False)
+        if success:
+            self._refresh_installed_state()
+            self.addonInstalled.emit(msg)
+            QMessageBox.information(
+                self,
+                "Add-on Installed",
+                f"Mandible RVC add-on was installed successfully!\n\nLocation: {msg}",
+            )
+        else:
+            self._refresh_installed_state()
+            QMessageBox.warning(
+                self,
+                "Download Error",
+                f"Could not download Mandible RVC add-on:\n\n{msg}\n\n"
+                f"You can also visit https://github.com/{MANDIBLE_RVC_REPO} to download it manually.",
+            )
+
+
+class RVCGuideDialog(QDialog):
     """Step-by-step guide for training heavy 40M-parameter RVC v2 models externally (GPU / Colab)."""
 
     def __init__(self, models_dir: str = AI_MODELS_DIR, parent=None):
@@ -46,7 +218,7 @@ class ExternalTrainingGuideDialog(QDialog):
         self._spaced = SpacedLayouts()
         _follow_look(self)
 
-        self.setWindowTitle("External RVC v2 Training & Cloud GPU Guide")
+        self.setWindowTitle("RVC Training & Cloud GPU Guide")
         self.setMinimumWidth(640)
         self.resize(740, 580)
 
@@ -57,7 +229,7 @@ class ExternalTrainingGuideDialog(QDialog):
         set_style_property(card, "state", "ok")
         card_lay = self._spaced.add(QVBoxLayout(card), spacing=1, margins=3)
 
-        title = QLabel("In-App Neural Vocoder vs. Full External RVC v2 Cloning")
+        title = QLabel("In-App Neural Vocoder vs. Full RVC v2 Cloning")
         title.setObjectName("wizardCardTitle")
         set_style_property(title, "state", "ok")
         title.setWordWrap(True)
@@ -67,7 +239,7 @@ class ExternalTrainingGuideDialog(QDialog):
             "Mandible's built-in trainer fits a lightweight 3-layer ONNX neural spectral vocoder and "
             "phonetic retrieval index (.index) directly on your CPU/GPU in ~15–60 seconds. "
             "If you want ElevenLabs-grade 40M-parameter VITS + ContentVec deep vocal cloning, "
-            "you can train a full RVC v2 model externally using PyTorch/CUDA and import the .onnx file."
+            "you can use the Mandible RVC add-on or train externally using PyTorch/CUDA and import the .onnx file."
         )
         desc.setObjectName("wizardCardDesc")
         desc.setWordWrap(True)
@@ -83,13 +255,12 @@ class ExternalTrainingGuideDialog(QDialog):
             )
         )
 
-        group_label(lay, "Step 2 — Train in RVC WebUI or Colab")
+        group_label(lay, "Step 2 — Choose your training engine")
         lay.addWidget(
             hint_label(
-                "1. Open Retrieval-based-Voice-Conversion-WebUI locally (takes ~15–25 minutes on an RTX 3060 "
-                "for 200–250 epochs) or launch its free Google Colab notebook for cloud T4/A100 GPU training.\n"
-                "2. In the 'Train' tab, point to your audio folder, choose 'v2' and 'rmvpe_gpu', and click "
-                "'One-click training'."
+                "1. Mandible RVC Add-on: click 'RVC add-on\u2026' to install the headless sidecar for 1-click GPU training.\n"
+                "2. External RVC WebUI: open Retrieval-based-Voice-Conversion-WebUI locally or run on a free Google Colab cloud GPU.\n"
+                "3. In RVC, select 'v2' and 'rmvpe_gpu', point to your recordings folder, and train for 200\u2013250 epochs."
             )
         )
 
@@ -98,7 +269,7 @@ class ExternalTrainingGuideDialog(QDialog):
             hint_label(
                 "1. In RVC WebUI, open the 'Ckpt Processing' / 'Export ONNX' tab and export your trained "
                 ".pth checkpoint to an .onnx file.\n"
-                "2. In Mandible's AI Voice Changer window, click 'Import .onnx…' and select your .onnx file "
+                "2. In Mandible's AI Voice Changer window, click 'Import .onnx\u2026' and select your .onnx file "
                 "and matching trained_*.index file (or drop them directly into the models folder)."
             )
         )
@@ -106,6 +277,7 @@ class ExternalTrainingGuideDialog(QDialog):
         lay.addStretch(1)
 
         btn_row = self._spaced.add(QHBoxLayout(), spacing=2, margins=0)
+        self.addon_btn = make_button("RVC add-on…", "secondary", tooltip="Download or manage the Mandible RVC deep-learning add-on")
         self.rvc_btn = make_button(
             "Open RVC GitHub…",
             "secondary",
@@ -117,12 +289,14 @@ class ExternalTrainingGuideDialog(QDialog):
             tooltip=f"Open {self.models_dir} in Windows Explorer",
         )
         self.close_btn = make_button("Close", "primary")
+        btn_row.addWidget(self.addon_btn)
         btn_row.addWidget(self.rvc_btn)
         btn_row.addWidget(self.folder_btn)
         btn_row.addStretch(1)
         btn_row.addWidget(self.close_btn)
         lay.addLayout(btn_row)
 
+        self.addon_btn.clicked.connect(self._open_addon)
         self.rvc_btn.clicked.connect(lambda: webbrowser.open(RVC_WEBUI_URL))
         self.folder_btn.clicked.connect(self._open_folder)
         self.close_btn.clicked.connect(self.accept)
@@ -130,8 +304,11 @@ class ExternalTrainingGuideDialog(QDialog):
         self._reserve_button_widths()
         keep_wrapped_text_visible(self)
 
+    def _open_addon(self) -> None:
+        RVCAddonDialog(self).exec()
+
     def _reserve_button_widths(self) -> None:
-        for btn in (self.rvc_btn, self.folder_btn, self.close_btn):
+        for btn in (self.addon_btn, self.rvc_btn, self.folder_btn, self.close_btn):
             reserve_text_width(btn, btn.text())
 
     def _on_look_changed(self) -> None:
@@ -145,6 +322,9 @@ class ExternalTrainingGuideDialog(QDialog):
                 os.startfile(self.models_dir)
             except OSError:
                 pass
+
+
+ExternalTrainingGuideDialog = RVCGuideDialog
 
 
 class AITrainerDialog(QDialog):
@@ -164,7 +344,7 @@ class AITrainerDialog(QDialog):
 
         self.setWindowTitle("Train AI Voice Model")
         self.setMinimumWidth(660)
-        self.resize(780, 700)
+        self.resize(780, 720)
 
         lay = self._spaced.add(QVBoxLayout(self), spacing=2, margins=4)
 
@@ -185,24 +365,33 @@ class AITrainerDialog(QDialog):
         self.status_desc.setObjectName("wizardCardDesc")
         self.status_desc.setWordWrap(True)
         card_lay.addWidget(self.status_desc)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setVisible(False)
+        card_lay.addWidget(self.progress_bar)
+
         lay.addWidget(self.status_card)
 
-        # 2. Dataset section
-        group_label(lay, "Training dataset (vocal audio)")
-        self.dataset_hint = hint_label(
-            "Add clean voice recordings (.wav, .mp3, .flac, .m4a) of the target speaker without background music."
+        # 2. Vocal dataset files section
+        group_label(lay, "Training audio recordings")
+        lay.addWidget(
+            hint_label(
+                "Add 1–5 minutes of clean, dry, single-speaker vocal audio (.wav, .mp3, .flac). "
+                "Non-silent vocal sections will be automatically sliced and extracted."
+            )
         )
-        lay.addWidget(self.dataset_hint)
 
         self.file_list = QListWidget()
         self.file_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
-        self.file_list.setMaximumHeight(130)
+        self.file_list.setMinimumHeight(100)
         lay.addWidget(self.file_list)
 
         file_btn_row = self._spaced.add(QHBoxLayout(), spacing=2, margins=0)
-        self.add_files_btn = make_button("Add audio files…", "secondary", tooltip="Select audio samples of the speaker")
-        self.remove_files_btn = make_button("Remove selected", "quiet", tooltip="Remove chosen files from the dataset")
-        self.clear_files_btn = make_button("Clear all", "quiet", tooltip="Clear the dataset list")
+        self.add_files_btn = make_button("Add recordings…", "secondary", tooltip="Select audio files to add to dataset")
+        self.remove_files_btn = make_button("Remove selected", "secondary", tooltip="Remove selected audio file from list")
+        self.clear_files_btn = make_button("Clear all", "secondary", tooltip="Clear entire file list")
         file_btn_row.addWidget(self.add_files_btn)
         file_btn_row.addWidget(self.remove_files_btn)
         file_btn_row.addWidget(self.clear_files_btn)
@@ -212,8 +401,8 @@ class AITrainerDialog(QDialog):
         file_btn_row.addWidget(self.dataset_stats_lbl)
         lay.addLayout(file_btn_row)
 
-        # 3. Model parameters
-        group_label(lay, "Voice model configuration")
+        # 3. Model parameters form
+        group_label(lay, "Training configuration")
         form_w = QWidget()
         form = self._spaced.add(QFormLayout(form_w), spacing=2, margins=0)
 
@@ -225,59 +414,52 @@ class AITrainerDialog(QDialog):
         form.addRow("Voice name", name_row)
 
         self.engine_combo = QComboBox()
-        self.engine_combo.addItem("In-app neural vocoder (~15\u201360s)", "builtin")
-        self.engine_combo.addItem("Full RVC v2 GAN (~15\u201325 min on GPU)", "rvc")
+        self.engine_combo.addItem("In-app neural vocoder (~15–60s)", "builtin")
+        self.engine_combo.addItem("Full RVC v2 GAN (~15–25 min on GPU)", "rvc")
         form.addRow("Training engine", self.engine_combo)
+
+        addon_row = self._spaced.add(QHBoxLayout(), spacing=2, margins=0)
+        self.addon_status_lbl = hint_label("")
+        self.addon_quick_btn = make_button("RVC add-on…", "secondary", tooltip="Download or manage the Mandible RVC add-on")
+        addon_row.addWidget(self.addon_status_lbl, 1)
+        addon_row.addWidget(self.addon_quick_btn)
+        form.addRow("Add-on status", addon_row)
 
         self.f0_combo = QComboBox()
         for key, label in F0_METHODS:
             self.f0_combo.addItem(label, key)
         form.addRow("Pitch extraction", self.f0_combo)
 
-        epoch_row = self._spaced.add(QHBoxLayout(), spacing=2, margins=0)
         self.epoch_spin = QSpinBox()
-        self.epoch_spin.setRange(10, 800)
+        self.epoch_spin.setRange(20, 1000)
         self.epoch_spin.setSingleStep(25)
         self.epoch_spin.setValue(150)
         self.epoch_spin.setSuffix(" epochs")
-        epoch_row.addWidget(self.epoch_spin)
-        epoch_row.addWidget(hint_label("(150–300 recommended for ONNX vocoder convergence)"))
-        epoch_row.addStretch(1)
-        form.addRow("Training length", epoch_row)
+        form.addRow("Training epochs", self.epoch_spin)
 
-        self.clean_chk = QCheckBox("Normalize audio and trim silence")
+        self.clean_chk = QCheckBox("Normalize loudness and remove DC")
         self.clean_chk.setChecked(True)
-        self.clean_chk.setToolTip("Normalize vocal loudness and automatically remove silent audio pauses")
-        form.addRow("Preprocessing", self.clean_chk)
+        form.addRow("", self.clean_chk)
 
         lay.addWidget(form_w)
-
-        # 4. Live Progress Card
-        group_label(lay, "Training progress")
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 100)
-        self.progress_bar.setValue(0)
-        lay.addWidget(self.progress_bar)
-
-        self.progress_desc = hint_label("Ready. Select training audio files and click 'Start training'.")
-        lay.addWidget(self.progress_desc)
-
         lay.addStretch(1)
 
-        # 5. Bottom action bar
+        # 4. Action buttons
         btn_row = self._spaced.add(QHBoxLayout(), spacing=2, margins=0)
-        self.train_btn = make_button("Start training", "primary", tooltip="Begin dataset STFT extraction and ONNX neural vocoder training")
+        self.train_btn = make_button("Train voice model", "primary", tooltip="Start background neural training")
         self.cancel_btn = make_button("Cancel training", "danger", tooltip="Stop current training job")
         self.cancel_btn.setVisible(False)
+        self.addon_bottom_btn = make_button("RVC add-on…", "secondary", tooltip="Download or manage the Mandible RVC deep-learning add-on")
         self.guide_btn = make_button(
-            "External training guide…",
+            "RVC guide…",
             "secondary",
-            tooltip="How to train full 40M-parameter RVC v2 models externally (local GPU or Google Colab) and import them",
+            tooltip="Step-by-step guide for training RVC v2 models (local GPU or Google Colab)",
         )
         self.close_btn = make_button("Close", "secondary")
 
         btn_row.addWidget(self.train_btn)
         btn_row.addWidget(self.cancel_btn)
+        btn_row.addWidget(self.addon_bottom_btn)
         btn_row.addWidget(self.guide_btn)
         btn_row.addStretch(1)
         btn_row.addWidget(self.close_btn)
@@ -289,10 +471,14 @@ class AITrainerDialog(QDialog):
         self.clear_files_btn.clicked.connect(self._on_clear_files)
         self.train_btn.clicked.connect(self._on_start_training)
         self.cancel_btn.clicked.connect(self._on_cancel_training)
+        self.addon_quick_btn.clicked.connect(self._open_addon_dialog)
+        self.addon_bottom_btn.clicked.connect(self._open_addon_dialog)
         self.guide_btn.clicked.connect(self._open_external_guide)
         self.close_btn.clicked.connect(self._on_close)
         self.progressSignal.connect(self._on_progress_update)
+        self.engine_combo.currentIndexChanged.connect(self._on_engine_changed)
 
+        self._refresh_addon_status()
         self._reserve_button_widths()
         keep_wrapped_text_visible(self)
 
@@ -303,17 +489,39 @@ class AITrainerDialog(QDialog):
             self.clear_files_btn,
             self.train_btn,
             self.cancel_btn,
+            self.addon_quick_btn,
+            self.addon_bottom_btn,
             self.guide_btn,
             self.close_btn,
         ):
             reserve_text_width(btn, btn.text())
+
+    def _refresh_addon_status(self) -> None:
+        exe = find_mandible_rvc_exe()
+        if exe:
+            self.addon_status_lbl.setText(f"Installed (ready) — {os.path.basename(exe)}")
+        else:
+            self.addon_status_lbl.setText("Not installed — click 'RVC add-on…' to download")
+
+    def _on_engine_changed(self) -> None:
+        engine = self.engine_combo.currentData()
+        if engine == "rvc":
+            exe = find_mandible_rvc_exe()
+            if not exe:
+                self.addon_status_lbl.setText("Not installed — click 'RVC add-on…' to download")
+
+    def _open_addon_dialog(self) -> None:
+        dlg = RVCAddonDialog(self)
+        dlg.addonInstalled.connect(lambda _: self._refresh_addon_status())
+        dlg.exec()
+        self._refresh_addon_status()
 
     def _on_look_changed(self) -> None:
         self._spaced.apply()
         self._reserve_button_widths()
 
     def _open_external_guide(self) -> None:
-        ExternalTrainingGuideDialog(self.models_dir, self).exec()
+        RVCGuideDialog(self.models_dir, self).exec()
 
     @property
     def trained_model_id(self) -> str:
@@ -372,18 +580,9 @@ class AITrainerDialog(QDialog):
 
         selected_engine = self.engine_combo.currentData() or "builtin"
         if selected_engine == "rvc" and find_mandible_rvc_exe() is None:
-            ans = QMessageBox.question(
-                self,
-                "RVC Add-on Not Installed",
-                "Mandible's full RVC v2 deep-learning add-on is not installed on this PC yet.\n\n"
-                "Would you like to open the External Training Guide to learn how to download the "
-                "add-on or train on a free cloud GPU?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.Yes,
-            )
-            if ans == QMessageBox.StandardButton.Yes:
-                self._open_external_guide()
-            return
+            self._open_addon_dialog()
+            if find_mandible_rvc_exe() is None:
+                return
 
         name = self.name_edit.currentText().strip() or "Custom Voice"
         config = TrainingJobConfig(
@@ -413,62 +612,62 @@ class AITrainerDialog(QDialog):
     def _on_cancel_training(self) -> None:
         if self._trainer is not None and self._trainer.is_running:
             self._trainer.cancel()
-            self.progress_desc.setText("Cancelling training…")
 
     def _on_progress_update(self, prog: TrainingProgress) -> None:
-        self.progress_bar.setValue(prog.current_step)
-        self.progress_desc.setText(prog.stage_description)
-
-        if prog.stage == "completed":
+        if prog.stage == "preparing":
+            self.status_desc.setText(prog.stage_description)
+            self.progress_bar.setVisible(True)
+            self.progress_bar.setValue(prog.current_step)
+        elif prog.stage in ("extracting", "indexing", "slicing"):
+            self.status_desc.setText(prog.stage_description)
+            self.progress_bar.setValue(prog.current_step)
+        elif prog.stage == "training":
+            self.progress_bar.setValue(prog.current_step)
+            loss_str = f"loss: {prog.loss:.4f}" if prog.loss > 0 else ""
+            self.status_desc.setText(
+                f"Epoch {prog.epoch}/{prog.total_epochs} ({prog.stage_description})  {loss_str}"
+            )
+        elif prog.stage == "exporting":
+            self.status_desc.setText(prog.stage_description)
+            self.progress_bar.setValue(prog.current_step)
+        elif prog.stage == "completed":
+            self.status_desc.setText(prog.stage_description)
+            self.progress_bar.setValue(100)
             self.train_btn.setVisible(True)
             self.cancel_btn.setVisible(False)
             self.add_files_btn.setEnabled(True)
             self.remove_files_btn.setEnabled(True)
             self.clear_files_btn.setEnabled(True)
-            set_style_property(self.status_card, "state", "ok")
-            self.status_title.setText(f"Model '{self.name_edit.currentText()}' trained successfully!")
-            self._trained_model_id = f"onnx:{_slugify(self.name_edit.currentText())}.onnx"
+            if self._trainer is not None:
+                self._trained_model_id = self._trainer.trained_model_id
             QMessageBox.information(
                 self,
                 "Training Complete",
-                f"Voice model '{self.name_edit.currentText()}' has been trained and saved to Mandible's voice library.\n\nYou can now select it in the AI Voice Changer plugin!",
+                f"Voice model '{self.name_edit.currentText()}' trained and ready in the AI Voice Changer!",
             )
-
-        elif prog.stage == "error":
+            self.accept()
+        elif prog.stage in ("error", "cancelled"):
+            self.status_desc.setText(prog.stage_description)
+            self.progress_bar.setVisible(False)
             self.train_btn.setVisible(True)
             self.cancel_btn.setVisible(False)
             self.add_files_btn.setEnabled(True)
             self.remove_files_btn.setEnabled(True)
             self.clear_files_btn.setEnabled(True)
-            set_style_property(self.status_card, "state", "warn")
-            self.status_title.setText("Training failed")
-            QMessageBox.warning(self, "Training failed", f"Could not train voice model:\n{prog.error_message}")
-
-        elif prog.stage == "cancelled":
-            self.train_btn.setVisible(True)
-            self.cancel_btn.setVisible(False)
-            self.add_files_btn.setEnabled(True)
-            self.remove_files_btn.setEnabled(True)
-            self.clear_files_btn.setEnabled(True)
-            self.status_title.setText("Training cancelled")
+            if prog.stage == "error":
+                QMessageBox.critical(self, "Training Error", prog.stage_description)
 
     def _on_close(self) -> None:
         if self._trainer is not None and self._trainer.is_running:
             ans = QMessageBox.question(
                 self,
                 "Cancel Training?",
-                "A voice model is currently training. Closing this window will cancel the training job. Are you sure?",
+                "A voice model training job is currently in progress. Cancel it?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
             )
-            if ans != QMessageBox.StandardButton.Yes:
-                return
-            self._trainer.cancel()
-            self._trainer.join(timeout=1.0)
-        self.accept()
-
-
-def _slugify(name: str) -> str:
-    import re
-    slug = re.sub(r"[^a-zA-Z0-9_-]+", "_", name.strip()).strip("_").lower()
-    return slug or "custom_voice"
+            if ans == QMessageBox.StandardButton.Yes:
+                self._trainer.cancel()
+                self.reject()
+        else:
+            self.reject()

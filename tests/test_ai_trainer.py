@@ -11,7 +11,7 @@ from mandible import ai_trainer as AT
 from mandible import ai_voice as AV
 from mandible.internal_dsp import load_internal_plugin
 from mandible.ui.app import apply_theme
-from mandible.ui.dialogs.ai_trainer import AITrainerDialog, ExternalTrainingGuideDialog
+from mandible.ui.dialogs.ai_trainer import AITrainerDialog, ExternalTrainingGuideDialog, RVCAddonDialog, RVCGuideDialog
 from mandible.ui.inspect import (find_clipped_text, find_overflow, off_scale_spacing,
                                  untiered_buttons)
 from mandible.ui.look import BUILTIN_PALETTES, BUILTIN_SKINS, Look
@@ -148,15 +148,16 @@ def test_ai_trainer_and_external_guide_dialog_ui_compliance(qapp, sample_core, t
 
     models_dir = str(tmp_path / "test_models")
     dlg = AITrainerDialog(sample_core, None, models_dir=models_dir)
-    guide = ExternalTrainingGuideDialog(models_dir, None)
+    guide = RVCGuideDialog(models_dir, None)
+    addon = RVCAddonDialog(None)
     try:
-        for w in (dlg, guide):
+        for w in (dlg, guide, addon):
             w.setAttribute(Qt.WA_DontShowOnScreen)
             w.show()
         for _ in range(3):
             qapp.processEvents()
 
-        for w in (dlg, guide):
+        for w in (dlg, guide, addon):
             assert off_scale_spacing(w) == []
             assert untiered_buttons(w) == []
             assert find_clipped_text(w) == []
@@ -177,7 +178,7 @@ def test_ai_trainer_and_external_guide_dialog_ui_compliance(qapp, sample_core, t
         dlg._on_clear_files()
         assert dlg.file_list.count() == 0
     finally:
-        for w in (guide, dlg):
+        for w in (addon, guide, dlg):
             w.hide()
             w.deleteLater()
         _flush()

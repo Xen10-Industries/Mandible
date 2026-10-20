@@ -231,7 +231,7 @@ def detect_training_hardware() -> tuple[str, str]:
         "In-app training fits a 3-layer ONNX neural spectral vocoder + FAISS/k-NN phonetic index "
         "to your vocal recordings (takes ~15–60s depending on dataset length & epochs). "
         "For full 40M-parameter RVC v2 / HuBERT deep vocal cloning (15–30 min on GPU or free Google Colab), "
-        "click 'External training guide…' and import the resulting .onnx model."
+        "click 'RVC guide…' or use the Mandible RVC add-on."
     )
     _GPU_CACHE = (dev, guidance)
     return _GPU_CACHE
