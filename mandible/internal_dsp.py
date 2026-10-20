@@ -17,6 +17,7 @@ from .ai_voice import (
     AI_VOICE_PLUGIN_PATH,
     F0_METHODS,
     get_voice_model,
+    list_voice_models,
 )
 from .gate import Gate
 
@@ -720,10 +721,175 @@ class TremoloPlugin(BaseInternalPlugin):
         return out.astype(np.float32, copy=False)
 
 
+class SubHarmonicSynthPlugin(BaseInternalPlugin):
+    """Sub-octave chest synthesizer and high-frequency harmonic air exciter."""
+
+    def __init__(self):
+        super().__init__("Sub-Harmonic & Exciter", "internal:sub_exciter")
+        self.p_sub = InternalParameter("sub_level", "Sub Octave", 0.0, 100.0, 35.0, unit="%", step=1.0)
+        self.p_sub_freq = InternalParameter("sub_freq_hz", "Sub Freq", 40.0, 140.0, 85.0, unit="Hz", step=1.0)
+        self.p_air = InternalParameter("air_exciter", "Air Exciter", 0.0, 100.0, 20.0, unit="%", step=1.0)
+        self.p_mix = InternalParameter("mix", "Mix", 0.0, 100.0, 100.0, unit="%", step=1.0)
+        self.parameters = {
+            "sub_level": self.p_sub,
+            "sub_freq_hz": self.p_sub_freq,
+            "air_exciter": self.p_air,
+            "mix": self.p_mix,
+        }
+        self._phase = 0.0
+
+    def reset(self):
+        self._phase = 0.0
+
+    def process(self, input_array: np.ndarray, sample_rate: float, buffer_size: int = 512, reset: bool = False) -> np.ndarray:
+        if reset:
+            self.reset()
+        x = input_array if input_array.ndim == 2 else input_array.reshape(1, -1)
+        frames = x.shape[1]
+        if frames == 0:
+            return x
+        sr = max(1.0, float(sample_rate))
+        sub_amt = self.p_sub.value / 100.0
+        sub_freq = self.p_sub_freq.value
+        air_amt = self.p_air.value / 100.0
+        mix = self.p_mix.value / 100.0
+
+        y = x.astype(np.float32, copy=True)
+        if sub_amt > 0.005:
+            t = (self._phase + np.arange(frames, dtype=np.float32)) / sr
+            self._phase = float((self._phase + frames) % sr)
+            sub_osc = np.sin(2.0 * np.pi * sub_freq * t).astype(np.float32)
+            env = np.abs(y)
+            y = y + (sub_amt * 0.45) * env * sub_osc
+
+        if air_amt > 0.005:
+            diff = np.diff(y, axis=1, prepend=y[:, :1])
+            y = y + (air_amt * 0.35) * diff
+
+        wet = np.clip(y, -1.0, 1.0).astype(np.float32)
+        if mix >= 0.999:
+            return wet
+        return ((1.0 - mix) * x + mix * wet).astype(np.float32, copy=False)
+
+
+LFO_SHAPES = (
+    (0.0, "Sine"),
+    (1.0, "Triangle"),
+    (2.0, "Saw Up"),
+    (3.0, "Saw Down"),
+    (4.0, "Square"),
+    (5.0, "Random S&H"),
+)
+
+
+class LFOModulatorPlugin(BaseInternalPlugin):
+    """Low-Frequency Oscillator module that can modulate any parameter knob in the chain."""
+
+    has_custom_editor = True
+
+    def __init__(self):
+        super().__init__("LFO Modulator", "internal:lfo")
+        self.p_rate = InternalParameter("rate_hz", "Rate", 0.05, 20.0, 1.5, unit="Hz", is_log=True, step=0.05)
+        self.p_depth = InternalParameter("depth", "Depth", 0.0, 100.0, 50.0, unit="%", step=1.0)
+        self.p_shape = InternalParameter("shape", "Wave Shape", 0.0, 5.0, 0.0, unit="", step=1.0)
+        self.p_center = InternalParameter("center", "Center", 0.0, 100.0, 50.0, unit="%", step=1.0)
+        self.parameters = {
+            "rate_hz": self.p_rate,
+            "depth": self.p_depth,
+            "shape": self.p_shape,
+            "center": self.p_center,
+        }
+        self.target_slot_index: int = -1
+        self.target_param_key: str = ""
+        self._phase: float = 0.0
+        self._sh_value: float = 0.0
+        self._last_cycle: int = -1
+
+    @property
+    def raw_state(self) -> bytes:
+        data: dict[str, object] = {k: p.value for k, p in self.parameters.items()}
+        data["target_slot_index"] = int(self.target_slot_index)
+        data["target_param_key"] = str(self.target_param_key or "")
+        return json.dumps(data).encode("utf-8")
+
+    @raw_state.setter
+    def raw_state(self, state_bytes: bytes):
+        try:
+            data = json.loads(state_bytes.decode("utf-8"))
+            if isinstance(data, dict):
+                if "target_slot_index" in data and isinstance(data["target_slot_index"], int):
+                    self.target_slot_index = int(data["target_slot_index"])
+                if "target_param_key" in data and isinstance(data["target_param_key"], str):
+                    self.target_param_key = str(data["target_param_key"])
+                for k, val in data.items():
+                    if k in self.parameters and isinstance(val, (int, float)):
+                        self.parameters[k].value = float(val)
+        except Exception as exc:
+            print(f"[InternalDSP] could not restore LFO state: {exc}")
+
+    def reset(self):
+        self._phase = 0.0
+        self._sh_value = 0.0
+        self._last_cycle = -1
+
+    def eval_wave(self, phase_01: float, shape_idx: int) -> float:
+        """Evaluate LFO wave in [-1.0, +1.0] for normalized phase in [0.0, 1.0)."""
+        p = phase_01 % 1.0
+        if shape_idx == 0:  # Sine
+            return float(math.sin(2.0 * math.pi * p))
+        if shape_idx == 1:  # Triangle
+            return float(1.0 - 4.0 * abs(round(p - 0.25) - (p - 0.25)))
+        if shape_idx == 2:  # Saw Up
+            return float(2.0 * p - 1.0)
+        if shape_idx == 3:  # Saw Down
+            return float(1.0 - 2.0 * p)
+        if shape_idx == 4:  # Square
+            return 1.0 if p < 0.5 else -1.0
+        # Random S&H
+        return float(self._sh_value)
+
+    def step_and_apply(self, slots: tuple, frames: int, sample_rate: float) -> float:
+        """Advance LFO phase by ``frames`` and modulate the linked target parameter if configured."""
+        sr = max(1.0, float(sample_rate))
+        rate = float(self.p_rate.value)
+        depth = float(self.p_depth.value) / 100.0
+        center = float(self.p_center.value) / 100.0
+        shape_idx = int(round(self.p_shape.value))
+
+        total_phase = self._phase + (frames / sr) * rate
+        cycle = int(total_phase)
+        if cycle != self._last_cycle:
+            self._last_cycle = cycle
+            # Deterministic pseudo-random S&H step per cycle
+            self._sh_value = float(math.sin(cycle * 12.9898 + 78.233) * 43758.5453 % 2.0 - 1.0)
+        self._phase = total_phase % 10000.0
+
+        bipolar = self.eval_wave(self._phase % 1.0, shape_idx)
+        raw_out = max(0.0, min(1.0, center + 0.5 * depth * bipolar))
+
+        idx = self.target_slot_index
+        key = self.target_param_key
+        if 0 <= idx < len(slots) and key:
+            target_slot = slots[idx]
+            target_inst = getattr(target_slot, "_instance", None)
+            if target_inst is not None and target_inst is not self:
+                params = getattr(target_inst, "_params_cache", None) or getattr(target_inst, "parameters", None) or {}
+                param = params.get(key)
+                if param is not None:
+                    try:
+                        param.raw_value = raw_out
+                    except Exception:
+                        pass
+        return raw_out
+
+    def process(self, input_array: np.ndarray, sample_rate: float, buffer_size: int = 512, reset: bool = False) -> np.ndarray:
+        if reset:
+            self.reset()
+        return input_array.astype(np.float32, copy=False)
+
+
 class AIVoicePlugin(BaseInternalPlugin):
-    """Real-time AI Voice Changer plugin slot with model selection, pitch/formant synthesis,
-    harmonic timbre shaping, and custom ONNX voice model support.
-    """
+    """Real-time AI Voice Changer plugin slot dedicated to genuine ``.onnx`` neural voice models."""
 
     reported_latency_samples = _FormantStage.LATENCY
     has_custom_editor = True
@@ -731,7 +897,8 @@ class AIVoicePlugin(BaseInternalPlugin):
     def __init__(self, samplerate: int = 48000):
         super().__init__(AI_VOICE_DISPLAY_NAME, AI_VOICE_PLUGIN_PATH)
         self.sr = samplerate
-        self.model_id = "xen_overmind"
+        models = list_voice_models()
+        self.model_id = models[0].id if models else ""
         self.f0_method = "hybrid"
         self._shifter = PitchFormantPlugin(samplerate=samplerate)
         self.dry_fifo = np.zeros((2, self.reported_latency_samples), dtype=np.float32)
@@ -740,17 +907,22 @@ class AIVoicePlugin(BaseInternalPlugin):
         self._hp_state = np.zeros(2, dtype=np.float32)
 
         default_model = get_voice_model(self.model_id)
+        def_pitch = default_model.default_pitch if default_model else 0.0
+        def_formant = default_model.default_formant if default_model else 0.0
+        def_index = default_model.default_index_rate if default_model else 80.0
+        def_breath = default_model.default_breathiness if default_model else 15.0
+
         self.p_pitch = InternalParameter(
-            "pitch", "Pitch Shift", -24.0, 24.0, default_model.default_pitch, unit="st", step=0.5
+            "pitch", "Pitch Shift", -24.0, 24.0, def_pitch, unit="st", step=0.5
         )
         self.p_formant = InternalParameter(
-            "formant", "Vocal Tract", -12.0, 12.0, default_model.default_formant, unit="st", step=0.5
+            "formant", "Vocal Tract", -12.0, 12.0, def_formant, unit="st", step=0.5
         )
         self.p_index = InternalParameter(
-            "index_rate", "Timbre Match", 0.0, 100.0, default_model.default_index_rate, unit="%", step=1.0
+            "index_rate", "Timbre Match", 0.0, 100.0, def_index, unit="%", step=1.0
         )
         self.p_breath = InternalParameter(
-            "breathiness", "Breath / Air", 0.0, 100.0, default_model.default_breathiness, unit="%", step=1.0
+            "breathiness", "Breath / Air", 0.0, 100.0, def_breath, unit="%", step=1.0
         )
         self.p_mix = InternalParameter(
             "mix", "Mix", 0.0, 100.0, 100.0, unit="%", step=1.0
@@ -763,8 +935,11 @@ class AIVoicePlugin(BaseInternalPlugin):
             "mix": self.p_mix,
         }
 
-    def set_model(self, model_id: str, apply_defaults: bool = False) -> None:
-        info = get_voice_model(model_id)
+    def set_model(self, model_id: str, apply_defaults: bool = False, models_dir: str | None = None) -> None:
+        info = get_voice_model(model_id, models_dir=models_dir)
+        if info is None:
+            self.model_id = model_id or ""
+            return
         self.model_id = info.id
         if apply_defaults:
             self.p_pitch.value = info.default_pitch
@@ -816,11 +991,21 @@ class AIVoicePlugin(BaseInternalPlugin):
             return in_2d
 
         info = get_voice_model(self.model_id)
+        self.dry_fifo = np.concatenate((self.dry_fifo, in_2d.astype(np.float32, copy=False)), axis=1)
+        dry = self.dry_fifo[:, :frames]
+        self.dry_fifo = self.dry_fifo[:, frames:]
+
+        # If no .onnx model is installed/selected yet, pass latency-aligned dry audio cleanly
+        # unless the user is explicitly shifting pitch/formant on the module.
+        if info is None and abs(self.p_pitch.value) < 0.01 and abs(self.p_formant.value) < 0.01:
+            return dry
+
         timbre = self.p_index.value / 100.0
         breath = self.p_breath.value / 100.0
         mix = self.p_mix.value / 100.0
+        sub_h = info.sub_harmonic if info is not None else 0.0
+        shim = info.shimmer if info is not None else 0.0
 
-        # Sync pitch and formant into the streaming formant-warped pitch shifter
         self._shifter.p_pitch.value = self.p_pitch.value
         self._shifter.p_formant.value = self.p_formant.value * (0.4 + 0.6 * timbre)
         self._shifter.p_preserve.value = 1.0
@@ -828,30 +1013,23 @@ class AIVoicePlugin(BaseInternalPlugin):
 
         shifted = self._shifter.process(in_2d, sample_rate, buffer_size=frames, reset=False)
 
-        # Harmonic timbre & vocal tract character synthesis
         drive = 1.0 + 0.8 * timbre
         shaped = np.tanh(shifted * drive).astype(np.float32) / float(np.tanh(drive))
 
-        # Optional sub-harmonic chest weight (for deep archetypes like Xen Overmind / Titan)
-        if info.sub_harmonic > 0.01 and timbre > 0.01:
-            sub_gain = float(info.sub_harmonic * timbre * 0.35)
-            # Soft octave-divided envelope follower modulation
+        if sub_h > 0.01 and timbre > 0.01:
+            sub_gain = float(sub_h * timbre * 0.35)
             t = (self._sub_phase + np.arange(frames, dtype=np.float32)) / max(1.0, float(sample_rate))
             self._sub_phase = float((self._sub_phase + frames) % max(1.0, float(sample_rate)))
             sub_osc = np.sin(2.0 * np.pi * 85.0 * t).astype(np.float32)
             env = np.abs(shaped)
             shaped = shaped + sub_gain * env * sub_osc
 
-        # Breath / high-frequency air exciter
-        if breath > 0.01 or info.shimmer > 0.01:
-            air_gain = float((breath * 0.25) + (info.shimmer * timbre * 0.20))
+        if breath > 0.01 or shim > 0.01:
+            air_gain = float((breath * 0.25) + (shim * timbre * 0.20))
             diff = np.diff(shaped, axis=1, prepend=shaped[:, :1])
             shaped = shaped + air_gain * diff
 
         wet = np.clip(shaped, -1.0, 1.0).astype(np.float32)
-        self.dry_fifo = np.concatenate((self.dry_fifo, in_2d.astype(np.float32, copy=False)), axis=1)
-        dry = self.dry_fifo[:, :frames]
-        self.dry_fifo = self.dry_fifo[:, frames:]
         if mix >= 0.999:
             return wet
         return ((1.0 - mix) * dry + mix * wet).astype(np.float32, copy=False)
@@ -859,6 +1037,8 @@ class AIVoicePlugin(BaseInternalPlugin):
 
 INTERNAL_FACTORIES: dict[str, Callable[[], BaseInternalPlugin]] = {
     "internal:ai_voice": lambda: AIVoicePlugin(),
+    "internal:lfo": lambda: LFOModulatorPlugin(),
+    "internal:sub_exciter": lambda: SubHarmonicSynthPlugin(),
     "internal:pitch_formant": lambda: PitchFormantPlugin(),
     "internal:eq": lambda: ParametricEQPlugin(),
     "internal:compressor": create_studio_compressor,
@@ -876,6 +1056,8 @@ INTERNAL_FACTORIES: dict[str, Callable[[], BaseInternalPlugin]] = {
 
 INTERNAL_DESCRIPTIONS = [
     {"name": AI_VOICE_DISPLAY_NAME, "path": AI_VOICE_PLUGIN_PATH, "vendor": "Mandible AI", "favorite": True},
+    {"name": "LFO Modulator", "path": "internal:lfo", "vendor": "Mandible DSP", "favorite": True},
+    {"name": "Sub-Harmonic & Exciter", "path": "internal:sub_exciter", "vendor": "Mandible DSP", "favorite": False},
     {"name": "Pitch & Formant", "path": "internal:pitch_formant", "vendor": "Mandible DSP", "favorite": True},
     {"name": "Parametric EQ", "path": "internal:eq", "vendor": "Mandible DSP", "favorite": True},
     {"name": "Studio Compressor", "path": "internal:compressor", "vendor": "Mandible DSP", "favorite": True},

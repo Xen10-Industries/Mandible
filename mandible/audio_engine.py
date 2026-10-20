@@ -428,6 +428,9 @@ class AudioEngine:
                                 s._pre_peak = pre_pk
                             p_inst = getattr(s, "_instance", None)
                             if s.enabled and p_inst is not None:
+                                step_lfo = getattr(p_inst, "step_and_apply", None)
+                                if step_lfo is not None:
+                                    step_lfo(rt.slots, frames, sr)
                                 y_s = p_inst.process(cur, sr, buffer_size=frames, reset=False)
                                 if y_s.ndim == 1 or y_s.shape[0] == 1:
                                     y_1d = y_s.reshape(-1)[:frames]
