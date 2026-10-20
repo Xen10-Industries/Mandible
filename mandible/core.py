@@ -264,6 +264,9 @@ class Core(QObject):
 
     # =========================================================== plugins
     def add_plugin(self, chain: Chain, path: str, plugin_name: str = "") -> PluginSlot:
+        from .ai_voice import chain_has_ai_voice, is_ai_voice_plugin
+        if is_ai_voice_plugin(path) and chain_has_ai_voice(chain):
+            raise ValueError("Each voice preset chain can only contain one AI Voice Changer.")
         slot = PluginSlot(path=path, plugin_name=plugin_name, display_name=plugin_name)
         ok = self._load(slot)
         chain.plugins.append(slot)

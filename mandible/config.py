@@ -262,7 +262,15 @@ def _from_dict(cls, data):
         elif f.name == "chains":
             v = [_from_dict(Chain, c) for c in (v or [])]
         elif f.name == "plugins":
-            v = [_from_dict(PluginSlot, p) for p in (v or [])]
+            raw_slots = [_from_dict(PluginSlot, p) for p in (v or [])]
+            seen_ai = False
+            v = []
+            for s in raw_slots:
+                if str(s.path or "").strip().lower() == "internal:ai_voice":
+                    if seen_ai:
+                        continue
+                    seen_ai = True
+                v.append(s)
         elif f.name == "soundboard":
             v = [_from_dict(SoundboardClipConfig, s) for s in (v or [])]
         elif f.name == "midi_bindings":

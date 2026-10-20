@@ -189,8 +189,11 @@ class PluginRackCard(QFrame):
         policy = self.ui_btn.sizePolicy()
         policy.setRetainSizeWhenHidden(True)
         self.ui_btn.setSizePolicy(policy)
-        if self.is_builtin:
+        has_custom_ui = bool(getattr(inst(slot), "has_custom_editor", False))
+        if self.is_builtin and not has_custom_ui:
             self.ui_btn.setVisible(False)
+        elif self.is_builtin and has_custom_ui:
+            self.ui_btn.setToolTip("Open AI voice model settings")
         elif inst(slot) is None:
             self.ui_btn.setEnabled(False)
             self.ui_btn.setToolTip("The plugin is not loaded, so it has no window to open")

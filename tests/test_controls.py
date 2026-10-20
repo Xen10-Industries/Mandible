@@ -15,7 +15,7 @@ TYPED_ICON = re.compile(r"^[<>▲▼xX✕+]$|[←-⇿☀-➿\U0001F300-\U0001FAF
 # Words that are written in capitals anyway (sentence case allows them).
 ACRONYMS = {"MIDI", "ASIO", "WASAPI", "HTTP", "REST", "VST3", "CABLE"}
 DIALOGS = ("settings", "prefx", "soundboard", "hotkey", "add_plugin", "param_map",
-           "setup_assistant", "about", "updater")
+           "setup_assistant", "about", "updater", "ai_voice")
 
 
 @pytest.fixture
@@ -218,7 +218,10 @@ def _views(sample_core):
     from pathlib import Path
 
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+    from mandible.config import PluginSlot
+    from mandible.internal_dsp import load_internal_plugin
     from mandible.ui.dialogs.about import AboutDialog
+    from mandible.ui.dialogs.ai_voice import AIVoiceDialog
     from mandible.ui.dialogs.updater import UpdateDialog
     from mandible.ui.dialogs.add_plugin import AddPluginDialog
     from mandible.ui.dialogs.hotkey import HotkeyDialog
@@ -233,6 +236,8 @@ def _views(sample_core):
     sample_core.cfg.midi_bindings.append(MidiBinding(event_type="note_on", note_or_cc=60,
                                                      channel=0, action="mute"))
     slot = sample_core.cfg.chains[0].plugins[0]
+    ai_slot = PluginSlot(path="internal:ai_voice", display_name="AI Voice Changer")
+    ai_slot._instance = load_internal_plugin("internal:ai_voice")
     builders = {
         "main": lambda: MainWindow(sample_core, show_tray=False),
         "settings": lambda: SettingsDialog(sample_core, False, None),
@@ -244,6 +249,7 @@ def _views(sample_core):
         "setup_assistant": lambda: SetupAssistantDialog(sample_core, None),
         "about": lambda: AboutDialog(None),
         "updater": lambda: UpdateDialog(sample_core, None, auto_check=False),
+        "ai_voice": lambda: AIVoiceDialog(ai_slot, sample_core, None),
     }
     return builders
 
