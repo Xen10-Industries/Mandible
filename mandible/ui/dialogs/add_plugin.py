@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFileDialog
                                QVBoxLayout)
 
 from ... import plugins as P
+from ...ai_voice import chain_has_ai_voice, is_ai_voice_plugin
 from ...internal_dsp import is_internal_plugin
 from ..icons import icon
 from ..look import look_bus
@@ -22,9 +23,10 @@ _FAVORITE_ROLE = Qt.UserRole + 2
 
 
 class AddPluginDialog(QDialog):
-    def __init__(self, extra_dirs, parent=None):
+    def __init__(self, extra_dirs, parent=None, *, chain=None):
         super().__init__(parent)
         self.extra_dirs = extra_dirs
+        self.chain = chain
         self.setWindowTitle("Insert plugin")
         self.resize(520, 560)
         self.path = ""
@@ -79,12 +81,19 @@ class AddPluginDialog(QDialog):
         plugins = P.get_cached_plugins(self.extra_dirs, force_rescan=force_rescan)
         # Sort favorites first, then alphabetically
         plugins.sort(key=lambda x: (not x.get("favorite", False), x["name"].lower()))
+        has_ai = chain_has_ai_voice(self.chain)
         for item in plugins:
             vendor = f"  [{item['vendor']}]" if item.get("vendor") else ""
-            it = QListWidgetItem(f"{item['name']}{vendor}")
+            already_in_chain = has_ai and is_ai_voice_plugin(item["path"])
+            suffix = "  (already in this chain)" if already_in_chain else ""
+            it = QListWidgetItem(f"{item['name']}{vendor}{suffix}")
             it.setData(Qt.UserRole, item["path"])
             it.setData(_BUILTIN_ROLE, is_internal_plugin(item["path"]))
-            it.setToolTip(f"{item['path']}\nClick the star or right-click to add to or remove from favorites")
+            if already_in_chain:
+                it.setFlags(it.flags() & ~Qt.ItemIsEnabled & ~Qt.ItemIsSelectable)
+                it.setToolTip("Only one AI Voice Changer can be added per voice preset chain.")
+            else:
+                it.setToolTip(f"{item['path']}\nClick the star or right-click to add to or remove from favorites")
             self._set_favorite_display(it, bool(item.get("favorite")))
             self.list.addItem(it)
         self._filter()
@@ -160,7 +169,7 @@ class AddPluginDialog(QDialog):
 
     def _ok(self):
         it = self.list.currentItem()
-        if it is None or it.isHidden():
+        if it is None or it.isHidden() or not (it.flags() & Qt.ItemIsEnabled):
             return
         self.path = it.data(Qt.UserRole)
         self.accept()

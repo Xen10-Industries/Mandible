@@ -22,6 +22,7 @@ from ..config import Chain, PluginSlot
 from ..core import Core, inst, slot_error
 from ..factory_presets import get_factory_presets, instantiate_factory_preset
 from .dialogs.add_plugin import AddPluginDialog
+from .dialogs.ai_voice import AIVoiceDialog
 from .dialogs.customize import DEFAULT_WIDTH as CUSTOMIZE_WIDTH
 from .dialogs.customize import CustomizePanel
 from .dialogs.hotkey import HotkeyDialog
@@ -376,7 +377,7 @@ class ChainEditor(QWidget):
     def _add(self):
         if not self.chain:
             return
-        dlg = AddPluginDialog(self.core.cfg.extra_plugin_dirs, self)
+        dlg = AddPluginDialog(self.core.cfg.extra_plugin_dirs, self, chain=self.chain)
         if not dlg.exec() or not dlg.path:
             return
         QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -393,6 +394,10 @@ class ChainEditor(QWidget):
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             slot = self.core.add_plugin(self.chain, dlg.path, plugin_name)
+        except ValueError as exc:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.information(self, "AI Voice Changer", str(exc))
+            return
         finally:
             QApplication.restoreOverrideCursor()
         self.refresh_plugins(select_row=len(self.chain.plugins) - 1)
@@ -1186,6 +1191,12 @@ class MainWindow(QMainWindow):
         p = inst(slot)
         if p is None:
             QMessageBox.warning(self, "Plugin not loaded", slot_error(slot) or "This plugin is not loaded.")
+            return
+        if getattr(p, "has_custom_editor", False):
+            dlg = AIVoiceDialog(slot, self.core, self)
+            dlg.exec()
+            if hasattr(self, "editor"):
+                self.editor.tick_plugin_meters(self.core.engine.running, sync_knobs=True)
             return
         if self._editor_event is not None:
             QMessageBox.information(self, "Mandible", "Close the plugin window that is already open first.")

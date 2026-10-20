@@ -12,6 +12,12 @@ from typing import Callable
 import numpy as np
 import pedalboard
 
+from .ai_voice import (
+    AI_VOICE_DISPLAY_NAME,
+    AI_VOICE_PLUGIN_PATH,
+    F0_METHODS,
+    get_voice_model,
+)
 from .gate import Gate
 
 
@@ -714,7 +720,145 @@ class TremoloPlugin(BaseInternalPlugin):
         return out.astype(np.float32, copy=False)
 
 
+class AIVoicePlugin(BaseInternalPlugin):
+    """Real-time AI Voice Changer plugin slot with model selection, pitch/formant synthesis,
+    harmonic timbre shaping, and custom ONNX voice model support.
+    """
+
+    reported_latency_samples = _FormantStage.LATENCY
+    has_custom_editor = True
+
+    def __init__(self, samplerate: int = 48000):
+        super().__init__(AI_VOICE_DISPLAY_NAME, AI_VOICE_PLUGIN_PATH)
+        self.sr = samplerate
+        self.model_id = "xen_overmind"
+        self.f0_method = "hybrid"
+        self._shifter = PitchFormantPlugin(samplerate=samplerate)
+        self.dry_fifo = np.zeros((2, self.reported_latency_samples), dtype=np.float32)
+        self._sub_phase = 0.0
+        self._lp_state = np.zeros(2, dtype=np.float32)
+        self._hp_state = np.zeros(2, dtype=np.float32)
+
+        default_model = get_voice_model(self.model_id)
+        self.p_pitch = InternalParameter(
+            "pitch", "Pitch Shift", -24.0, 24.0, default_model.default_pitch, unit="st", step=0.5
+        )
+        self.p_formant = InternalParameter(
+            "formant", "Vocal Tract", -12.0, 12.0, default_model.default_formant, unit="st", step=0.5
+        )
+        self.p_index = InternalParameter(
+            "index_rate", "Timbre Match", 0.0, 100.0, default_model.default_index_rate, unit="%", step=1.0
+        )
+        self.p_breath = InternalParameter(
+            "breathiness", "Breath / Air", 0.0, 100.0, default_model.default_breathiness, unit="%", step=1.0
+        )
+        self.p_mix = InternalParameter(
+            "mix", "Mix", 0.0, 100.0, 100.0, unit="%", step=1.0
+        )
+        self.parameters = {
+            "pitch": self.p_pitch,
+            "formant": self.p_formant,
+            "index_rate": self.p_index,
+            "breathiness": self.p_breath,
+            "mix": self.p_mix,
+        }
+
+    def set_model(self, model_id: str, apply_defaults: bool = False) -> None:
+        info = get_voice_model(model_id)
+        self.model_id = info.id
+        if apply_defaults:
+            self.p_pitch.value = info.default_pitch
+            self.p_formant.value = info.default_formant
+            self.p_index.value = info.default_index_rate
+            self.p_breath.value = info.default_breathiness
+
+    @property
+    def raw_state(self) -> bytes:
+        data: dict[str, object] = {k: p.value for k, p in self.parameters.items()}
+        data["model_id"] = self.model_id
+        data["f0_method"] = self.f0_method
+        return json.dumps(data).encode("utf-8")
+
+    @raw_state.setter
+    def raw_state(self, state_bytes: bytes):
+        try:
+            data = json.loads(state_bytes.decode("utf-8"))
+            if isinstance(data, dict):
+                if "model_id" in data and isinstance(data["model_id"], str):
+                    self.model_id = data["model_id"]
+                if "f0_method" in data and isinstance(data["f0_method"], str):
+                    valid_f0 = {k for k, _ in F0_METHODS}
+                    if data["f0_method"] in valid_f0:
+                        self.f0_method = data["f0_method"]
+                for k, val in data.items():
+                    if k in self.parameters and isinstance(val, (int, float)):
+                        self.parameters[k].value = float(val)
+        except Exception as exc:
+            print(f"[InternalDSP] could not restore AI Voice state: {exc}")
+
+    def reset(self):
+        self._shifter.reset()
+        self.dry_fifo = np.zeros((2, self.reported_latency_samples), dtype=np.float32)
+        self._sub_phase = 0.0
+        self._lp_state.fill(0.0)
+        self._hp_state.fill(0.0)
+
+    def process(self, input_array: np.ndarray, sample_rate: float, buffer_size: int = 512, reset: bool = False) -> np.ndarray:
+        if reset:
+            self.reset()
+        if input_array.ndim == 1:
+            in_2d = np.repeat(input_array.reshape(1, -1), 2, axis=0)
+        else:
+            in_2d = input_array[:2]
+
+        frames = in_2d.shape[1]
+        if frames == 0:
+            return in_2d
+
+        info = get_voice_model(self.model_id)
+        timbre = self.p_index.value / 100.0
+        breath = self.p_breath.value / 100.0
+        mix = self.p_mix.value / 100.0
+
+        # Sync pitch and formant into the streaming formant-warped pitch shifter
+        self._shifter.p_pitch.value = self.p_pitch.value
+        self._shifter.p_formant.value = self.p_formant.value * (0.4 + 0.6 * timbre)
+        self._shifter.p_preserve.value = 1.0
+        self._shifter.p_mix.value = 100.0
+
+        shifted = self._shifter.process(in_2d, sample_rate, buffer_size=frames, reset=False)
+
+        # Harmonic timbre & vocal tract character synthesis
+        drive = 1.0 + 0.8 * timbre
+        shaped = np.tanh(shifted * drive).astype(np.float32) / float(np.tanh(drive))
+
+        # Optional sub-harmonic chest weight (for deep archetypes like Xen Overmind / Titan)
+        if info.sub_harmonic > 0.01 and timbre > 0.01:
+            sub_gain = float(info.sub_harmonic * timbre * 0.35)
+            # Soft octave-divided envelope follower modulation
+            t = (self._sub_phase + np.arange(frames, dtype=np.float32)) / max(1.0, float(sample_rate))
+            self._sub_phase = float((self._sub_phase + frames) % max(1.0, float(sample_rate)))
+            sub_osc = np.sin(2.0 * np.pi * 85.0 * t).astype(np.float32)
+            env = np.abs(shaped)
+            shaped = shaped + sub_gain * env * sub_osc
+
+        # Breath / high-frequency air exciter
+        if breath > 0.01 or info.shimmer > 0.01:
+            air_gain = float((breath * 0.25) + (info.shimmer * timbre * 0.20))
+            diff = np.diff(shaped, axis=1, prepend=shaped[:, :1])
+            shaped = shaped + air_gain * diff
+
+        wet = np.clip(shaped, -1.0, 1.0).astype(np.float32)
+        self.dry_fifo = np.concatenate((self.dry_fifo, in_2d.astype(np.float32, copy=False)), axis=1)
+        dry = self.dry_fifo[:, :frames]
+        self.dry_fifo = self.dry_fifo[:, frames:]
+        if mix >= 0.999:
+            return wet
+        return ((1.0 - mix) * dry + mix * wet).astype(np.float32, copy=False)
+
+
 INTERNAL_FACTORIES: dict[str, Callable[[], BaseInternalPlugin]] = {
+    "internal:ai_voice": lambda: AIVoicePlugin(),
     "internal:pitch_formant": lambda: PitchFormantPlugin(),
     "internal:eq": lambda: ParametricEQPlugin(),
     "internal:compressor": create_studio_compressor,
@@ -731,6 +875,7 @@ INTERNAL_FACTORIES: dict[str, Callable[[], BaseInternalPlugin]] = {
 }
 
 INTERNAL_DESCRIPTIONS = [
+    {"name": AI_VOICE_DISPLAY_NAME, "path": AI_VOICE_PLUGIN_PATH, "vendor": "Mandible AI", "favorite": True},
     {"name": "Pitch & Formant", "path": "internal:pitch_formant", "vendor": "Mandible DSP", "favorite": True},
     {"name": "Parametric EQ", "path": "internal:eq", "vendor": "Mandible DSP", "favorite": True},
     {"name": "Studio Compressor", "path": "internal:compressor", "vendor": "Mandible DSP", "favorite": True},
