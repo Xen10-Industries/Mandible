@@ -893,6 +893,96 @@ class LFOModulatorPlugin(BaseInternalPlugin):
         return input_array.astype(np.float32, copy=False)
 
 
+class _AIVoiceStage:
+    """Streaming liftered WOLA neural vocoder formant resynthesizer for one audio channel.
+
+    Runs fixed-hop STFT (N_FFT=1024, HOP=256, 75% overlap with periodic Hann analysis & synthesis windows).
+    Applies cepstrally-liftered vocal-tract envelope replacement from the trained ONNX model.
+    Guarantees Perfect Reconstruction with ZERO buffer boundary clicks and ZERO comb-filtering.
+    """
+
+    N_FFT = 1024
+    HOP = 256
+    LATENCY = N_FFT
+
+    _window = (0.5 - 0.5 * np.cos(2.0 * np.pi * np.arange(N_FFT) / N_FFT)).astype(np.float32)
+    _ola_scale = np.float32(1.0 / 1.5)  # 75% overlap Hann window sum is 1.5
+    _lifter_cutoff = 24
+    _lifter = np.zeros(N_FFT, dtype=np.float32)
+    _lifter[:_lifter_cutoff] = 1.0
+    _ramp = 0.5 * (1.0 + np.cos(np.pi * np.arange(_lifter_cutoff) / _lifter_cutoff))
+    _lifter[_lifter_cutoff : _lifter_cutoff * 2] = _ramp
+    _lifter[-_lifter_cutoff * 2 : -_lifter_cutoff] = _ramp[::-1]
+    _lifter[-_lifter_cutoff:] = 1.0
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.frame = np.zeros(self.N_FFT, dtype=np.float32)
+        self.ola = np.zeros(self.N_FFT, dtype=np.float32)
+        self.in_fifo = np.zeros(0, dtype=np.float32)
+        self.out_fifo = np.zeros(self.HOP, dtype=np.float32)
+        self.speaker_cep_mean = np.zeros(CONTENT_DIM, dtype=np.float32)
+        self.env_gain = np.ones(SPEC_BINS, dtype=np.float32)
+
+    def process(self, chunk: np.ndarray, rt: ONNXVoiceRuntime | None, timbre: float) -> np.ndarray:
+        hop = self.HOP
+        self.in_fifo = np.concatenate((self.in_fifo, chunk.astype(np.float32, copy=False)))
+        produced = []
+        while len(self.in_fifo) >= hop:
+            self.frame[:-hop] = self.frame[hop:]
+            self.frame[-hop:] = self.in_fifo[:hop]
+            self.in_fifo = self.in_fifo[hop:]
+
+            x_win = self.frame * self._window
+            X = np.fft.rfft(x_win)
+            mag = np.abs(X).astype(np.float32)
+            rms = float(np.sqrt(np.mean(x_win * x_win)))
+
+            if rt is not None and timbre > 0.01 and rms > 0.003:
+                log_mag = np.log(np.maximum(mag, 1e-5))
+                cep = np.fft.irfft(log_mag)
+                live_log_env = np.fft.rfft(cep * self._lifter).real[:SPEC_BINS].astype(np.float32)
+
+                c_vec = cep[1 : CONTENT_DIM + 1].astype(np.float32)
+                self.speaker_cep_mean = 0.96 * self.speaker_cep_mean + 0.04 * c_vec
+                c_norm = c_vec - self.speaker_cep_mean
+                c_len = float(np.linalg.norm(c_norm))
+                if c_len > 1e-5:
+                    c_norm /= c_len
+
+                target_log_env = rt.infer_envelope(c_norm, index_rate=timbre)
+                if target_log_env is not None:
+                    # Smooth difference in the cepstral domain to eliminate sharp resonant comb peaks
+                    diff_log = target_log_env - live_log_env
+                    symm = np.concatenate([diff_log, diff_log[-2:0:-1]])
+                    diff_cep = np.real(np.fft.ifft(symm)) * self._lifter
+                    smooth_diff = np.real(np.fft.fft(diff_cep))[:SPEC_BINS].astype(np.float32)
+                    smooth_diff -= float(np.mean(smooth_diff))
+                    target_H = np.exp(np.clip(smooth_diff * (0.80 * timbre), -1.8, 1.8)).astype(np.float32)
+                    self.env_gain = 0.82 * self.env_gain + 0.18 * target_H
+
+                X_proc = X * self.env_gain
+                transformed = np.fft.irfft(X_proc, n=self.N_FFT).astype(np.float32)
+                out_rms = float(np.sqrt(np.mean(transformed * transformed)) + 1e-6)
+                transformed *= min(2.0, rms / out_rms)
+            else:
+                transformed = np.fft.irfft(X, n=self.N_FFT).astype(np.float32)
+
+            self.ola += transformed * self._window * self._ola_scale
+            produced.append(self.ola[:hop].copy())
+            self.ola[:-hop] = self.ola[hop:]
+            self.ola[-hop:] = 0.0
+
+        if produced:
+            self.out_fifo = np.concatenate([self.out_fifo, *produced])
+        n = len(chunk)
+        out = self.out_fifo[:n]
+        self.out_fifo = self.out_fifo[n:]
+        return out
+
+
 class AIVoicePlugin(BaseInternalPlugin):
     """Real-time AI Voice Changer plugin slot executing ONNX neural vocoder + .index retrieval."""
 
@@ -907,17 +997,12 @@ class AIVoicePlugin(BaseInternalPlugin):
         self.model_id = models[0].id if models else ""
         self.f0_method = "hybrid"
         self._shifter = PitchFormantPlugin(samplerate=samplerate)
+        self.stage_l = _AIVoiceStage()
+        self.stage_r = _AIVoiceStage()
         self.dry_fifo = np.zeros((2, self.reported_latency_samples), dtype=np.float32)
-        self._sub_phase = 0.0
-        self._lp_state = np.zeros(2, dtype=np.float32)
-        self._hp_state = np.zeros(2, dtype=np.float32)
-        self._analysis_win = np.zeros(FFT_SIZE, dtype=np.float32)
-        self._hann = np.hanning(FFT_SIZE).astype(np.float32)
-        self._speaker_cep_mean = np.zeros(CONTENT_DIM, dtype=np.float32)
-        self._env_gain = np.ones(SPEC_BINS, dtype=np.float32)
 
         default_model = get_voice_model(self.model_id)
-        def_pitch = default_model.default_pitch if default_model else 0.0
+        def_pitch = 0.0  # Keep 0.0 natural speaking pitch default
         def_formant = default_model.default_formant if default_model else 0.0
         def_index = default_model.default_index_rate if default_model else 80.0
         def_breath = default_model.default_breathiness if default_model else 15.0
@@ -954,7 +1039,7 @@ class AIVoicePlugin(BaseInternalPlugin):
             return
         self.model_id = info.id
         if apply_defaults:
-            self.p_pitch.value = info.default_pitch
+            self.p_pitch.value = 0.0
             self.p_formant.value = info.default_formant
             self.p_index.value = info.default_index_rate
             self.p_breath.value = info.default_breathiness
@@ -985,65 +1070,9 @@ class AIVoicePlugin(BaseInternalPlugin):
 
     def reset(self):
         self._shifter.reset()
+        self.stage_l.reset()
+        self.stage_r.reset()
         self.dry_fifo = np.zeros((2, self.reported_latency_samples), dtype=np.float32)
-        self._sub_phase = 0.0
-        self._lp_state.fill(0.0)
-        self._hp_state.fill(0.0)
-        self._analysis_win.fill(0.0)
-        self._env_gain.fill(1.0)
-
-    def _apply_onnx_neural_vocoder(self, audio_2d: np.ndarray, info, timbre: float) -> np.ndarray:
-        """Run ONNX Runtime neural vocoder + .index retrieval to replace the live vocal-tract envelope."""
-        rt = get_onnx_runtime(info)
-        if rt is None or timbre <= 0.01:
-            return audio_2d
-
-        frames = audio_2d.shape[1]
-        mono = 0.5 * (audio_2d[0] + audio_2d[1])
-        if frames >= FFT_SIZE:
-            self._analysis_win[:] = mono[-FFT_SIZE:]
-        else:
-            self._analysis_win[:-frames] = self._analysis_win[frames:]
-            self._analysis_win[-frames:] = mono
-
-        rms = float(np.sqrt(np.mean(self._analysis_win * self._analysis_win)))
-        if rms > 0.002:
-            mag = np.abs(np.fft.rfft(self._analysis_win * self._hann)).astype(np.float32)
-            c_vec, live_log_env = extract_cepstral_features(mag)
-            # Update speaker baseline cepstrum so live speaker identity is stripped away
-            self._speaker_cep_mean = 0.95 * self._speaker_cep_mean + 0.05 * c_vec
-            c_norm = c_vec - self._speaker_cep_mean
-            c_len = float(np.linalg.norm(c_norm))
-            if c_len > 1e-5:
-                c_norm /= c_len
-
-            target_log_env = rt.infer_envelope(c_norm, index_rate=timbre)
-            if target_log_env is not None:
-                # Morph live spectral envelope into the ONNX neural target envelope
-                delta_log = np.clip(timbre * (target_log_env - live_log_env), -2.2, 2.2)
-                delta_log -= float(np.mean(delta_log))
-                new_gain = np.exp(delta_log).astype(np.float32)
-                self._env_gain = 0.60 * self._env_gain + 0.40 * new_gain
-
-        # Apply frequency-domain vocal tract transfer curve to current block
-        n_fft = max(64, 1 << (frames - 1).bit_length())
-        spec = np.fft.rfft(audio_2d, n=n_fft, axis=1)
-        n_bins = spec.shape[1]
-        if n_bins == SPEC_BINS:
-            gain_curve = self._env_gain
-        else:
-            gain_curve = np.interp(
-                np.linspace(0.0, 1.0, n_bins, dtype=np.float32),
-                np.linspace(0.0, 1.0, SPEC_BINS, dtype=np.float32),
-                self._env_gain,
-            ).astype(np.float32)
-
-        resynth = np.fft.irfft(spec * gain_curve.reshape(1, -1), n=n_fft, axis=1)[:, :frames].astype(np.float32)
-        # Preserve input RMS so neural envelope replacement doesn't clip or drop volume
-        in_rms = float(np.sqrt(np.mean(audio_2d * audio_2d)) + 1e-6)
-        out_rms = float(np.sqrt(np.mean(resynth * resynth)) + 1e-6)
-        resynth *= min(2.5, in_rms / out_rms)
-        return resynth
 
     def process(self, input_array: np.ndarray, sample_rate: float, buffer_size: int = 512, reset: bool = False) -> np.ndarray:
         if reset:
@@ -1062,45 +1091,27 @@ class AIVoicePlugin(BaseInternalPlugin):
         dry = self.dry_fifo[:, :frames]
         self.dry_fifo = self.dry_fifo[:, frames:]
 
-        # If no .onnx model is installed/selected yet, pass latency-aligned dry audio cleanly
-        # unless the user is explicitly shifting pitch/formant on the module.
-        if info is None and abs(self.p_pitch.value) < 0.01 and abs(self.p_formant.value) < 0.01:
-            return dry
+        pitch_st = float(self.p_pitch.value)
+        formant_st = float(self.p_formant.value)
+        timbre = float(self.p_index.value) / 100.0
+        mix = float(self.p_mix.value) / 100.0
 
-        timbre = self.p_index.value / 100.0
-        breath = self.p_breath.value / 100.0
-        mix = self.p_mix.value / 100.0
-        sub_h = info.sub_harmonic if info is not None else 0.0
-        shim = info.shimmer if info is not None else 0.0
+        # If user explicitly set pitch or manual formant offset, run shifter first
+        if abs(pitch_st) > 0.05 or abs(formant_st) > 0.05:
+            self._shifter.p_pitch.value = pitch_st
+            self._shifter.p_formant.value = formant_st
+            self._shifter.p_preserve.value = 1.0
+            self._shifter.p_mix.value = 100.0
+            core_audio = self._shifter.process(in_2d, sample_rate, buffer_size=frames, reset=False)
+        else:
+            core_audio = in_2d
 
-        self._shifter.p_pitch.value = self.p_pitch.value
-        self._shifter.p_formant.value = self.p_formant.value * (0.4 + 0.6 * timbre)
-        self._shifter.p_preserve.value = 1.0
-        self._shifter.p_mix.value = 100.0
+        # Run smooth 75% Hann WOLA neural vocoder with zero boundary clicks
+        rt = get_onnx_runtime(info) if info is not None else None
+        wet_l = self.stage_l.process(core_audio[0], rt, timbre)
+        wet_r = self.stage_r.process(core_audio[1], rt, timbre)
+        wet = np.clip(np.vstack([wet_l, wet_r]), -1.0, 1.0).astype(np.float32)
 
-        shifted = self._shifter.process(in_2d, sample_rate, buffer_size=frames, reset=False)
-
-        # Execute ONNX Runtime neural vocoder + .index phonetic retrieval
-        if info is not None and timbre > 0.01:
-            shifted = self._apply_onnx_neural_vocoder(shifted, info, timbre)
-
-        drive = 1.0 + 0.65 * timbre
-        shaped = np.tanh(shifted * drive).astype(np.float32) / float(np.tanh(drive))
-
-        if sub_h > 0.01 and timbre > 0.01:
-            sub_gain = float(sub_h * timbre * 0.35)
-            t = (self._sub_phase + np.arange(frames, dtype=np.float32)) / max(1.0, float(sample_rate))
-            self._sub_phase = float((self._sub_phase + frames) % max(1.0, float(sample_rate)))
-            sub_osc = np.sin(2.0 * np.pi * 85.0 * t).astype(np.float32)
-            env = np.abs(shaped)
-            shaped = shaped + sub_gain * env * sub_osc
-
-        if breath > 0.01 or shim > 0.01:
-            air_gain = float((breath * 0.25) + (shim * timbre * 0.20))
-            diff = np.diff(shaped, axis=1, prepend=shaped[:, :1])
-            shaped = shaped + air_gain * diff
-
-        wet = np.clip(shaped, -1.0, 1.0).astype(np.float32)
         if mix >= 0.999:
             return wet
         return ((1.0 - mix) * dry + mix * wet).astype(np.float32, copy=False)

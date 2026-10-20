@@ -728,7 +728,7 @@ class VoiceModelTrainer:
                     f"Trained ONNX neural voice model ({clean_name}) · "
                     f"{n_frames} STFT frames, F0 {avg_f0:.0f} Hz, loss {best_loss:.4f}"
                 ),
-                "default_pitch": pitch_shift_st,
+                "default_pitch": 0.0,
                 "default_formant": round(float(cfg.vocal_tract_bias), 1),
                 "default_index_rate": 85.0,
                 "default_breathiness": round(final_air * 100.0, 1),
