@@ -15,7 +15,12 @@ import pedalboard
 from .ai_voice import (
     AI_VOICE_DISPLAY_NAME,
     AI_VOICE_PLUGIN_PATH,
+    CONTENT_DIM,
     F0_METHODS,
+    FFT_SIZE,
+    SPEC_BINS,
+    extract_cepstral_features,
+    get_onnx_runtime,
     get_voice_model,
     list_voice_models,
 )
@@ -889,7 +894,7 @@ class LFOModulatorPlugin(BaseInternalPlugin):
 
 
 class AIVoicePlugin(BaseInternalPlugin):
-    """Real-time AI Voice Changer plugin slot dedicated to genuine ``.onnx`` neural voice models."""
+    """Real-time AI Voice Changer plugin slot executing ONNX neural vocoder + .index retrieval."""
 
     reported_latency_samples = _FormantStage.LATENCY
     has_custom_editor = True
@@ -897,6 +902,7 @@ class AIVoicePlugin(BaseInternalPlugin):
     def __init__(self, samplerate: int = 48000):
         super().__init__(AI_VOICE_DISPLAY_NAME, AI_VOICE_PLUGIN_PATH)
         self.sr = samplerate
+        self.models_dir: str | None = None
         models = list_voice_models()
         self.model_id = models[0].id if models else ""
         self.f0_method = "hybrid"
@@ -905,6 +911,10 @@ class AIVoicePlugin(BaseInternalPlugin):
         self._sub_phase = 0.0
         self._lp_state = np.zeros(2, dtype=np.float32)
         self._hp_state = np.zeros(2, dtype=np.float32)
+        self._analysis_win = np.zeros(FFT_SIZE, dtype=np.float32)
+        self._hann = np.hanning(FFT_SIZE).astype(np.float32)
+        self._speaker_cep_mean = np.zeros(CONTENT_DIM, dtype=np.float32)
+        self._env_gain = np.ones(SPEC_BINS, dtype=np.float32)
 
         default_model = get_voice_model(self.model_id)
         def_pitch = default_model.default_pitch if default_model else 0.0
@@ -936,7 +946,9 @@ class AIVoicePlugin(BaseInternalPlugin):
         }
 
     def set_model(self, model_id: str, apply_defaults: bool = False, models_dir: str | None = None) -> None:
-        info = get_voice_model(model_id, models_dir=models_dir)
+        if models_dir is not None:
+            self.models_dir = models_dir
+        info = get_voice_model(model_id, models_dir=self.models_dir)
         if info is None:
             self.model_id = model_id or ""
             return
@@ -977,6 +989,61 @@ class AIVoicePlugin(BaseInternalPlugin):
         self._sub_phase = 0.0
         self._lp_state.fill(0.0)
         self._hp_state.fill(0.0)
+        self._analysis_win.fill(0.0)
+        self._env_gain.fill(1.0)
+
+    def _apply_onnx_neural_vocoder(self, audio_2d: np.ndarray, info, timbre: float) -> np.ndarray:
+        """Run ONNX Runtime neural vocoder + .index retrieval to replace the live vocal-tract envelope."""
+        rt = get_onnx_runtime(info)
+        if rt is None or timbre <= 0.01:
+            return audio_2d
+
+        frames = audio_2d.shape[1]
+        mono = 0.5 * (audio_2d[0] + audio_2d[1])
+        if frames >= FFT_SIZE:
+            self._analysis_win[:] = mono[-FFT_SIZE:]
+        else:
+            self._analysis_win[:-frames] = self._analysis_win[frames:]
+            self._analysis_win[-frames:] = mono
+
+        rms = float(np.sqrt(np.mean(self._analysis_win * self._analysis_win)))
+        if rms > 0.002:
+            mag = np.abs(np.fft.rfft(self._analysis_win * self._hann)).astype(np.float32)
+            c_vec, live_log_env = extract_cepstral_features(mag)
+            # Update speaker baseline cepstrum so live speaker identity is stripped away
+            self._speaker_cep_mean = 0.95 * self._speaker_cep_mean + 0.05 * c_vec
+            c_norm = c_vec - self._speaker_cep_mean
+            c_len = float(np.linalg.norm(c_norm))
+            if c_len > 1e-5:
+                c_norm /= c_len
+
+            target_log_env = rt.infer_envelope(c_norm, index_rate=timbre)
+            if target_log_env is not None:
+                # Morph live spectral envelope into the ONNX neural target envelope
+                delta_log = np.clip(timbre * (target_log_env - live_log_env), -2.2, 2.2)
+                delta_log -= float(np.mean(delta_log))
+                new_gain = np.exp(delta_log).astype(np.float32)
+                self._env_gain = 0.60 * self._env_gain + 0.40 * new_gain
+
+        # Apply frequency-domain vocal tract transfer curve to current block
+        n_fft = max(64, 1 << (frames - 1).bit_length())
+        spec = np.fft.rfft(audio_2d, n=n_fft, axis=1)
+        n_bins = spec.shape[1]
+        if n_bins == SPEC_BINS:
+            gain_curve = self._env_gain
+        else:
+            gain_curve = np.interp(
+                np.linspace(0.0, 1.0, n_bins, dtype=np.float32),
+                np.linspace(0.0, 1.0, SPEC_BINS, dtype=np.float32),
+                self._env_gain,
+            ).astype(np.float32)
+
+        resynth = np.fft.irfft(spec * gain_curve.reshape(1, -1), n=n_fft, axis=1)[:, :frames].astype(np.float32)
+        # Preserve input RMS so neural envelope replacement doesn't clip or drop volume
+        in_rms = float(np.sqrt(np.mean(audio_2d * audio_2d)) + 1e-6)
+        out_rms = float(np.sqrt(np.mean(resynth * resynth)) + 1e-6)
+        resynth *= min(2.5, in_rms / out_rms)
+        return resynth
 
     def process(self, input_array: np.ndarray, sample_rate: float, buffer_size: int = 512, reset: bool = False) -> np.ndarray:
         if reset:
@@ -990,7 +1057,7 @@ class AIVoicePlugin(BaseInternalPlugin):
         if frames == 0:
             return in_2d
 
-        info = get_voice_model(self.model_id)
+        info = get_voice_model(self.model_id, models_dir=self.models_dir)
         self.dry_fifo = np.concatenate((self.dry_fifo, in_2d.astype(np.float32, copy=False)), axis=1)
         dry = self.dry_fifo[:, :frames]
         self.dry_fifo = self.dry_fifo[:, frames:]
@@ -1013,7 +1080,11 @@ class AIVoicePlugin(BaseInternalPlugin):
 
         shifted = self._shifter.process(in_2d, sample_rate, buffer_size=frames, reset=False)
 
-        drive = 1.0 + 0.8 * timbre
+        # Execute ONNX Runtime neural vocoder + .index phonetic retrieval
+        if info is not None and timbre > 0.01:
+            shifted = self._apply_onnx_neural_vocoder(shifted, info, timbre)
+
+        drive = 1.0 + 0.65 * timbre
         shaped = np.tanh(shifted * drive).astype(np.float32) / float(np.tanh(drive))
 
         if sub_h > 0.01 and timbre > 0.01:
