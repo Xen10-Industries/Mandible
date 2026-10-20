@@ -82,6 +82,8 @@ def main():
         core.save_now()
         win.show()
         QTimer.singleShot(300, win._open_setup_assistant)
+    if getattr(cfg, "auto_check_updates", True):
+        QTimer.singleShot(2500, win.check_updates_in_background)
 
     rc = app.exec()
     lock.unlock()
