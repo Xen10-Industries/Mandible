@@ -255,7 +255,11 @@ def test_update_dialog_ui_compliance_and_states(qapp, tmp_path, monkeypatch):
     dlg._on_check_finished(None, False, "Network unreachable")
     qapp.processEvents()
     assert "Could not check" in dlg.status_title.text()
-    dlg.close()
+    dlg.hide()
+    dlg.deleteLater()
+    from PySide6.QtCore import QCoreApplication, QEvent
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    QCoreApplication.processEvents()
     core.shutdown()
 
 
@@ -286,9 +290,15 @@ def test_main_window_and_settings_update_integration(qapp, monkeypatch):
     assert cfg.auto_check_updates is False
     assert cfg.check_prereleases is False
 
-    settings.close()
+    settings.hide()
+    settings.deleteLater()
     win.meter_timer.stop()
     win.status_timer.stop()
     win._quitting = True
-    win.close()
+    win.tray.hide()
+    win.hide()
+    win.deleteLater()
+    from PySide6.QtCore import QCoreApplication, QEvent
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    QCoreApplication.processEvents()
     core.shutdown()

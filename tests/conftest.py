@@ -93,9 +93,20 @@ def appdata() -> pathlib.Path:
 
 @pytest.fixture(scope="session")
 def qapp(appdata):
+    from PySide6.QtCore import QCoreApplication, QEvent
     from PySide6.QtWidgets import QApplication
 
-    yield QApplication.instance() or QApplication([])
+    app = QApplication.instance() or QApplication([])
+    yield app
+    for w in list(app.topLevelWidgets()):
+        try:
+            w.hide()
+            w.deleteLater()
+        except RuntimeError:
+            pass
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    QCoreApplication.processEvents()
+    gc.collect()
 
 
 @pytest.fixture
