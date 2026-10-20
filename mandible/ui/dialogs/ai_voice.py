@@ -33,7 +33,7 @@ from ...config import PluginSlot
 from ...core import Core, inst
 from ..widgets.base import SpacedLayouts, _follow_look, reserve_text_width, set_style_property
 from ..widgets.buttons import make_button
-from .ai_trainer import AITrainerDialog, ExternalTrainingGuideDialog
+from .ai_trainer import AITrainerDialog, ExternalTrainingGuideDialog, RVCAddonDialog, RVCGuideDialog
 from .model_hub import ModelHubDialog
 from .parts import group_label, hint_label, keep_wrapped_text_visible
 
@@ -175,16 +175,25 @@ class AIVoiceDialog(QDialog):
         lay.addStretch(1)
 
         close_row = self._spaced.add(QHBoxLayout(), spacing=2, margins=0)
-        self.guide_btn = make_button(
-            "External training guide…",
+        self.addon_btn = make_button(
+            "RVC add-on…",
             "secondary",
-            tooltip="How to train full 40M-parameter RVC v2 models externally (local GPU or Google Colab) and import them",
+            tooltip="Download or manage the Mandible RVC deep-learning add-on",
         )
-        self.guide_btn.clicked.connect(lambda: ExternalTrainingGuideDialog(self.models_dir, self).exec())
+        self.guide_btn = make_button(
+            "RVC guide…",
+            "secondary",
+            tooltip="Step-by-step guide for training full RVC v2 models (local GPU or Google Colab)",
+        )
+        self.close_btn = make_button("Close", "secondary")
+
+        self.addon_btn.clicked.connect(lambda: RVCAddonDialog(self).exec())
+        self.guide_btn.clicked.connect(lambda: RVCGuideDialog(self.models_dir, self).exec())
+        self.close_btn.clicked.connect(self.accept)
+
+        close_row.addWidget(self.addon_btn)
         close_row.addWidget(self.guide_btn)
         close_row.addStretch(1)
-        self.close_btn = make_button("Close", "secondary")
-        self.close_btn.clicked.connect(self.accept)
         close_row.addWidget(self.close_btn)
         lay.addLayout(close_row)
 
@@ -215,6 +224,7 @@ class AIVoiceDialog(QDialog):
             self.import_btn,
             self.remove_btn,
             self.folder_btn,
+            self.addon_btn,
             self.guide_btn,
             self.close_btn,
         ):

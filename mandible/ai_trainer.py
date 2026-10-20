@@ -37,11 +37,15 @@ class TrainingSampleInfo:
     error: str = ""
 
 
-MANDIBLE_RVC_DIR = os.path.join(AI_MODELS_DIR, "..", "tools", "mandible-rvc")
+MANDIBLE_RVC_DIR = os.path.abspath(os.path.join(AI_MODELS_DIR, "..", "tools", "mandible-rvc"))
+MANDIBLE_RVC_REPO = "Xen10-Industries/mandible-rvc"
+MANDIBLE_RVC_ZIP_URL = (
+    "https://github.com/Xen10-Industries/mandible-rvc/releases/download/v0.1.0/mandible-rvc-v0.1.0-windows-x64.zip"
+)
 
 
 def find_mandible_rvc_exe() -> str | None:
-    """Return path to mandible-rvc executable or python interpreter if installed."""
+    """Return path to mandible-rvc executable, batch launcher, or script if installed."""
     custom = os.environ.get("MANDIBLE_RVC_EXE")
     if custom and os.path.isfile(custom):
         return custom
@@ -49,15 +53,57 @@ def find_mandible_rvc_exe() -> str | None:
     # Standard tool directory in %APPDATA%/Xen10/Mandible/tools/mandible-rvc
     candidates = [
         os.path.join(MANDIBLE_RVC_DIR, "mandible-rvc.exe"),
+        os.path.join(MANDIBLE_RVC_DIR, "mandible-rvc.bat"),
+        os.path.join(MANDIBLE_RVC_DIR, "mandible_rvc", "__main__.py"),
         os.path.join(MANDIBLE_RVC_DIR, ".venv", "Scripts", "python.exe"),
         os.path.join(MANDIBLE_RVC_DIR, "venv", "Scripts", "python.exe"),
         # Local developer sibling directory
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "mandible-rvc", "mandible-rvc.bat")),
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "mandible-rvc", "mandible_rvc", "__main__.py")),
         os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "mandible-rvc", ".venv", "Scripts", "python.exe")),
     ]
     for c in candidates:
         if os.path.isfile(c):
             return c
     return None
+
+
+def download_and_install_rvc_addon(
+    progress_cb: Callable[[int, int], None] | None = None,
+    dest_dir: str = MANDIBLE_RVC_DIR,
+    zip_url: str = MANDIBLE_RVC_ZIP_URL,
+) -> str:
+    """Download the official Mandible RVC add-on zip from GitHub Releases and extract it."""
+    import io
+    import urllib.request
+    import zipfile
+
+    os.makedirs(dest_dir, exist_ok=True)
+    req = urllib.request.Request(
+        zip_url,
+        headers={"User-Agent": "Mandible-App"},
+    )
+    with urllib.request.urlopen(req, timeout=30.0) as resp:
+        total = int(resp.headers.get("Content-Length") or 0)
+        chunks: list[bytes] = []
+        read_bytes = 0
+        while True:
+            chunk = resp.read(16384)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            read_bytes += len(chunk)
+            if progress_cb and total > 0:
+                progress_cb(read_bytes, total)
+
+    bio = io.BytesIO(b"".join(chunks))
+    with zipfile.ZipFile(bio, "r") as zf:
+        zf.extractall(dest_dir)
+
+    exe = find_mandible_rvc_exe()
+    if exe is None:
+        raise RuntimeError("Add-on was downloaded but executable could not be verified.")
+    return exe
 
 
 @dataclass
@@ -197,11 +243,20 @@ class VoiceModelTrainer:
         cfg = self.config
         total_epochs = max(10, cfg.epochs)
 
-        # Check if rvc_exe is a python interpreter or direct binary
-        is_python = rvc_exe.lower().endswith("python.exe") or rvc_exe.lower().endswith("python")
-        cmd = [rvc_exe]
-        if is_python:
-            cmd.extend(["-m", "mandible_rvc"])
+        # Check what kind of executable we have
+        lower = rvc_exe.lower()
+        env = dict(os.environ)
+        if lower.endswith(".py"):
+            repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(rvc_exe)))
+            cmd = [sys.executable, rvc_exe]
+            cur_pp = env.get("PYTHONPATH", "")
+            env["PYTHONPATH"] = f"{repo_dir};{cur_pp}" if cur_pp else repo_dir
+        elif lower.endswith(".bat") or lower.endswith(".cmd"):
+            cmd = [rvc_exe]
+        elif lower.endswith("python.exe") or lower.endswith("python"):
+            cmd = [rvc_exe, "-m", "mandible_rvc"]
+        else:
+            cmd = [rvc_exe]
         cmd.extend([
             "train",
             "--input", *cfg.input_files,
@@ -228,6 +283,7 @@ class VoiceModelTrainer:
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
+            env=env,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
 
