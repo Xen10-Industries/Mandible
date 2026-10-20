@@ -466,3 +466,74 @@ def test_monitor_only_clip_is_heard_in_full_only_in_the_headphones(mode):
     out_peak, mon_peak = _soundboard_peaks(mode, to_out=False, to_mon=True)
     assert out_peak < 1e-6
     assert mon_peak == pytest.approx(0.2, abs=0.01)
+
+
+# ------------------------------------------------------------------ output limiter
+
+def _limit(limiter, x, bs):
+    return np.concatenate([limiter.process(x[:, i:i + bs], 48000, bs)
+                           for i in range(0, x.shape[1], bs)], axis=1)
+
+
+@pytest.mark.parametrize("amp", [0.05, 0.3, 0.9])
+def test_safety_limiter_leaves_signals_below_the_ceiling_untouched(amp):
+    """The old default (pedalboard.Limiter) added ~+4.25 dB to anything quiet."""
+    from mandible.limiter import SafetyLimiter
+
+    x = np.vstack([_sine(440, 0.5, amp=amp)] * 2)
+    assert np.array_equal(_limit(SafetyLimiter(-0.5, 50.0), x, 256), x)
+
+
+@pytest.mark.parametrize("bs", [64, 256, 1024, 4096])
+def test_safety_limiter_never_exceeds_the_ceiling_at_any_block_size(bs):
+    from mandible.limiter import SafetyLimiter
+
+    rng = np.random.default_rng(5)
+    x = (rng.standard_normal((2, 48000)) * 0.8).astype(np.float32)   # peaks well over 1
+    x[1] *= 0.5
+    y = _limit(SafetyLimiter(-3.0, 50.0), x, bs)
+    assert float(np.max(np.abs(y))) <= 10 ** (-3.0 / 20) + 1e-6
+    ref = _limit(SafetyLimiter(-3.0, 50.0), x, 64)
+    assert float(np.max(np.abs(y - ref))) < 1e-6
+    ratio = y[1] / np.where(x[1] == 0, 1, x[1])                      # one gain for both channels
+    ratio0 = y[0] / np.where(x[0] == 0, 1, x[0])
+    assert float(np.max(np.abs(ratio - ratio0))) < 1e-4
+
+
+def test_safety_limiter_recovers_after_a_peak():
+    from mandible.limiter import SafetyLimiter
+
+    x = np.vstack([_sine(440, 1.0, amp=0.3)] * 2)
+    x[:, :4800] *= 10.0                                               # 0.1 s burst at 3.0
+    y = _limit(SafetyLimiter(-0.5, 50.0), x, 256)
+    gain = lambda a, b: float(np.max(np.abs(y[0, a:b])) / np.max(np.abs(x[0, a:b])))  # noqa: E731
+    assert gain(4800 + 2400, 4800 + 2880) < 0.9                      # still recovering at 50 ms
+    assert gain(4800 + 14400, 4800 + 14880) > 0.99                   # back to unity by 300 ms
+
+
+def test_engine_picks_the_limiter_from_settings():
+    import pedalboard
+
+    from mandible.audio_engine import AudioEngine
+    from mandible.config import LimiterSettings
+    from mandible.limiter import SafetyLimiter
+
+    engine = AudioEngine()
+    assert isinstance(engine.limiter, SafetyLimiter)                  # before any config
+    engine.update_limiter(LimiterSettings())
+    assert isinstance(engine.limiter, SafetyLimiter)
+    engine.update_limiter(LimiterSettings(boost=True))
+    assert isinstance(engine.limiter, pedalboard.Limiter)
+    engine.update_limiter(LimiterSettings(enabled=False, boost=True))
+    assert engine.limiter is None
+
+
+def test_default_output_passes_quiet_speech_at_its_own_level(core):
+    """With the default limiter on, a quiet pass-through voice keeps its level (it was +4 dB)."""
+    core.cfg.prefx.highpass_enabled = False
+    core.engine.update_prefx(core.cfg.prefx)
+    core.engine.update_limiter(core.cfg.limiter)
+    assert core.cfg.limiter.enabled and not core.cfg.limiter.boost
+    x = _sine(300, 1.0, amp=0.1)
+    y = _run_engine(core.engine, x)
+    assert float(np.max(np.abs(y[24000:]))) == pytest.approx(0.1, abs=0.002)

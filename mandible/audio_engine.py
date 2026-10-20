@@ -22,6 +22,7 @@ import numpy as np
 import pedalboard
 
 from .config import AudioSettings, LimiterSettings, PreFXSettings
+from .limiter import SafetyLimiter
 from .devices import default_samplerate, find_device, sd
 from .prefx import PreFXProcessor
 from .soundboard import SoundboardEngine
@@ -77,7 +78,7 @@ class AudioEngine:
 
         self.prefx = PreFXProcessor(PreFXSettings(), samplerate=self.samplerate)
         self.soundboard = SoundboardEngine()
-        self.limiter: pedalboard.Limiter | None = pedalboard.Limiter(threshold_db=-0.5, release_ms=50.0)
+        self.limiter: SafetyLimiter | pedalboard.Limiter | None = SafetyLimiter(-0.5, 50.0)
         self.keep_awake = True
         self.crossfade_ms = 15.0
         self.ptt_muted = False  # Set to True when Push-to-Talk is inactive or Push-to-Mute is held
@@ -150,13 +151,15 @@ class AudioEngine:
         self.prefx.update_settings(cfg, samplerate=self.samplerate)
 
     def update_limiter(self, cfg: LimiterSettings):
-        if cfg.enabled:
+        if not cfg.enabled:
+            self.limiter = None
+        elif getattr(cfg, "boost", False):
             self.limiter = pedalboard.Limiter(
                 threshold_db=float(cfg.threshold_db),
                 release_ms=float(cfg.release_ms),
             )
         else:
-            self.limiter = None
+            self.limiter = SafetyLimiter(cfg.threshold_db, cfg.release_ms)
 
     def start_mic_audition(self, duration_s: float = 5.0) -> None:
         """Begin recording a dry mic loop for auditioning chains and macro knobs."""

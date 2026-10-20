@@ -650,3 +650,15 @@ def test_wrapped_text_is_not_clipped_when_the_dialog_is_made_as_small_as_it_goes
             dlg._meter_timer.stop()
         dlg.close()
         dlg.deleteLater()
+
+
+def test_limiter_loudness_boost_saves_and_follows_the_limiter_switch(settings, core):
+    core.cfg.limiter.enabled, core.cfg.limiter.boost = True, False
+    dlg = settings()
+    assert not dlg.lim_boost.isChecked() and dlg.lim_boost.isEnabled()
+    dlg.lim_en.setChecked(False)
+    assert not dlg.lim_boost.isEnabled()
+    dlg.lim_en.setChecked(True)
+    dlg.lim_boost.setChecked(True)
+    dlg.apply_all()
+    assert core.cfg.limiter.boost is True
