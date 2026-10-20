@@ -192,3 +192,23 @@ def test_rvc_engine_selector_and_detection(tmp_path, monkeypatch):
     fake_exe.write_text("dummy")
     monkeypatch.setenv("MANDIBLE_RVC_EXE", str(fake_exe))
     assert AT.find_mandible_rvc_exe() == str(fake_exe)
+    monkeypatch.delenv("MANDIBLE_RVC_EXE", raising=False)
+
+    rvc_exe = AT.find_mandible_rvc_exe()
+    if rvc_exe is not None:
+        wav = str(tmp_path / "General 02 - Complex Father.wav")
+        _make_dummy_wav(wav, duration_s=1.5, freq=165.0, formant_hz=900.0)
+        models_dir = str(tmp_path / "rvc_models")
+        events: list[AT.TrainingProgress] = []
+        cfg = AT.TrainingJobConfig(
+            voice_name="DJTest",
+            input_files=[wav],
+            epochs=10,
+            f0_method="hybrid",
+            trainer_engine="rvc",
+        )
+        trainer = AT.VoiceModelTrainer(cfg, models_dir=models_dir, progress_cb=events.append)
+        trainer.start()
+        trainer.join(timeout=20.0)
+        assert events[-1].stage == "completed"
+        assert trainer.trained_model_id == "onnx:djtest.onnx"

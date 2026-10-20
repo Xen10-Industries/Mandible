@@ -5,6 +5,7 @@ import json
 import math
 import os
 import re
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -53,14 +54,14 @@ def find_mandible_rvc_exe() -> str | None:
     # Standard tool directory in %APPDATA%/Xen10/Mandible/tools/mandible-rvc
     candidates = [
         os.path.join(MANDIBLE_RVC_DIR, "mandible-rvc.exe"),
-        os.path.join(MANDIBLE_RVC_DIR, "mandible-rvc.bat"),
         os.path.join(MANDIBLE_RVC_DIR, "mandible_rvc", "__main__.py"),
         os.path.join(MANDIBLE_RVC_DIR, ".venv", "Scripts", "python.exe"),
         os.path.join(MANDIBLE_RVC_DIR, "venv", "Scripts", "python.exe"),
+        os.path.join(MANDIBLE_RVC_DIR, "mandible-rvc.bat"),
         # Local developer sibling directory
-        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "mandible-rvc", "mandible-rvc.bat")),
         os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "mandible-rvc", "mandible_rvc", "__main__.py")),
         os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "mandible-rvc", ".venv", "Scripts", "python.exe")),
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "mandible-rvc", "mandible-rvc.bat")),
     ]
     for c in candidates:
         if os.path.isfile(c):
@@ -211,6 +212,11 @@ class VoiceModelTrainer:
         self._cancel_event = threading.Event()
         self._is_running = False
         self._thread: threading.Thread | None = None
+        self._trained_model_id: str = ""
+
+    @property
+    def trained_model_id(self) -> str:
+        return self._trained_model_id
 
     @property
     def is_running(self) -> bool:
@@ -246,6 +252,8 @@ class VoiceModelTrainer:
         # Check what kind of executable we have
         lower = rvc_exe.lower()
         env = dict(os.environ)
+        env["MANDIBLE_PYTHON"] = sys.executable
+        env["PYTHONIOENCODING"] = "utf-8"
         if lower.endswith(".py"):
             repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(rvc_exe)))
             cmd = [sys.executable, rvc_exe]
@@ -268,9 +276,10 @@ class VoiceModelTrainer:
             "--sample-rate", str(cfg.target_sr),
         ])
 
+        exe_label = "mandible-rvc" if os.path.basename(rvc_exe) == "__main__.py" else os.path.basename(rvc_exe)
         self._emit(TrainingProgress(
             stage="preparing",
-            stage_description=f"Launching RVC v2 deep-learning sidecar ({os.path.basename(rvc_exe)})\u2026",
+            stage_description=f"Launching RVC v2 deep-learning sidecar ({exe_label})\u2026",
             current_step=5,
             total_steps=100,
             epoch=0,
@@ -282,11 +291,14 @@ class VoiceModelTrainer:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             bufsize=1,
             env=env,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
 
+        log_tail: list[str] = []
         try:
             while True:
                 if self._cancel_event.is_set():
@@ -309,6 +321,8 @@ class VoiceModelTrainer:
                         loss = float(data.get("loss", 0.0))
                         elapsed = time.time() - start_time
                         if stage == "completed":
+                            stem = _slugify(cfg.voice_name)
+                            self._trained_model_id = f"onnx:{stem}.onnx"
                             self._emit(TrainingProgress(
                                 stage="completed",
                                 stage_description=desc or "RVC v2 training completed successfully!",
@@ -334,10 +348,13 @@ class VoiceModelTrainer:
                                 elapsed_s=elapsed,
                             ))
                 except json.JSONDecodeError:
-                    pass
+                    log_tail.append(line)
             ret = proc.wait()
             if ret != 0:
-                raise RuntimeError(f"RVC v2 process exited with code {ret}")
+                detail = "\n".join(log_tail[-6:])
+                raise RuntimeError(
+                    f"RVC v2 process exited with code {ret}" + (f":\n{detail}" if detail else "")
+                )
         finally:
             if proc.poll() is None:
                 proc.kill()
@@ -724,6 +741,7 @@ class VoiceModelTrainer:
                 json.dump(meta_info, fh, indent=2)
 
             total_elapsed = time.time() - start_time
+            self._trained_model_id = f"onnx:{stem}.onnx"
             self._emit(TrainingProgress(
                 stage="completed",
                 stage_description=(
@@ -743,7 +761,7 @@ class VoiceModelTrainer:
         except Exception as exc:
             self._emit(TrainingProgress(
                 stage="error",
-                stage_description="Training encountered an error",
+                stage_description=f"Training error: {exc}",
                 error_message=str(exc),
                 elapsed_s=time.time() - start_time,
             ))

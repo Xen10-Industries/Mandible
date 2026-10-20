@@ -499,7 +499,9 @@ class AITrainerDialog(QDialog):
     def _refresh_addon_status(self) -> None:
         exe = find_mandible_rvc_exe()
         if exe:
-            self.addon_status_lbl.setText(f"Installed (ready) — {os.path.basename(exe)}")
+            base = os.path.basename(exe)
+            label = "mandible-rvc (v0.1.0)" if base == "__main__.py" else base
+            self.addon_status_lbl.setText(f"Installed (ready) — {label}")
         else:
             self.addon_status_lbl.setText("Not installed — click 'RVC add-on…' to download")
 
@@ -655,7 +657,8 @@ class AITrainerDialog(QDialog):
             self.remove_files_btn.setEnabled(True)
             self.clear_files_btn.setEnabled(True)
             if prog.stage == "error":
-                QMessageBox.critical(self, "Training Error", prog.stage_description)
+                detail = prog.error_message or prog.stage_description
+                QMessageBox.critical(self, "Training Error", detail)
 
     def _on_close(self) -> None:
         if self._trainer is not None and self._trainer.is_running:
