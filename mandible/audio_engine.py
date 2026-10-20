@@ -22,6 +22,7 @@ import numpy as np
 import pedalboard
 
 from .config import AudioSettings, LimiterSettings, PreFXSettings
+from .limiter import SafetyLimiter
 from .devices import default_samplerate, find_device, sd
 from .prefx import PreFXProcessor
 from .soundboard import SoundboardEngine
@@ -77,7 +78,7 @@ class AudioEngine:
 
         self.prefx = PreFXProcessor(PreFXSettings(), samplerate=self.samplerate)
         self.soundboard = SoundboardEngine()
-        self.limiter: pedalboard.Limiter | None = pedalboard.Limiter(threshold_db=-0.5, release_ms=50.0)
+        self.limiter: SafetyLimiter | pedalboard.Limiter | None = SafetyLimiter(-0.5, 50.0)
         self.keep_awake = True
         self.crossfade_ms = 15.0
         self.ptt_muted = False  # Set to True when Push-to-Talk is inactive or Push-to-Mute is held
@@ -150,13 +151,15 @@ class AudioEngine:
         self.prefx.update_settings(cfg, samplerate=self.samplerate)
 
     def update_limiter(self, cfg: LimiterSettings):
-        if cfg.enabled:
+        if not cfg.enabled:
+            self.limiter = None
+        elif getattr(cfg, "boost", False):
             self.limiter = pedalboard.Limiter(
                 threshold_db=float(cfg.threshold_db),
                 release_ms=float(cfg.release_ms),
             )
         else:
-            self.limiter = None
+            self.limiter = SafetyLimiter(cfg.threshold_db, cfg.release_ms)
 
     def start_mic_audition(self, duration_s: float = 5.0) -> None:
         """Begin recording a dry mic loop for auditioning chains and macro knobs."""
@@ -477,7 +480,7 @@ class AudioEngine:
                         pass
 
             # 6. Soundboard audio mix
-            sb_out, sb_mon = self.soundboard.mix(frames)
+            sb_out, sb_mon, sb_shared = self.soundboard.mix(frames)
             mix += sb_out
 
             # 7. Master output volume
@@ -515,13 +518,15 @@ class AudioEngine:
                 mg = np.float32(self.monitor_gain)
 
                 # Determine monitor blend
+                # Clips routed to both outputs are already inside ``mix``: add only the part of
+                # them the feed doesn't carry yet, or the headphones hear them doubled.
                 if self.monitor_mode == "dry":
                     mon_feed = np.repeat(mono.reshape(1, -1), 2, axis=0) + sb_mon
                 elif self.monitor_mode == "mix":
                     dry_stereo = np.repeat(mono.reshape(1, -1), 2, axis=0)
-                    mon_feed = 0.5 * mix + 0.5 * dry_stereo + sb_mon
+                    mon_feed = 0.5 * mix + 0.5 * dry_stereo + (sb_mon - 0.5 * sb_shared)
                 else:  # "processed"
-                    mon_feed = mix + sb_mon
+                    mon_feed = mix + (sb_mon - sb_shared)
 
                 mon_feed = mon_feed * mg
                 np.clip(mon_feed, -1.0, 1.0, out=mon_feed)

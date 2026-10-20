@@ -453,12 +453,14 @@ def test_prefx_dialog_still_saves_every_field(core, scarlet_look):
         dlg.rnn_wet.setValue(60)
         dlg.gate_en.setChecked(True)
         dlg.gate_thresh.setValue(-50)
+        dlg.gate_att.setValue(12)
         dlg.gate_rel.setValue(250)
         dlg._save()
         p = core.cfg.prefx
         assert (p.highpass_enabled, p.highpass_cutoff_hz) == (True, 120.0)
         assert (p.rnnoise_enabled, round(p.rnnoise_wet, 2)) == (True, 0.6)
         assert (p.noise_gate_enabled, p.noise_gate_threshold_db, p.noise_gate_release_ms) == (True, -50.0, 250.0)
+        assert p.noise_gate_open_ms == 12.0
     finally:
         dlg.deleteLater()
 
@@ -650,3 +652,15 @@ def test_wrapped_text_is_not_clipped_when_the_dialog_is_made_as_small_as_it_goes
             dlg._meter_timer.stop()
         dlg.close()
         dlg.deleteLater()
+
+
+def test_limiter_loudness_boost_saves_and_follows_the_limiter_switch(settings, core):
+    core.cfg.limiter.enabled, core.cfg.limiter.boost = True, False
+    dlg = settings()
+    assert not dlg.lim_boost.isChecked() and dlg.lim_boost.isEnabled()
+    dlg.lim_en.setChecked(False)
+    assert not dlg.lim_boost.isEnabled()
+    dlg.lim_en.setChecked(True)
+    dlg.lim_boost.setChecked(True)
+    dlg.apply_all()
+    assert core.cfg.limiter.boost is True

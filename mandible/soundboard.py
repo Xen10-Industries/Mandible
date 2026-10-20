@@ -140,14 +140,18 @@ class SoundboardEngine:
         with self._lock:
             return bool(self._voices)
 
-    def mix(self, frames: int) -> tuple[np.ndarray, np.ndarray]:
-        """Returns (out_stereo, mon_stereo) arrays shaped (2, frames) to add to the main mix."""
+    def mix(self, frames: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Returns ``(out, mon, shared)`` stereo arrays shaped (2, frames): clips routed to the
+        main output, clips routed to the monitor, and the clips routed to both (included in
+        ``out`` and ``mon`` alike), so a monitor feed built from the output can avoid adding
+        them twice."""
         out_mix = np.zeros((2, frames), dtype=np.float32)
         mon_mix = np.zeros((2, frames), dtype=np.float32)
+        shared_mix = np.zeros((2, frames), dtype=np.float32)
 
         with self._lock:
             if not self._voices:
-                return out_mix, mon_mix
+                return out_mix, mon_mix, shared_mix
 
             remaining_voices = []
             for v in self._voices:
@@ -182,7 +186,9 @@ class SoundboardEngine:
                     out_mix += chunk
                 if v.to_mon:
                     mon_mix += chunk
+                if v.to_out and v.to_mon:
+                    shared_mix += chunk
 
             self._voices = remaining_voices
 
-        return out_mix, mon_mix
+        return out_mix, mon_mix, shared_mix

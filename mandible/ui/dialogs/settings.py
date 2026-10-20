@@ -303,13 +303,19 @@ class SettingsDialog(QDialog):
         page, form = self._form_page()
         self._group(form, "Limiter")
         self.lim_en = self._check(form, "Enable limiter", self.cfg.limiter.enabled,
-                                  "A master brickwall limiter that prevents clipping into Discord and OBS.")
+                                  "Catches peaks above the ceiling so nothing clips into Discord and "
+                                  "OBS. Everything below the ceiling passes unchanged.")
         self.lim_thresh = QDoubleSpinBox()
         self.lim_thresh.setRange(-12.0, 0.0)
         self.lim_thresh.setSingleStep(0.5)
         self.lim_thresh.setValue(self.cfg.limiter.threshold_db)
         self.lim_thresh.setSuffix(" dB")
         form.addRow("Ceiling", self.lim_thresh)
+        self.lim_boost = self._check(form, "Loudness boost", getattr(self.cfg.limiter, "boost", False),
+                                     "Raises quiet speech by about 4 dB and compresses loud speech, "
+                                     "for a louder, denser voice.")
+        self.lim_boost.setEnabled(self.lim_en.isChecked())
+        self.lim_en.toggled.connect(self.lim_boost.setEnabled)
 
         self._group(form, "Normalizer")
         self.norm_en = self._check(form, "Enable output normalizer",
@@ -785,6 +791,7 @@ class SettingsDialog(QDialog):
         # Limiter
         self.cfg.limiter.enabled = self.lim_en.isChecked()
         self.cfg.limiter.threshold_db = float(self.lim_thresh.value())
+        self.cfg.limiter.boost = self.lim_boost.isChecked()
         self.core.set_limiter(self.cfg.limiter)
 
         # PTT

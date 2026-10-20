@@ -143,6 +143,9 @@ class LimiterSettings:
     enabled: bool = True
     threshold_db: float = -0.5
     release_ms: float = 50.0
+    # False: transparent safety limiter (mandible.limiter). True: the louder pedalboard/JUCE
+    # limiter (about +4 dB on quiet speech, compresses loud speech), the pre-0.1.2 behaviour.
+    boost: bool = False
 
 
 @dataclass

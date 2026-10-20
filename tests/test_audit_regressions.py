@@ -428,3 +428,162 @@ def test_pitch_crossing_zero_crossfades_instead_of_clicking(bs):
         out.append(p.process(stereo[:, i:i + bs], 48000, bs)[0])
     y = np.concatenate(out)[24000:]
     assert float(np.max(np.abs(np.diff(y, 2)))) < 0.005     # crossfade, no step
+
+
+# ------------------------------------------------------------------ soundboard in the monitor
+
+def _soundboard_peaks(mode: str, to_out: bool, to_mon: bool, bs: int = 256):
+    """(main output peak, monitor peak) for one 0.2-amplitude soundboard clip, mic silent."""
+    from mandible.audio_engine import AudioEngine
+    from mandible.soundboard import _ActiveVoice
+
+    engine = AudioEngine()
+    engine._in_col, engine._out_cols, engine._mon_cols = 0, (0, 1), (2, 3)
+    engine.monitor_enabled, engine.monitor_gain, engine.monitor_mode = True, 1.0, mode
+    engine.limiter = None          # routing only (the limiter changes levels by itself)
+    clip = np.vstack([_sine(440, 0.5, amp=0.2)] * 2)
+    engine.soundboard._voices.append(_ActiveVoice("clip", clip, 1.0, False, to_out, to_mon))
+    out_peak = mon_peak = 0.0
+    for _ in range(clip.shape[1] // bs):
+        outdata = np.zeros((bs, 4), np.float32)
+        engine._callback(np.zeros((bs, 1), np.float32), outdata, bs, None, None)
+        out_peak = max(out_peak, float(np.max(np.abs(outdata[:, :2]))))
+        mon_peak = max(mon_peak, float(np.max(np.abs(outdata[:, 2:]))))
+    return out_peak, mon_peak
+
+
+@pytest.mark.parametrize("mode", ["processed", "mix", "dry"])
+def test_clip_routed_to_both_is_heard_once_in_the_monitor(mode):
+    """A clip sent to the output and the monitor was added to a monitor feed that already
+    carried it: doubled (+6 dB) in Processed mode, 1.5x in Mix."""
+    out_peak, mon_peak = _soundboard_peaks(mode, to_out=True, to_mon=True)
+    assert out_peak == pytest.approx(0.2, abs=0.01)
+    assert mon_peak == pytest.approx(0.2, abs=0.01)
+
+
+@pytest.mark.parametrize("mode", ["processed", "mix", "dry"])
+def test_monitor_only_clip_is_heard_in_full_only_in_the_headphones(mode):
+    out_peak, mon_peak = _soundboard_peaks(mode, to_out=False, to_mon=True)
+    assert out_peak < 1e-6
+    assert mon_peak == pytest.approx(0.2, abs=0.01)
+
+
+# ------------------------------------------------------------------ output limiter
+
+def _limit(limiter, x, bs):
+    return np.concatenate([limiter.process(x[:, i:i + bs], 48000, bs)
+                           for i in range(0, x.shape[1], bs)], axis=1)
+
+
+@pytest.mark.parametrize("amp", [0.05, 0.3, 0.9])
+def test_safety_limiter_leaves_signals_below_the_ceiling_untouched(amp):
+    """The old default (pedalboard.Limiter) added ~+4.25 dB to anything quiet."""
+    from mandible.limiter import SafetyLimiter
+
+    x = np.vstack([_sine(440, 0.5, amp=amp)] * 2)
+    assert np.array_equal(_limit(SafetyLimiter(-0.5, 50.0), x, 256), x)
+
+
+@pytest.mark.parametrize("bs", [64, 256, 1024, 4096])
+def test_safety_limiter_never_exceeds_the_ceiling_at_any_block_size(bs):
+    from mandible.limiter import SafetyLimiter
+
+    rng = np.random.default_rng(5)
+    x = (rng.standard_normal((2, 48000)) * 0.8).astype(np.float32)   # peaks well over 1
+    x[1] *= 0.5
+    y = _limit(SafetyLimiter(-3.0, 50.0), x, bs)
+    assert float(np.max(np.abs(y))) <= 10 ** (-3.0 / 20) + 1e-6
+    ref = _limit(SafetyLimiter(-3.0, 50.0), x, 64)
+    assert float(np.max(np.abs(y - ref))) < 1e-6
+    ratio = y[1] / np.where(x[1] == 0, 1, x[1])                      # one gain for both channels
+    ratio0 = y[0] / np.where(x[0] == 0, 1, x[0])
+    assert float(np.max(np.abs(ratio - ratio0))) < 1e-4
+
+
+def test_safety_limiter_recovers_after_a_peak():
+    from mandible.limiter import SafetyLimiter
+
+    x = np.vstack([_sine(440, 1.0, amp=0.3)] * 2)
+    x[:, :4800] *= 10.0                                               # 0.1 s burst at 3.0
+    y = _limit(SafetyLimiter(-0.5, 50.0), x, 256)
+    gain = lambda a, b: float(np.max(np.abs(y[0, a:b])) / np.max(np.abs(x[0, a:b])))  # noqa: E731
+    assert gain(4800 + 2400, 4800 + 2880) < 0.9                      # still recovering at 50 ms
+    assert gain(4800 + 14400, 4800 + 14880) > 0.99                   # back to unity by 300 ms
+
+
+def test_engine_picks_the_limiter_from_settings():
+    import pedalboard
+
+    from mandible.audio_engine import AudioEngine
+    from mandible.config import LimiterSettings
+    from mandible.limiter import SafetyLimiter
+
+    engine = AudioEngine()
+    assert isinstance(engine.limiter, SafetyLimiter)                  # before any config
+    engine.update_limiter(LimiterSettings())
+    assert isinstance(engine.limiter, SafetyLimiter)
+    engine.update_limiter(LimiterSettings(boost=True))
+    assert isinstance(engine.limiter, pedalboard.Limiter)
+    engine.update_limiter(LimiterSettings(enabled=False, boost=True))
+    assert engine.limiter is None
+
+
+def test_default_output_passes_quiet_speech_at_its_own_level(core):
+    """With the default limiter on, a quiet pass-through voice keeps its level (it was +4 dB)."""
+    core.cfg.prefx.highpass_enabled = False
+    core.engine.update_prefx(core.cfg.prefx)
+    core.engine.update_limiter(core.cfg.limiter)
+    assert core.cfg.limiter.enabled and not core.cfg.limiter.boost
+    x = _sine(300, 1.0, amp=0.1)
+    y = _run_engine(core.engine, x)
+    assert float(np.max(np.abs(y[24000:]))) == pytest.approx(0.1, abs=0.002)
+
+
+# ------------------------------------------------------------------ mic-cleanup noise gate
+
+def _gate_onset(attack_ms: float, swell: int = 960, bs: int = 256):
+    """(gated output, input) for silence then a 220 Hz voice that swells in over ``swell``."""
+    from mandible.prefx import PreFXProcessor, PreFXSettings
+
+    x = np.zeros(48000, np.float32)
+    s = _sine(220, 0.5, amp=0.3)
+    if swell:
+        s[:swell] *= np.linspace(0, 1, swell, dtype=np.float32)
+    x[24000:] = s
+    pf = PreFXProcessor(PreFXSettings(highpass_enabled=False, noise_gate_enabled=True,
+                                      noise_gate_open_ms=attack_ms), 48000)
+    return np.concatenate([pf.process(x[i:i + bs]) for i in range(0, len(x), bs)]), x
+
+
+def _hf_db(y, on=24000):
+    seg = y[on - 240:on + 1440]
+    spec = np.abs(np.fft.rfft(seg * np.hanning(len(seg))))
+    f = np.fft.rfftfreq(len(seg), 1 / 48000)
+    return 20 * np.log10(np.sqrt(np.sum(spec[f > 2000] ** 2)) + 1e-9)
+
+
+@pytest.mark.parametrize("attack", [5.0, 10.0, 20.0])
+def test_noise_gate_opening_adds_no_click(attack):
+    """pedalboard.NoiseGate jumped from closed to open in <1 ms whatever its attack, adding
+    ~+16 dB of energy above 2 kHz at every onset. The fade-in gate adds (almost) none."""
+    y, x = _gate_onset(attack)
+    assert _hf_db(y) < _hf_db(x) + 1.0
+
+
+@pytest.mark.parametrize("attack", [1.0, 5.0, 20.0])
+def test_noise_gate_attack_sets_how_long_the_fade_in_takes(attack):
+    y, x = _gate_onset(attack, swell=0)
+    loud = np.abs(x[24000:]) > 0.05
+    gain = np.abs(y[24000:])[loud] / np.abs(x[24000:])[loud]
+    full_ms = np.flatnonzero(loud)[np.argmax(gain > 0.999)] / 48.0      # ms to full level
+    assert full_ms == pytest.approx(attack, abs=1.5)
+    assert float(np.max(np.abs(y[:23900]))) == 0.0                      # closed before talking
+    assert np.array_equal(y[24000 + 48 * int(attack + 5):30000], x[24000 + 48 * int(attack + 5):30000])
+
+
+def test_old_never_editable_gate_attack_key_is_ignored():
+    from mandible.config import _from_dict
+    from mandible.prefx import PreFXSettings
+
+    p = _from_dict(PreFXSettings, {"noise_gate_enabled": True, "noise_gate_attack_ms": 1.0})
+    assert p.noise_gate_enabled and p.noise_gate_open_ms == 5.0

@@ -12,6 +12,8 @@ from typing import Callable
 import numpy as np
 import pedalboard
 
+from .gate import Gate
+
 
 class InternalParameter:
     """Emulates a VST3 parameter object with raw [0..1] and engineering values."""
@@ -428,48 +430,20 @@ class TacticalRadioPlugin(BaseInternalPlugin):
         self.reset()
 
     GATE_OFF_DB = -80.0
-    GATE_CHUNK = 32          # samples per gate decision (0.67 ms at 48 kHz)
-    GATE_ATTACK_S = 0.002
-    GATE_HOLD_S = 0.080
-    GATE_RELEASE_S = 0.150
 
     def reset(self):
-        self.gate_gain = 1.0
-        self.gate_hold = 0
+        self.gate = Gate(self.GATE_OFF_DB, attack_ms=2.0, hold_ms=80.0, release_ms=150.0,
+                         start_open=True)
 
     def _gate(self, dry: np.ndarray, sample_rate: float) -> np.ndarray | None:
-        """Per-sample gain (or None when the gate is off). Opens fast when the clean input peaks
-        above the threshold, holds, then releases linearly: the whole radio, squelch noise
-        included, goes quiet between words."""
+        """Per-sample gain (or None when the gate is off), keyed on the clean input: the whole
+        radio, squelch noise included, goes quiet between words."""
         thr_db = self.p_gate.value
         if thr_db <= self.GATE_OFF_DB + 0.05:
-            self.gate_gain, self.gate_hold = 1.0, 0
+            self.gate.reset(start_open=True)
             return None
-        c, frames = self.GATE_CHUNK, dry.shape[1]
-        n = -(-frames // c)
-        padded = np.zeros((dry.shape[0], n * c), dtype=np.float32)
-        padded[:, :frames] = np.abs(dry)
-        peaks = padded.reshape(dry.shape[0], n, c).max(axis=(0, 2))
-        thr = 10.0 ** (thr_db / 20.0)
-        attack = c / (self.GATE_ATTACK_S * sample_rate)
-        release = c / (self.GATE_RELEASE_S * sample_rate)
-        hold = int(self.GATE_HOLD_S * sample_rate / c)
-        g, held, gains = self.gate_gain, self.gate_hold, np.empty(n, dtype=np.float32)
-        for k in range(n):
-            if peaks[k] >= thr:
-                held = hold
-                g = min(1.0, g + attack)
-            elif held > 0:
-                held -= 1
-                g = min(1.0, g + attack)
-            else:
-                g = max(0.0, g - release)
-            gains[k] = g
-        knots = np.minimum(np.arange(1, n + 1) * c, frames) - 1
-        out = np.interp(np.arange(frames), np.concatenate(([-1], knots)),
-                        np.concatenate(([self.gate_gain], gains))).astype(np.float32)
-        self.gate_gain, self.gate_hold = g, held
-        return out
+        self.gate.threshold_db = thr_db
+        return self.gate.gains(dry, sample_rate)
 
     def process(self, input_array: np.ndarray, sample_rate: float, buffer_size: int = 512, reset: bool = False) -> np.ndarray:
         if reset:
