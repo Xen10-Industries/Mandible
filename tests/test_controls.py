@@ -426,7 +426,7 @@ def test_add_plugin_dialog_shows_built_ins_or_vst3_only(qapp, monkeypatch):
 
     catalog = [
         {"name": "Lo-Fi Bitcrush", "path": "internal:bitcrush", "vendor": "Mandible DSP"},
-        {"name": "Mandible Pitch & Formant", "path": "internal:pitch_formant", "vendor": "Mandible DSP"},
+        {"name": "Pitch & Formant", "path": "internal:pitch_formant", "vendor": "Mandible DSP"},
         {"name": "Some Reverb", "path": "C:/VST3/Some Reverb.vst3", "vendor": "Acme"},
     ]
     monkeypatch.setattr(P, "get_cached_plugins", lambda *_a, **_k: [dict(c) for c in catalog])
@@ -468,6 +468,26 @@ def test_favorites_toggle_from_the_menu_persist_and_survive_a_rescan(qapp, monke
         assert not item.icon().isNull()                       # outline star
         assert "[FAV]" not in "".join(it.text() for it in rows(dlg))
         dlg.toggle_favorite(item)
+        assert item.data(_FAVORITE_ROLE)
+        # Clicking the star directly toggles favorite
+        from PySide6.QtCore import QEvent, QPointF
+        from PySide6.QtGui import QMouseEvent
+        from PySide6.QtWidgets import QStyleOptionViewItem
+
+        opt = QStyleOptionViewItem()
+        dlg.list.initViewItemOption(opt)
+        opt.rect = dlg.list.visualItemRect(item)
+        opt.features |= QStyleOptionViewItem.HasDecoration
+        icon_rect = dlg.list.style().subElementRect(
+            dlg.list.style().SubElement.SE_ItemViewItemDecoration, opt, dlg.list
+        )
+        click_pos = QPointF(icon_rect.center())
+        ev = QMouseEvent(QEvent.MouseButtonPress, click_pos, click_pos, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.NoModifier)
+        qapp.sendEvent(dlg.list.viewport(), ev)
+        assert not item.data(_FAVORITE_ROLE)
+
+        # Click star again to turn it back on
+        qapp.sendEvent(dlg.list.viewport(), ev)
         assert item.data(_FAVORITE_ROLE)
     finally:
         dlg.deleteLater()

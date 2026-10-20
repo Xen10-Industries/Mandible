@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import os
 
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QEvent, QPoint, QSize, Qt
 from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFileDialog, QHBoxLayout,
-                               QLineEdit, QListWidget, QListWidgetItem, QMenu, QVBoxLayout)
+                               QLineEdit, QListWidget, QListWidgetItem, QMenu, QStyleOptionViewItem,
+                               QVBoxLayout)
 
 from ... import plugins as P
 from ...internal_dsp import is_internal_plugin
@@ -50,6 +51,8 @@ class AddPluginDialog(QDialog):
         self.list.setIconSize(QSize(16, 16))
         self.list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.list.customContextMenuRequested.connect(self._context_menu)
+        self.list.viewport().installEventFilter(self)
+        self.list.viewport().setMouseTracking(True)
         lay.addWidget(self.list, 1)
 
         row = QHBoxLayout()
@@ -81,7 +84,7 @@ class AddPluginDialog(QDialog):
             it = QListWidgetItem(f"{item['name']}{vendor}")
             it.setData(Qt.UserRole, item["path"])
             it.setData(_BUILTIN_ROLE, is_internal_plugin(item["path"]))
-            it.setToolTip(f"{item['path']}\nRight-click to add to or remove from favorites")
+            it.setToolTip(f"{item['path']}\nClick the star or right-click to add to or remove from favorites")
             self._set_favorite_display(it, bool(item.get("favorite")))
             self.list.addItem(it)
         self._filter()
@@ -102,6 +105,36 @@ class AddPluginDialog(QDialog):
         favorite = not bool(it.data(_FAVORITE_ROLE))
         if P.set_favorite(it.data(Qt.UserRole), favorite):
             self._set_favorite_display(it, favorite)
+
+    def _item_star_hit(self, pos: QPoint) -> QListWidgetItem | None:
+        it = self.list.itemAt(pos)
+        if it is None:
+            return None
+        opt = QStyleOptionViewItem()
+        self.list.initViewItemOption(opt)
+        opt.rect = self.list.visualItemRect(it)
+        opt.features |= QStyleOptionViewItem.HasDecoration
+        icon_rect = self.list.style().subElementRect(
+            self.list.style().SubElement.SE_ItemViewItemDecoration, opt, self.list
+        )
+        hit_rect = icon_rect.adjusted(-4, -4, 4, 4)
+        return it if hit_rect.contains(pos) else None
+
+    def eventFilter(self, obj, ev) -> bool:  # noqa: N802 - Qt naming
+        if obj is self.list.viewport():
+            if ev.type() == QEvent.MouseButtonPress and ev.button() == Qt.MouseButton.LeftButton:
+                pos = ev.position().toPoint()
+                it = self._item_star_hit(pos)
+                if it is not None:
+                    self.toggle_favorite(it)
+                    return True
+            elif ev.type() == QEvent.MouseMove:
+                pos = ev.position().toPoint()
+                if self._item_star_hit(pos) is not None:
+                    self.list.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
+                else:
+                    self.list.viewport().unsetCursor()
+        return super().eventFilter(obj, ev)
 
     def _context_menu(self, pos) -> None:
         it = self.list.itemAt(pos)
