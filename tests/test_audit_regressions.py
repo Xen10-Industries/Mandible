@@ -428,3 +428,41 @@ def test_pitch_crossing_zero_crossfades_instead_of_clicking(bs):
         out.append(p.process(stereo[:, i:i + bs], 48000, bs)[0])
     y = np.concatenate(out)[24000:]
     assert float(np.max(np.abs(np.diff(y, 2)))) < 0.005     # crossfade, no step
+
+
+# ------------------------------------------------------------------ soundboard in the monitor
+
+def _soundboard_peaks(mode: str, to_out: bool, to_mon: bool, bs: int = 256):
+    """(main output peak, monitor peak) for one 0.2-amplitude soundboard clip, mic silent."""
+    from mandible.audio_engine import AudioEngine
+    from mandible.soundboard import _ActiveVoice
+
+    engine = AudioEngine()
+    engine._in_col, engine._out_cols, engine._mon_cols = 0, (0, 1), (2, 3)
+    engine.monitor_enabled, engine.monitor_gain, engine.monitor_mode = True, 1.0, mode
+    engine.limiter = None          # routing only (the limiter changes levels by itself)
+    clip = np.vstack([_sine(440, 0.5, amp=0.2)] * 2)
+    engine.soundboard._voices.append(_ActiveVoice("clip", clip, 1.0, False, to_out, to_mon))
+    out_peak = mon_peak = 0.0
+    for _ in range(clip.shape[1] // bs):
+        outdata = np.zeros((bs, 4), np.float32)
+        engine._callback(np.zeros((bs, 1), np.float32), outdata, bs, None, None)
+        out_peak = max(out_peak, float(np.max(np.abs(outdata[:, :2]))))
+        mon_peak = max(mon_peak, float(np.max(np.abs(outdata[:, 2:]))))
+    return out_peak, mon_peak
+
+
+@pytest.mark.parametrize("mode", ["processed", "mix", "dry"])
+def test_clip_routed_to_both_is_heard_once_in_the_monitor(mode):
+    """A clip sent to the output and the monitor was added to a monitor feed that already
+    carried it: doubled (+6 dB) in Processed mode, 1.5x in Mix."""
+    out_peak, mon_peak = _soundboard_peaks(mode, to_out=True, to_mon=True)
+    assert out_peak == pytest.approx(0.2, abs=0.01)
+    assert mon_peak == pytest.approx(0.2, abs=0.01)
+
+
+@pytest.mark.parametrize("mode", ["processed", "mix", "dry"])
+def test_monitor_only_clip_is_heard_in_full_only_in_the_headphones(mode):
+    out_peak, mon_peak = _soundboard_peaks(mode, to_out=False, to_mon=True)
+    assert out_peak < 1e-6
+    assert mon_peak == pytest.approx(0.2, abs=0.01)

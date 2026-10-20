@@ -477,7 +477,7 @@ class AudioEngine:
                         pass
 
             # 6. Soundboard audio mix
-            sb_out, sb_mon = self.soundboard.mix(frames)
+            sb_out, sb_mon, sb_shared = self.soundboard.mix(frames)
             mix += sb_out
 
             # 7. Master output volume
@@ -515,13 +515,15 @@ class AudioEngine:
                 mg = np.float32(self.monitor_gain)
 
                 # Determine monitor blend
+                # Clips routed to both outputs are already inside ``mix``: add only the part of
+                # them the feed doesn't carry yet, or the headphones hear them doubled.
                 if self.monitor_mode == "dry":
                     mon_feed = np.repeat(mono.reshape(1, -1), 2, axis=0) + sb_mon
                 elif self.monitor_mode == "mix":
                     dry_stereo = np.repeat(mono.reshape(1, -1), 2, axis=0)
-                    mon_feed = 0.5 * mix + 0.5 * dry_stereo + sb_mon
+                    mon_feed = 0.5 * mix + 0.5 * dry_stereo + (sb_mon - 0.5 * sb_shared)
                 else:  # "processed"
-                    mon_feed = mix + sb_mon
+                    mon_feed = mix + (sb_mon - sb_shared)
 
                 mon_feed = mon_feed * mg
                 np.clip(mon_feed, -1.0, 1.0, out=mon_feed)
