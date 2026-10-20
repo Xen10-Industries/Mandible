@@ -2,14 +2,13 @@
 from __future__ import annotations
 
 import os
-from typing import Callable
+import webbrowser
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
-    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -19,7 +18,6 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QProgressBar,
-    QSlider,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -28,15 +26,124 @@ from PySide6.QtWidgets import (
 from ...ai_trainer import (
     TrainingJobConfig,
     TrainingProgress,
-    TrainingSampleInfo,
     VoiceModelTrainer,
     inspect_audio_file,
 )
-from ...ai_voice import AI_MODELS_DIR, F0_METHODS, detect_onnx_backend
+from ...ai_voice import AI_MODELS_DIR, F0_METHODS, RVC_WEBUI_URL, detect_training_hardware
 from ...core import Core
 from ..widgets.base import SpacedLayouts, _follow_look, reserve_text_width, set_style_property
 from ..widgets.buttons import make_button
 from .parts import group_label, hint_label, keep_wrapped_text_visible
+
+
+class ExternalTrainingGuideDialog(QDialog):
+    """Step-by-step guide for training heavy 40M-parameter RVC v2 models externally (GPU / Colab)."""
+
+    def __init__(self, models_dir: str = AI_MODELS_DIR, parent=None):
+        super().__init__(parent)
+        self.models_dir = models_dir or AI_MODELS_DIR
+        self._spaced = SpacedLayouts()
+        _follow_look(self)
+
+        self.setWindowTitle("External RVC v2 Training & Cloud GPU Guide")
+        self.setMinimumWidth(640)
+        self.resize(740, 580)
+
+        lay = self._spaced.add(QVBoxLayout(self), spacing=2, margins=4)
+
+        card = QFrame()
+        card.setObjectName("wizardCard")
+        set_style_property(card, "state", "ok")
+        card_lay = self._spaced.add(QVBoxLayout(card), spacing=1, margins=3)
+
+        title = QLabel("In-App Neural Vocoder vs. Full External RVC v2 Cloning")
+        title.setObjectName("wizardCardTitle")
+        set_style_property(title, "state", "ok")
+        title.setWordWrap(True)
+        card_lay.addWidget(title)
+
+        desc = QLabel(
+            "Mandible's built-in trainer fits a lightweight 3-layer ONNX neural spectral vocoder and "
+            "phonetic retrieval index (.index) directly on your CPU/GPU in ~15–60 seconds. "
+            "If you want ElevenLabs-grade 40M-parameter VITS + ContentVec deep vocal cloning, "
+            "you can train a full RVC v2 model externally using PyTorch/CUDA and import the .onnx file."
+        )
+        desc.setObjectName("wizardCardDesc")
+        desc.setWordWrap(True)
+        card_lay.addWidget(desc)
+        lay.addWidget(card)
+
+        group_label(lay, "Step 1 — Prepare dry vocal audio")
+        lay.addWidget(
+            hint_label(
+                "Record or export a clean, single-speaker vocal stem (.wav or .flac) without reverb, "
+                "delay, or background music. Stereo or echo effects should be added as rack modules "
+                "in Mandible after the AI Voice Changer."
+            )
+        )
+
+        group_label(lay, "Step 2 — Train in RVC WebUI or Colab")
+        lay.addWidget(
+            hint_label(
+                "1. Open Retrieval-based-Voice-Conversion-WebUI locally (takes ~15–25 minutes on an RTX 3060 "
+                "for 200–250 epochs) or launch its free Google Colab notebook for cloud T4/A100 GPU training.\n"
+                "2. In the 'Train' tab, point to your audio folder, choose 'v2' and 'rmvpe_gpu', and click "
+                "'One-click training'."
+            )
+        )
+
+        group_label(lay, "Step 3 — Export .onnx and import")
+        lay.addWidget(
+            hint_label(
+                "1. In RVC WebUI, open the 'Ckpt Processing' / 'Export ONNX' tab and export your trained "
+                ".pth checkpoint to an .onnx file.\n"
+                "2. In Mandible's AI Voice Changer window, click 'Import .onnx…' and select your .onnx file "
+                "and matching trained_*.index file (or drop them directly into the models folder)."
+            )
+        )
+
+        lay.addStretch(1)
+
+        btn_row = self._spaced.add(QHBoxLayout(), spacing=2, margins=0)
+        self.rvc_btn = make_button(
+            "Open RVC GitHub…",
+            "secondary",
+            tooltip=f"Open {RVC_WEBUI_URL} in your web browser",
+        )
+        self.folder_btn = make_button(
+            "Open models folder…",
+            "secondary",
+            tooltip=f"Open {self.models_dir} in Windows Explorer",
+        )
+        self.close_btn = make_button("Close", "primary")
+        btn_row.addWidget(self.rvc_btn)
+        btn_row.addWidget(self.folder_btn)
+        btn_row.addStretch(1)
+        btn_row.addWidget(self.close_btn)
+        lay.addLayout(btn_row)
+
+        self.rvc_btn.clicked.connect(lambda: webbrowser.open(RVC_WEBUI_URL))
+        self.folder_btn.clicked.connect(self._open_folder)
+        self.close_btn.clicked.connect(self.accept)
+
+        self._reserve_button_widths()
+        keep_wrapped_text_visible(self)
+
+    def _reserve_button_widths(self) -> None:
+        for btn in (self.rvc_btn, self.folder_btn, self.close_btn):
+            reserve_text_width(btn, btn.text())
+
+    def _on_look_changed(self) -> None:
+        self._spaced.apply()
+        self._reserve_button_widths()
+
+    def _open_folder(self) -> None:
+        os.makedirs(self.models_dir, exist_ok=True)
+        if hasattr(os, "startfile"):
+            try:
+                os.startfile(self.models_dir)
+            except OSError:
+                pass
 
 
 class AITrainerDialog(QDialog):
@@ -55,26 +162,25 @@ class AITrainerDialog(QDialog):
         _follow_look(self)
 
         self.setWindowTitle("Train AI Voice Model")
-        self.setMinimumWidth(640)
-        self.resize(760, 680)
+        self.setMinimumWidth(660)
+        self.resize(780, 700)
 
         lay = self._spaced.add(QVBoxLayout(self), spacing=2, margins=4)
 
-        # 1. Hardware status banner
+        # 1. Hardware & training time expectation banner
         self.status_card = QFrame()
         self.status_card.setObjectName("wizardCard")
         set_style_property(self.status_card, "state", "ok")
         card_lay = self._spaced.add(QVBoxLayout(self.status_card), spacing=1, margins=3)
 
-        _, backend_desc = detect_onnx_backend()
-        self.status_title = QLabel("AI Voice Model Trainer")
+        hw_title, hw_guidance = detect_training_hardware()
+        self.status_title = QLabel(hw_title)
         self.status_title.setObjectName("wizardCardTitle")
         set_style_property(self.status_title, "state", "ok")
+        self.status_title.setWordWrap(True)
         card_lay.addWidget(self.status_title)
 
-        self.status_desc = QLabel(
-            f"Accelerator: {backend_desc} · Trains custom neural voice profiles ready for real-time mic usage."
-        )
+        self.status_desc = QLabel(hw_guidance)
         self.status_desc.setObjectName("wizardCardDesc")
         self.status_desc.setWordWrap(True)
         card_lay.addWidget(self.status_desc)
@@ -89,7 +195,7 @@ class AITrainerDialog(QDialog):
 
         self.file_list = QListWidget()
         self.file_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
-        self.file_list.setMaximumHeight(140)
+        self.file_list.setMaximumHeight(130)
         lay.addWidget(self.file_list)
 
         file_btn_row = self._spaced.add(QHBoxLayout(), spacing=2, margins=0)
@@ -129,7 +235,7 @@ class AITrainerDialog(QDialog):
         self.epoch_spin.setValue(150)
         self.epoch_spin.setSuffix(" epochs")
         epoch_row.addWidget(self.epoch_spin)
-        epoch_row.addWidget(hint_label("(100–250 recommended for voice similarity)"))
+        epoch_row.addWidget(hint_label("(150–300 recommended for ONNX vocoder convergence)"))
         epoch_row.addStretch(1)
         form.addRow("Training length", epoch_row)
 
@@ -154,13 +260,19 @@ class AITrainerDialog(QDialog):
 
         # 5. Bottom action bar
         btn_row = self._spaced.add(QHBoxLayout(), spacing=2, margins=0)
-        self.train_btn = make_button("Start training", "primary", tooltip="Begin dataset processing and voice model training")
+        self.train_btn = make_button("Start training", "primary", tooltip="Begin dataset STFT extraction and ONNX neural vocoder training")
         self.cancel_btn = make_button("Cancel training", "danger", tooltip="Stop current training job")
         self.cancel_btn.setVisible(False)
+        self.guide_btn = make_button(
+            "External training guide…",
+            "secondary",
+            tooltip="How to train full 40M-parameter RVC v2 models externally (local GPU or Google Colab) and import them",
+        )
         self.close_btn = make_button("Close", "secondary")
 
         btn_row.addWidget(self.train_btn)
         btn_row.addWidget(self.cancel_btn)
+        btn_row.addWidget(self.guide_btn)
         btn_row.addStretch(1)
         btn_row.addWidget(self.close_btn)
         lay.addLayout(btn_row)
@@ -171,6 +283,7 @@ class AITrainerDialog(QDialog):
         self.clear_files_btn.clicked.connect(self._on_clear_files)
         self.train_btn.clicked.connect(self._on_start_training)
         self.cancel_btn.clicked.connect(self._on_cancel_training)
+        self.guide_btn.clicked.connect(self._open_external_guide)
         self.close_btn.clicked.connect(self._on_close)
         self.progressSignal.connect(self._on_progress_update)
 
@@ -178,12 +291,23 @@ class AITrainerDialog(QDialog):
         keep_wrapped_text_visible(self)
 
     def _reserve_button_widths(self) -> None:
-        for btn in (self.add_files_btn, self.remove_files_btn, self.clear_files_btn, self.train_btn, self.cancel_btn, self.close_btn):
+        for btn in (
+            self.add_files_btn,
+            self.remove_files_btn,
+            self.clear_files_btn,
+            self.train_btn,
+            self.cancel_btn,
+            self.guide_btn,
+            self.close_btn,
+        ):
             reserve_text_width(btn, btn.text())
 
     def _on_look_changed(self) -> None:
         self._spaced.apply()
         self._reserve_button_widths()
+
+    def _open_external_guide(self) -> None:
+        ExternalTrainingGuideDialog(self.models_dir, self).exec()
 
     @property
     def trained_model_id(self) -> str:

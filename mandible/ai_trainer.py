@@ -1,21 +1,28 @@
-"""AI voice profile training, dataset slicing, feature indexing, and ONNX synthesis engine."""
+"""AI voice profile training, dataset STFT slicing, phonetic indexing, and ONNX neural vocoder trainer."""
 from __future__ import annotations
 
 import json
 import math
 import os
 import re
-import shutil
-import struct
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable
 
 import numpy as np
 import pedalboard.io
 
-from .ai_voice import AI_MODELS_DIR, VoiceModelInfo, detect_onnx_backend, get_voice_model
+from .ai_voice import (
+    AI_MODELS_DIR,
+    CONTENT_DIM,
+    FFT_SIZE,
+    HIDDEN_DIM,
+    SPEC_BINS,
+    extract_cepstral_features,
+    save_neural_onnx_model,
+    save_phonetic_index,
+)
 
 
 @dataclass
@@ -87,74 +94,39 @@ def _slugify(name: str) -> str:
     return slug or "custom_voice"
 
 
-def _create_synthetic_onnx_voice(
-    dest_path: str,
-    voice_name: str,
-    target_sr: int,
-    num_slices: int,
-    avg_f0: float,
-    vocal_bias: float,
-    sub_harmonic: float,
-    shimmer: float,
-) -> None:
-    """
-    Generate an optimized stand-in neural ONNX model file containing model header,
-    vocal spectral transfer weights, architecture metadata, and inference graph tensors.
-    """
-    header_magic = b"ONNX_VOICE_v2\x00\x01"
-    meta = {
-        "producer": "Mandible Studio AI Trainer",
-        "format": "RVC-v2-ONNX",
-        "voice_name": voice_name,
-        "sample_rate": target_sr,
-        "slices_analyzed": num_slices,
-        "base_f0": round(float(avg_f0), 1),
-        "vocal_tract_bias": round(float(vocal_bias), 2),
-        "sub_harmonic": round(float(sub_harmonic), 2),
-        "shimmer": round(float(shimmer), 2),
-        "created_at": time.strftime("%Y-%m-%d %H:%M:%SZ", time.gmtime()),
-    }
-    meta_json = json.dumps(meta, indent=2).encode("utf-8")
-    meta_len = struct.pack("<I", len(meta_json))
-
-    # Neural spectral kernel weights payload
-    rng = np.random.default_rng(seed=int(abs(avg_f0 * 1000) + len(voice_name)) % 65535)
-    weights = rng.normal(loc=0.0, scale=0.05, size=(64, 128)).astype(np.float32)
-
-    with open(dest_path, "wb") as fh:
-        fh.write(header_magic)
-        fh.write(meta_len)
-        fh.write(meta_json)
-        fh.write(weights.tobytes())
-
-
-def _create_synthetic_faiss_index(
-    dest_path: str,
-    num_vectors: int = 256,
-    dim: int = 256,
-) -> None:
-    """Generate a valid binary feature index structure for voice timbre retrieval."""
-    magic = b"FAISS_IX_v1\x00\x00"
-    header = struct.pack("<III", num_vectors, dim, 1)
-    # Normalized feature centroids
+def _fit_phonetic_codebook(
+    C: np.ndarray, S: np.ndarray, num_clusters: int = 96, iters: int = 8
+) -> tuple[np.ndarray, np.ndarray]:
+    """Fit a k-means phonetic retrieval codebook ``(keys [K, 32], envelopes [K, 513])``."""
+    n = C.shape[0]
+    k = max(4, min(num_clusters, n))
     rng = np.random.default_rng(42)
-    vectors = rng.normal(0.0, 1.0, size=(num_vectors, dim)).astype(np.float32)
-    norms = np.linalg.norm(vectors, axis=1, keepdims=True)
-    vectors = vectors / np.maximum(norms, 1e-7)
+    choice = rng.choice(n, size=k, replace=(n < k))
+    keys = C[choice].copy()
+    envs = S[choice].copy()
 
-    with open(dest_path, "wb") as fh:
-        fh.write(magic)
-        fh.write(header)
-        fh.write(vectors.tobytes())
+    for _ in range(iters):
+        sims = C @ keys.T  # [N, K]
+        assign = np.argmax(sims, axis=1)
+        for cid in range(k):
+            mask = assign == cid
+            if np.any(mask):
+                k_mean = np.mean(C[mask], axis=0)
+                k_norm = float(np.linalg.norm(k_mean))
+                if k_norm > 1e-6:
+                    keys[cid] = k_mean / k_norm
+                envs[cid] = np.mean(S[mask], axis=0)
+    return keys.astype(np.float32), envs.astype(np.float32)
 
 
 class VoiceModelTrainer:
     """
     Background worker that runs the full voice model training workflow:
     1. Dataset validation & audio slicing with silence removal.
-    2. Fundamental frequency & phonetic timbre extraction.
-    3. Neural training loop with loss reporting & early exit.
-    4. Auto-export to .onnx model + .index files registered into Mandible.
+    2. STFT cepstral phonetic feature & target vocal-tract envelope extraction.
+    3. k-NN / FAISS phonetic retrieval codebook clustering (.index).
+    4. Mini-batch Adam backpropagation training of the 3-layer ONNX neural vocoder.
+    5. Auto-export to standard .onnx model + .index files registered into Mandible.
     """
 
     def __init__(
@@ -211,7 +183,6 @@ class VoiceModelTrainer:
                 epoch=0,
                 total_epochs=total_epochs,
             ))
-            time.sleep(0.05)
 
             if not cfg.input_files:
                 raise ValueError("No audio files provided for training.")
@@ -236,7 +207,7 @@ class VoiceModelTrainer:
             self._emit(TrainingProgress(
                 stage="preparing",
                 stage_description=f"Preprocessing {len(valid_samples)} audio files ({total_dur:.1f}s total)…",
-                current_step=15,
+                current_step=12,
                 total_steps=100,
                 epoch=0,
                 total_epochs=total_epochs,
@@ -245,40 +216,38 @@ class VoiceModelTrainer:
             all_audio_slices: list[np.ndarray] = []
             slice_sr = cfg.target_sr
 
-            for idx, sample in enumerate(valid_samples):
+            for sample in valid_samples:
                 if self._cancel_event.is_set():
                     self._emit(TrainingProgress(stage="cancelled", stage_description="Training cancelled by user"))
                     return
                 try:
                     with pedalboard.io.AudioFile(sample.path, "r") as af:
-                        raw = af.read(af.frames)  # (channels, frames)
+                        raw = af.read(af.frames)
                         sr = af.samplerate
+                        slice_sr = int(sr or slice_sr)
                 except Exception:
                     continue
 
                 if raw.ndim == 1:
-                    raw = np.vstack([raw, raw])
+                    mono = raw.astype(np.float32)
                 elif raw.shape[0] == 1:
-                    raw = np.repeat(raw, 2, axis=0)
+                    mono = raw[0].astype(np.float32)
                 else:
-                    raw = raw[:2]
+                    mono = np.mean(raw[:2], axis=0).astype(np.float32)
 
-                mono = np.mean(raw, axis=0).astype(np.float32)
-
-                # Loudness normalisation
                 if cfg.normalize_loudness:
                     peak = float(np.max(np.abs(mono)))
                     if peak > 1e-4:
                         mono = mono / peak * 0.90
 
-                # Simple energy-based silence threshold slicing (keep chunks > -45 dB)
-                chunk_len = int(slice_sr * 2.0)  # 2 second slices
+                chunk_len = int(slice_sr * 1.5)
                 if len(mono) <= chunk_len:
                     all_audio_slices.append(mono)
                 else:
-                    for pos in range(0, len(mono) - chunk_len // 2, chunk_len):
-                        chunk = mono[pos:pos + chunk_len]
-                        if float(np.mean(chunk ** 2)) > 1e-5:  # silence gate
+                    hop_chunk = max(1, chunk_len // 2)
+                    for pos in range(0, len(mono) - chunk_len // 2, hop_chunk):
+                        chunk = mono[pos : pos + chunk_len]
+                        if float(np.mean(chunk ** 2)) > 1e-5:
                             all_audio_slices.append(chunk)
 
             if not all_audio_slices:
@@ -286,77 +255,214 @@ class VoiceModelTrainer:
 
             num_slices = len(all_audio_slices)
 
-            # 3. Pitch (F0) & Timbre Feature Extraction
+            # 3. STFT Cepstral & F0 Feature Extraction across all voiced frames
             self._emit(TrainingProgress(
                 stage="extracting",
-                stage_description=f"Extracting vocal pitch contours & formant centroids ({num_slices} slices)…",
-                current_step=35,
+                stage_description=f"Extracting STFT cepstral envelopes & F0 pitch across {num_slices} vocal segments…",
+                current_step=28,
                 total_steps=100,
                 epoch=0,
                 total_epochs=total_epochs,
             ))
-            time.sleep(0.1)
 
-            # Analyze average fundamental pitch across dataset slices using autocorrelation
+            hann = np.hanning(FFT_SIZE).astype(np.float32)
+            stft_hop = FFT_SIZE // 2
+            content_list: list[np.ndarray] = []
+            env_list: list[np.ndarray] = []
             f0_estimates: list[float] = []
-            for s in all_audio_slices[:32]:
+            sub_ratios: list[float] = []
+            air_ratios: list[float] = []
+
+            for s_idx, s in enumerate(all_audio_slices):
                 if self._cancel_event.is_set():
                     self._emit(TrainingProgress(stage="cancelled", stage_description="Training cancelled by user"))
                     return
-                # Autocorrelation over middle segment
-                center = s[len(s) // 4: 3 * len(s) // 4]
-                if len(center) > 2048:
-                    center = center[:2048]
-                ac = np.correlate(center, center, mode="full")
-                ac = ac[len(ac) // 2:]
-                min_lag = int(slice_sr / 450)  # 450 Hz upper limit
-                max_lag = int(slice_sr / 65)   # 65 Hz lower limit
-                if max_lag < len(ac):
-                    peak_lag = min_lag + int(np.argmax(ac[min_lag:max_lag]))
-                    if peak_lag > 0:
-                        est = slice_sr / peak_lag
-                        if 65.0 <= est <= 450.0:
-                            f0_estimates.append(est)
 
-            avg_f0 = float(np.median(f0_estimates)) if f0_estimates else 180.0
+                # F0 estimation via autocorrelation on every 4th slice
+                if s_idx % 2 == 0 and len(f0_estimates) < 96:
+                    center = s[len(s) // 4 : 3 * len(s) // 4]
+                    if len(center) > 2048:
+                        center = center[:2048]
+                    if len(center) >= 512:
+                        ac = np.correlate(center, center, mode="full")
+                        ac = ac[len(ac) // 2 :]
+                        min_lag = max(1, int(slice_sr / 480))
+                        max_lag = min(len(ac) - 1, int(slice_sr / 60))
+                        if max_lag > min_lag:
+                            peak_lag = min_lag + int(np.argmax(ac[min_lag:max_lag]))
+                            if peak_lag > 0:
+                                est = slice_sr / peak_lag
+                                if 60.0 <= est <= 480.0:
+                                    f0_estimates.append(est)
 
-            # 4. Neural Training Simulation Loop
+                # Extract STFT frames from this vocal slice
+                if len(s) < FFT_SIZE:
+                    padded = np.zeros(FFT_SIZE, dtype=np.float32)
+                    padded[: len(s)] = s
+                    frames_iter = [padded]
+                else:
+                    frames_iter = [
+                        s[p : p + FFT_SIZE]
+                        for p in range(0, len(s) - FFT_SIZE + 1, stft_hop)
+                    ]
+
+                for frame in frames_iter:
+                    rms = float(np.sqrt(np.mean(frame * frame)))
+                    if rms < 0.008:
+                        continue
+                    mag = np.abs(np.fft.rfft(frame * hann)).astype(np.float32)
+                    c_vec, log_env = extract_cepstral_features(mag)
+                    content_list.append(c_vec)
+                    env_list.append(log_env)
+
+                    # Measure sub-bass (<140 Hz) and air (>5.5 kHz) energy ratios
+                    total_e = float(np.sum(mag) + 1e-6)
+                    bin_hz = (slice_sr / 2.0) / SPEC_BINS
+                    sub_bin = max(2, int(140.0 / bin_hz))
+                    air_bin = min(SPEC_BINS - 2, int(5500.0 / bin_hz))
+                    sub_ratios.append(float(np.sum(mag[1:sub_bin]) / total_e))
+                    air_ratios.append(float(np.sum(mag[air_bin:]) / total_e))
+
+                    if len(content_list) >= 6000:
+                        break
+                if len(content_list) >= 6000:
+                    break
+
+            if not content_list:
+                # Fallback if signal was very quiet
+                mag = np.abs(np.fft.rfft(np.hanning(FFT_SIZE).astype(np.float32))).astype(np.float32)
+                c_vec, log_env = extract_cepstral_features(mag)
+                content_list = [c_vec] * 16
+                env_list = [log_env] * 16
+
+            avg_f0 = float(np.median(f0_estimates)) if f0_estimates else 175.0
+            measured_sub = float(np.clip(np.median(sub_ratios) * 2.2 if sub_ratios else 0.15, 0.0, 0.85))
+            measured_air = float(np.clip(np.median(air_ratios) * 1.8 if air_ratios else 0.15, 0.05, 0.80))
+
+            C_matrix = np.vstack(content_list).astype(np.float32)  # [N, 32]
+            S_matrix = np.vstack(env_list).astype(np.float32)      # [N, 513]
+
+            # Speaker Cepstral Mean Normalization (CMN) on C_matrix so inputs represent
+            # speaker-independent phonetic/vowel content while S_matrix holds target vocal timbre
+            c_mean = np.mean(C_matrix, axis=0, keepdims=True)
+            C_norm = C_matrix - c_mean
+            c_norms = np.linalg.norm(C_norm, axis=1, keepdims=True) + 1e-6
+            C_norm = (C_norm / c_norms).astype(np.float32)
+
+            # Apply optional user vocal-tract bias & sub/air adjustments to target envelopes
+            if abs(cfg.vocal_tract_bias) > 0.05:
+                shift_ratio = float(2.0 ** (cfg.vocal_tract_bias / 12.0))
+                src_bins = np.arange(SPEC_BINS, dtype=np.float32)
+                warped_bins = np.clip(src_bins / shift_ratio, 0.0, SPEC_BINS - 1.0)
+                for i in range(S_matrix.shape[0]):
+                    S_matrix[i] = np.interp(warped_bins, src_bins, S_matrix[i]).astype(np.float32)
+
+            # 4. Fit Phonetic Feature Retrieval Codebook (.index)
             self._emit(TrainingProgress(
-                stage="training",
-                stage_description=f"Training neural acoustic generator on {num_slices} vocal frames…",
-                current_step=50,
+                stage="indexing",
+                stage_description=f"Clustering {C_norm.shape[0]} vocal frames into phonetic retrieval index…",
+                current_step=42,
                 total_steps=100,
-                epoch=1,
+                epoch=0,
                 total_epochs=total_epochs,
-                loss=1.45,
-                best_loss=1.45,
             ))
+            index_keys, index_envs = _fit_phonetic_codebook(C_norm, S_matrix, num_clusters=96, iters=6)
 
-            curr_loss = 1.45
-            best_loss = 1.45
+            # 5. Genuine Mini-Batch Adam Neural Vocoder Training
+            n_frames = C_norm.shape[0]
+            rng = np.random.default_rng(1337)
+            W1 = rng.normal(0.0, np.sqrt(2.0 / CONTENT_DIM), size=(CONTENT_DIM, HIDDEN_DIM)).astype(np.float32)
+            b1 = np.zeros(HIDDEN_DIM, dtype=np.float32)
+            W2 = rng.normal(0.0, np.sqrt(2.0 / HIDDEN_DIM), size=(HIDDEN_DIM, HIDDEN_DIM)).astype(np.float32)
+            b2 = np.zeros(HIDDEN_DIM, dtype=np.float32)
+            W3 = rng.normal(0.0, np.sqrt(1.0 / HIDDEN_DIM) * 0.25, size=(HIDDEN_DIM, SPEC_BINS)).astype(np.float32)
+            # Initialize output bias to the target speaker's Long-Term Average Spectrum (LTAS)
+            b3 = np.mean(S_matrix, axis=0).astype(np.float32)
 
-            # Training loop over epochs
+            params = [W1, b1, W2, b2, W3, b3]
+            m_adam = [np.zeros_like(p) for p in params]
+            v_adam = [np.zeros_like(p) for p in params]
+            lr = 0.003
+            beta1 = 0.9
+            beta2 = 0.999
+            eps = 1e-8
+            adam_t = 0
+            batch_sz = max(16, min(128, int(cfg.batch_size) * 8))
+
+            best_loss = 999.0
+            best_weights = [p.copy() for p in params]
+
             for epoch in range(1, total_epochs + 1):
                 if self._cancel_event.is_set():
                     self._emit(TrainingProgress(stage="cancelled", stage_description="Training cancelled by user"))
                     return
 
-                # Calculate decay loss curve
-                decay = math.exp(-2.5 * (epoch / total_epochs))
-                noise = (math.sin(epoch * 1.3) * 0.04) + 0.02
-                curr_loss = max(0.08, float(0.15 + (1.30 * decay) + noise))
-                best_loss = min(best_loss, curr_loss)
+                perm = rng.permutation(n_frames)
+                epoch_loss_sum = 0.0
+                n_batches = 0
+
+                for start_i in range(0, n_frames, batch_sz):
+                    batch_idx = perm[start_i : start_i + batch_sz]
+                    xb = C_norm[batch_idx]  # [B, 32]
+                    yb = S_matrix[batch_idx]  # [B, 513]
+                    bsz = float(xb.shape[0])
+
+                    # Forward pass
+                    z1 = xb @ W1 + b1
+                    h1 = np.maximum(0.0, z1)
+                    z2 = h1 @ W2 + b2
+                    h2 = np.maximum(0.0, z2)
+                    pred = h2 @ W3 + b3
+
+                    diff = pred - yb
+                    loss_val = float(np.mean(diff * diff))
+                    epoch_loss_sum += loss_val
+                    n_batches += 1
+
+                    # Backward pass (MSE gradient)
+                    d_pred = (2.0 / (bsz * SPEC_BINS)) * diff  # [B, 513]
+                    gW3 = h2.T @ d_pred
+                    gb3 = np.sum(d_pred, axis=0)
+
+                    dh2 = d_pred @ W3.T
+                    dz2 = dh2 * (z2 > 0.0)
+                    gW2 = h1.T @ dz2
+                    gb2 = np.sum(dz2, axis=0)
+
+                    dh1 = dz2 @ W2.T
+                    dz1 = dh1 * (z1 > 0.0)
+                    gW1 = xb.T @ dz1
+                    gb1 = np.sum(dz1, axis=0)
+
+                    grads = [gW1, gb1, gW2, gb2, gW3, gb3]
+                    adam_t += 1
+                    b1_corr = 1.0 - (beta1 ** adam_t)
+                    b2_corr = 1.0 - (beta2 ** adam_t)
+
+                    for p_i, (param, grad) in enumerate(zip(params, grads)):
+                        m_adam[p_i] = beta1 * m_adam[p_i] + (1.0 - beta1) * grad
+                        v_adam[p_i] = beta2 * v_adam[p_i] + (1.0 - beta2) * (grad * grad)
+                        m_hat = m_adam[p_i] / b1_corr
+                        v_hat = v_adam[p_i] / b2_corr
+                        param -= lr * m_hat / (np.sqrt(v_hat) + eps)
+
+                curr_loss = epoch_loss_sum / max(1, n_batches)
+                if curr_loss < best_loss:
+                    best_loss = curr_loss
+                    best_weights = [p.copy() for p in params]
 
                 now = time.time()
                 elapsed = now - start_time
                 pct = epoch / total_epochs
                 eta = (elapsed / max(0.001, pct)) * (1.0 - pct)
-
-                step = int(50 + (pct * 40))
+                step = int(45 + (pct * 47))
 
                 self._emit(TrainingProgress(
                     stage="training",
-                    stage_description=f"Epoch {epoch}/{total_epochs}  ·  Loss: {curr_loss:.4f}  ·  ETA: {eta:.1f}s",
+                    stage_description=(
+                        f"Epoch {epoch}/{total_epochs} ({n_frames} vocal frames)  ·  "
+                        f"Loss: {curr_loss:.4f}  ·  ETA: {eta:.1f}s"
+                    ),
                     current_step=step,
                     total_steps=100,
                     epoch=epoch,
@@ -367,15 +473,14 @@ class VoiceModelTrainer:
                     eta_s=eta,
                 ))
 
-                # Adaptive sleep so tests complete in < 0.2s while UI has a smooth cadence
-                sleep_interval = 0.005 if total_epochs > 50 else 0.002
-                time.sleep(sleep_interval)
+                if n_frames < 120:
+                    time.sleep(0.003)
 
-            # 5. Model Export & Indexing
+            # 6. Export ONNX neural vocoder + .index codebook
             self._emit(TrainingProgress(
                 stage="exporting",
-                stage_description="Exporting ONNX generator model and building FAISS feature index…",
-                current_step=92,
+                stage_description="Exporting trained ONNX neural vocoder graph and phonetic .index…",
+                current_step=95,
                 total_steps=100,
                 epoch=total_epochs,
                 total_epochs=total_epochs,
@@ -391,35 +496,43 @@ class VoiceModelTrainer:
             dest_index = os.path.join(self.models_dir, f"{stem}.index")
             dest_json = os.path.join(self.models_dir, f"{stem}.json")
 
-            # Determine default pitch offset relative to reference C4 (261.6 Hz)
-            pitch_shift_st = round(12.0 * math.log2(261.6 / max(50.0, avg_f0)), 1)
-            # Bound pitch shift to comfortable defaults
+            # Compute natural pitch offset between average adult speaking pitch (~165 Hz) and target avg_f0
+            pitch_shift_st = round(12.0 * math.log2(max(60.0, avg_f0) / 165.0), 1)
             pitch_shift_st = max(-12.0, min(12.0, pitch_shift_st))
+            final_sub = max(float(cfg.sub_harmonic_depth), measured_sub)
+            final_air = max(float(cfg.air_shimmer), measured_air)
 
-            _create_synthetic_onnx_voice(
-                dest_path=dest_onnx,
-                voice_name=clean_name,
-                target_sr=cfg.target_sr,
-                num_slices=num_slices,
-                avg_f0=avg_f0,
-                vocal_bias=cfg.vocal_tract_bias,
-                sub_harmonic=cfg.sub_harmonic_depth,
-                shimmer=cfg.air_shimmer,
+            W1_b, b1_b, W2_b, b2_b, W3_b, b3_b = best_weights
+            save_neural_onnx_model(
+                dest_onnx,
+                W1_b,
+                b1_b,
+                W2_b,
+                b2_b,
+                W3_b,
+                b3_b,
+                meta={
+                    "voice_name": clean_name,
+                    "sample_rate": slice_sr,
+                    "frames_trained": n_frames,
+                    "base_f0_hz": round(avg_f0, 1),
+                    "best_loss": round(best_loss, 5),
+                },
             )
-
-            _create_synthetic_faiss_index(
-                dest_path=dest_index,
-                num_vectors=min(512, max(64, num_slices * 4)),
-                dim=256,
-            )
+            save_phonetic_index(dest_index, index_keys, index_envs)
 
             meta_info = {
                 "name": clean_name,
-                "description": f"Locally trained voice model ({clean_name}) · {num_slices} vocal slices, base {avg_f0:.1f} Hz",
+                "description": (
+                    f"Trained ONNX neural voice model ({clean_name}) · "
+                    f"{n_frames} STFT frames, F0 {avg_f0:.0f} Hz, loss {best_loss:.4f}"
+                ),
                 "default_pitch": pitch_shift_st,
                 "default_formant": round(float(cfg.vocal_tract_bias), 1),
                 "default_index_rate": 85.0,
-                "default_breathiness": round(float(cfg.air_shimmer * 100.0), 1),
+                "default_breathiness": round(final_air * 100.0, 1),
+                "sub_harmonic": round(final_sub, 2),
+                "shimmer": round(final_air, 2),
                 "f0_method": cfg.f0_method,
                 "created_at": time.strftime("%Y-%m-%d %H:%M:%SZ", time.gmtime()),
             }
@@ -429,7 +542,10 @@ class VoiceModelTrainer:
             total_elapsed = time.time() - start_time
             self._emit(TrainingProgress(
                 stage="completed",
-                stage_description=f"Model '{clean_name}' successfully trained and registered into Mandible in {total_elapsed:.1f}s!",
+                stage_description=(
+                    f"Model '{clean_name}' trained on {n_frames} vocal frames "
+                    f"(loss {best_loss:.4f}) in {total_elapsed:.1f}s!"
+                ),
                 current_step=100,
                 total_steps=100,
                 epoch=total_epochs,
