@@ -13,6 +13,8 @@ from dataclasses import dataclass
 import numpy as np
 import pedalboard
 
+from .gate import Gate
+
 
 @dataclass
 class PreFXSettings:
@@ -20,7 +22,9 @@ class PreFXSettings:
     highpass_cutoff_hz: float = 80.0
     noise_gate_enabled: bool = False
     noise_gate_threshold_db: float = -42.0
-    noise_gate_attack_ms: float = 1.0
+    # Fade-in when the gate opens. (The old noise_gate_attack_ms key was never editable and
+    # tuned a detector, not the fade; saved values of it are ignored.)
+    noise_gate_open_ms: float = 5.0
     noise_gate_release_ms: float = 100.0
     rnnoise_enabled: bool = False
     rnnoise_wet: float = 1.0  # 0.0 (bypass) to 1.0 (full suppression)
@@ -166,6 +170,8 @@ class RNNoiseStream:
 class PreFXProcessor:
     """Pre-processing engine executed on mono mic input before any effect chains."""
 
+    GATE_HOLD_MS = 50.0  # keeps the gate open across short gaps between syllables
+
     def __init__(self, cfg: PreFXSettings, samplerate: int = 48000):
         self.cfg = cfg
         self.samplerate = samplerate
@@ -191,10 +197,10 @@ class PreFXProcessor:
 
         # Noise Gate
         if self.cfg.noise_gate_enabled:
-            self._gate = pedalboard.NoiseGate(
+            self._gate = Gate(
                 threshold_db=float(self.cfg.noise_gate_threshold_db),
-                ratio=10.0,
-                attack_ms=float(self.cfg.noise_gate_attack_ms),
+                attack_ms=float(self.cfg.noise_gate_open_ms),
+                hold_ms=self.GATE_HOLD_MS,
                 release_ms=float(self.cfg.noise_gate_release_ms),
             )
         else:
@@ -225,12 +231,7 @@ class PreFXProcessor:
 
         # 3. Noise gate
         if self._gate is not None:
-            buf = out.reshape(1, -1)
-            try:
-                buf = self._gate.process(buf, self.samplerate, buffer_size=len(mono), reset=False)
-                out = buf[0]
-            except Exception:
-                pass
+            out = self._gate.process(out, self.samplerate)
 
         return out
 

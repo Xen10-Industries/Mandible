@@ -12,7 +12,7 @@ from ..widgets.base import SpacedLayouts, _follow_look, reserve_text_width
 from ..widgets.buttons import tier_button_box
 from .parts import check_row, group_label, keep_wrapped_text_visible
 
-FIELD_LABELS = ("Cutoff frequency", "Intensity", "Threshold", "Release")
+FIELD_LABELS = ("Cutoff frequency", "Intensity", "Threshold", "Attack", "Release")
 
 
 class PreFXDialog(QDialog):
@@ -57,6 +57,13 @@ class PreFXDialog(QDialog):
         self.gate_thresh.setValue(int(round(self.cfg.noise_gate_threshold_db)))
         self.gate_t_lbl = self._readout(self.gate_thresh, "{} dB", "-70 dB")
         self._field(lay, "Threshold", self.gate_thresh, self.gate_t_lbl)
+        self.gate_att = QSpinBox()
+        self.gate_att.setRange(1, 50)
+        self.gate_att.setValue(int(round(self.cfg.noise_gate_open_ms)))
+        self.gate_att.setSuffix(" ms")
+        self.gate_att.setToolTip("How quickly the gate fades in when you start talking. "
+                                 "Raise it if the first syllable clicks or thumps.")
+        self._field(lay, "Attack", self.gate_att)
         self.gate_rel = QSpinBox()
         self.gate_rel.setRange(10, 1000)
         self.gate_rel.setValue(int(round(self.cfg.noise_gate_release_ms)))
@@ -108,6 +115,7 @@ class PreFXDialog(QDialog):
         self.cfg.rnnoise_wet = self.rnn_wet.value() / 100.0
         self.cfg.noise_gate_enabled = self.gate_en.isChecked()
         self.cfg.noise_gate_threshold_db = float(self.gate_thresh.value())
+        self.cfg.noise_gate_open_ms = float(self.gate_att.value())
         self.cfg.noise_gate_release_ms = float(self.gate_rel.value())
         self.core.set_prefx(self.cfg)
         self.accept()

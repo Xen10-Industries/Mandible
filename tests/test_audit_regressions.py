@@ -537,3 +537,53 @@ def test_default_output_passes_quiet_speech_at_its_own_level(core):
     x = _sine(300, 1.0, amp=0.1)
     y = _run_engine(core.engine, x)
     assert float(np.max(np.abs(y[24000:]))) == pytest.approx(0.1, abs=0.002)
+
+
+# ------------------------------------------------------------------ mic-cleanup noise gate
+
+def _gate_onset(attack_ms: float, swell: int = 960, bs: int = 256):
+    """(gated output, input) for silence then a 220 Hz voice that swells in over ``swell``."""
+    from mandible.prefx import PreFXProcessor, PreFXSettings
+
+    x = np.zeros(48000, np.float32)
+    s = _sine(220, 0.5, amp=0.3)
+    if swell:
+        s[:swell] *= np.linspace(0, 1, swell, dtype=np.float32)
+    x[24000:] = s
+    pf = PreFXProcessor(PreFXSettings(highpass_enabled=False, noise_gate_enabled=True,
+                                      noise_gate_open_ms=attack_ms), 48000)
+    return np.concatenate([pf.process(x[i:i + bs]) for i in range(0, len(x), bs)]), x
+
+
+def _hf_db(y, on=24000):
+    seg = y[on - 240:on + 1440]
+    spec = np.abs(np.fft.rfft(seg * np.hanning(len(seg))))
+    f = np.fft.rfftfreq(len(seg), 1 / 48000)
+    return 20 * np.log10(np.sqrt(np.sum(spec[f > 2000] ** 2)) + 1e-9)
+
+
+@pytest.mark.parametrize("attack", [5.0, 10.0, 20.0])
+def test_noise_gate_opening_adds_no_click(attack):
+    """pedalboard.NoiseGate jumped from closed to open in <1 ms whatever its attack, adding
+    ~+16 dB of energy above 2 kHz at every onset. The fade-in gate adds (almost) none."""
+    y, x = _gate_onset(attack)
+    assert _hf_db(y) < _hf_db(x) + 1.0
+
+
+@pytest.mark.parametrize("attack", [1.0, 5.0, 20.0])
+def test_noise_gate_attack_sets_how_long_the_fade_in_takes(attack):
+    y, x = _gate_onset(attack, swell=0)
+    loud = np.abs(x[24000:]) > 0.05
+    gain = np.abs(y[24000:])[loud] / np.abs(x[24000:])[loud]
+    full_ms = np.flatnonzero(loud)[np.argmax(gain > 0.999)] / 48.0      # ms to full level
+    assert full_ms == pytest.approx(attack, abs=1.5)
+    assert float(np.max(np.abs(y[:23900]))) == 0.0                      # closed before talking
+    assert np.array_equal(y[24000 + 48 * int(attack + 5):30000], x[24000 + 48 * int(attack + 5):30000])
+
+
+def test_old_never_editable_gate_attack_key_is_ignored():
+    from mandible.config import _from_dict
+    from mandible.prefx import PreFXSettings
+
+    p = _from_dict(PreFXSettings, {"noise_gate_enabled": True, "noise_gate_attack_ms": 1.0})
+    assert p.noise_gate_enabled and p.noise_gate_open_ms == 5.0

@@ -453,12 +453,14 @@ def test_prefx_dialog_still_saves_every_field(core, scarlet_look):
         dlg.rnn_wet.setValue(60)
         dlg.gate_en.setChecked(True)
         dlg.gate_thresh.setValue(-50)
+        dlg.gate_att.setValue(12)
         dlg.gate_rel.setValue(250)
         dlg._save()
         p = core.cfg.prefx
         assert (p.highpass_enabled, p.highpass_cutoff_hz) == (True, 120.0)
         assert (p.rnnoise_enabled, round(p.rnnoise_wet, 2)) == (True, 0.6)
         assert (p.noise_gate_enabled, p.noise_gate_threshold_db, p.noise_gate_release_ms) == (True, -50.0, 250.0)
+        assert p.noise_gate_open_ms == 12.0
     finally:
         dlg.deleteLater()
 
