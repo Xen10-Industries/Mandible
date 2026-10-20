@@ -418,7 +418,10 @@ class ONNXVoiceRuntime:
                 with open(self.info.model_path, "rb") as fh:
                     data = np.load(fh, allow_pickle=False)
                     if "W1" in data and "W3" in data:
-                        self.npz_weights = {k: np.asarray(data[k], dtype=np.float32) for k in ("W1", "b1", "W2", "b2", "W3", "b3")}
+                        keys = ["W1", "b1", "W2", "b2", "W3", "b3"]
+                        if "W4" in data and "b4" in data:
+                            keys.extend(["W4", "b4"])
+                        self.npz_weights = {k: np.asarray(data[k], dtype=np.float32) for k in keys}
                         self.is_mandible_vocoder = True
             except Exception:
                 pass
@@ -439,7 +442,13 @@ class ONNXVoiceRuntime:
             w = self.npz_weights
             h1 = np.maximum(0.0, x @ w["W1"] + w["b1"])
             h2 = np.maximum(0.0, h1 @ w["W2"] + w["b2"])
-            neural_env = (h2 @ w["W3"] + w["b3"])[0].astype(np.float32)
+            if "W4" in w and "b4" in w:
+                r2 = h1 + h2
+                h3 = np.maximum(0.0, r2 @ w["W3"] + w["b3"])
+                r3 = r2 + h3
+                neural_env = (r3 @ w["W4"] + w["b4"])[0].astype(np.float32)
+            else:
+                neural_env = (h2 @ w["W3"] + w["b3"])[0].astype(np.float32)
 
         retrieved_env: np.ndarray | None = None
         if self.index_keys is not None and self.index_envs is not None and len(self.index_keys) > 0:
