@@ -35,6 +35,7 @@ SECTIONS = (
     ("midi", "MIDI"),
     ("overlay", "Overlay"),
     ("appearance", "Appearance"),
+    ("addons", "Add-ons"),
     ("general", "General"),
     ("api", "Local API"),
 )
@@ -95,7 +96,7 @@ class SettingsDialog(QDialog):
             "audio": self._build_audio, "ptt": self._build_ptt,
             "output_safety": self._build_output_safety, "midi": self._build_midi,
             "overlay": self._build_overlay, "appearance": self._build_appearance,
-            "general": self._build_general, "api": self._build_api,
+            "addons": self._build_addons, "general": self._build_general, "api": self._build_api,
         }
         for sid, title in SECTIONS:
             item = QListWidgetItem(title)
@@ -516,6 +517,115 @@ class SettingsDialog(QDialog):
         self.cfg.check_prereleases = self.prerelease_updates.isChecked()
         UpdateDialog(self.core, self).exec()
 
+    # ------------------------------------------------------------------ Add-ons
+    def _build_addons(self) -> QWidget:
+        """Add-ons manager: browse, install, manage, and check updates for official add-ons."""
+        from ...addons import ADDON_REGISTRY, get_addon_installed_version, check_addon_update
+
+        page, form = self._form_page()
+
+        self._group(form, "Add-on updates")
+        self.auto_addon_updates = self._check(
+            form, "Automatically check for add-on updates on startup",
+            getattr(self.cfg, "auto_check_addon_updates", True),
+            "Checks GitHub Releases for installed add-ons at most once a day.")
+        self.notify_updates_check = self._check(
+            form, "Notify via desktop notification when updates are found",
+            getattr(self.cfg, "notify_updates", True),
+            "Displays a notification in the Windows notification center / tray.")
+
+        addon_check_row = self._spaced.add(QHBoxLayout(), spacing=2, margins=0)
+        self.check_addons_btn = make_button("Check all add-ons for updates…", "secondary")
+        self.open_addons_folder_btn = make_button("Open add-ons folder…", "secondary")
+        addon_check_row.addWidget(self.check_addons_btn)
+        addon_check_row.addWidget(self.open_addons_folder_btn)
+        addon_check_row.addStretch(1)
+        form.addRow(addon_check_row)
+
+        self._group(form, "Installed & Available Add-ons")
+        self._addon_cards = {}
+        for aid, info in ADDON_REGISTRY.items():
+            card = QFrame()
+            card.setObjectName("wizardCard")
+            clay = self._spaced.add(QVBoxLayout(card), spacing=1, margins=3)
+
+            top_row = self._spaced.add(QHBoxLayout(), spacing=2, margins=0)
+            title = QLabel(f"<b>{info.name}</b>  ({info.category})</span>")
+            title.setObjectName("wizardCardTitle")
+            top_row.addWidget(title)
+            top_row.addStretch(1)
+
+            btn = make_button("Manage…", "primary")
+            top_row.addWidget(btn)
+            clay.addLayout(top_row)
+
+            desc = QLabel(info.summary)
+            desc.setWordWrap(True)
+            clay.addWidget(desc)
+
+            status_lbl = QLabel("")
+            clay.addWidget(status_lbl)
+            form.addRow(card)
+
+            self._addon_cards[aid] = (card, btn, status_lbl, info)
+
+        def _refresh():
+            from ...addons import TOOLS_DIR
+            os.makedirs(TOOLS_DIR, exist_ok=True)
+            for aid, (card, btn, status_lbl, info) in self._addon_cards.items():
+                exe = info.find_exe_fn()
+                if exe:
+                    ver = get_addon_installed_version(aid) or "v0.1.0"
+                    status_lbl.setText(f"● Installed</span> ({ver}) — {exe}")
+                    btn.setText("Manage…")
+                else:
+                    status_lbl.setText("○ Not installed</span>")
+                    btn.setText("Install add-on…")
+
+        def _manage(aid: str):
+            info = ADDON_REGISTRY.get(aid)
+            if info:
+                info.open_dialog_fn(self)
+                _refresh()
+
+        for aid, (_, btn, _, _) in self._addon_cards.items():
+            btn.clicked.connect(lambda _, a=aid: _manage(a))
+
+        self.open_addons_folder_btn.clicked.connect(
+            lambda: os.startfile(os.path.join(APP_DIR, "tools")) if os.path.isdir(os.path.join(APP_DIR, "tools")) else None
+        )
+
+        def _check_all_addons():
+            self.check_addons_btn.setEnabled(False)
+            self.check_addons_btn.setText("Checking GitHub Releases…")
+            found = []
+            for aid, (card, btn, status_lbl, info) in self._addon_cards.items():
+                if info.find_exe_fn():
+                    latest_tag, newer = check_addon_update(aid)
+                    if newer:
+                        found.append(f"{info.name} ({latest_tag})")
+                        status_lbl.setText(f"★ Update available: {latest_tag}</span>")
+            self.check_addons_btn.setEnabled(True)
+            self.check_addons_btn.setText("Check all add-ons for updates…")
+            if found:
+                QMessageBox.information(
+                    self,
+                    "Add-on Updates Found",
+                    "Newer versions are available for the following add-on(s):\n\n" +
+                    "\n".join(f"• {x}" for x in found) +
+                    "\n\nClick 'Manage…' on the add-on to update."
+                )
+            else:
+                QMessageBox.information(
+                    self,
+                    "Add-ons Up to Date",
+                    "All installed add-ons are up to date!"
+                )
+
+        self.check_addons_btn.clicked.connect(_check_all_addons)
+        _refresh()
+        return page
+
     # ------------------------------------------------------------------ Local API
     def _build_api(self) -> QWidget:
         import webbrowser
@@ -811,6 +921,10 @@ class SettingsDialog(QDialog):
             self.cfg.auto_check_updates = self.auto_updates.isChecked()
         if hasattr(self, "prerelease_updates"):
             self.cfg.check_prereleases = self.prerelease_updates.isChecked()
+        if hasattr(self, "auto_addon_updates"):
+            self.cfg.auto_check_addon_updates = self.auto_addon_updates.isChecked()
+        if hasattr(self, "notify_updates_check"):
+            self.cfg.notify_updates = self.notify_updates_check.isChecked()
 
         # Limiter
         self.cfg.limiter.enabled = self.lim_en.isChecked()

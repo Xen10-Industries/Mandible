@@ -4,15 +4,17 @@ from __future__ import annotations
 import copy
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QSlider, QSpinBox,
+from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QSlider, QSpinBox,
                                QVBoxLayout, QWidget)
+from .clarity import ClarityAddonDialog
+from ..widgets.buttons import make_button
 
 from ...core import Core
 from ..widgets.base import SpacedLayouts, _follow_look, reserve_text_width
 from ..widgets.buttons import tier_button_box
 from .parts import check_row, group_label, keep_wrapped_text_visible
 
-FIELD_LABELS = ("Cutoff frequency", "Intensity", "Threshold", "Attack", "Release")
+FIELD_LABELS = ("Cutoff frequency", "Engine", "Intensity", "Threshold", "Attack", "Release")
 
 
 class PreFXDialog(QDialog):
@@ -42,7 +44,18 @@ class PreFXDialog(QDialog):
 
         group_label(lay, "Noise suppression")
         self.rnn_en = check_row(lay, "Enable AI noise suppression", self.cfg.rnnoise_enabled,
-                                "RNNoise removes fan noise, keyboard clicks and mic hiss.")
+                                "Removes fan noise, keyboard clicks, mic hiss, and room echo.")
+        self.engine_combo = QComboBox()
+        self.engine_combo.addItem("RNNoise (Fast CPU)", "rnnoise")
+        self.engine_combo.addItem("Mandible Clarity (DeepFilter AI)", "clarity")
+        idx = self.engine_combo.findData(self.cfg.noise_engine)
+        if idx >= 0:
+            self.engine_combo.setCurrentIndex(idx)
+        self.clarity_btn = make_button("Clarity add-on…", "secondary", tooltip="Inspect, download, or manage Mandible Clarity add-on")
+        reserve_text_width(self.clarity_btn, "Clarity add-on…")
+        self.clarity_btn.clicked.connect(lambda: ClarityAddonDialog(self).exec())
+        self._field(lay, "Engine", self.engine_combo, self.clarity_btn)
+
         self.rnn_wet = QSlider(Qt.Horizontal)
         self.rnn_wet.setRange(0, 100)
         self.rnn_wet.setValue(int(round(self.cfg.rnnoise_wet * 100)))
@@ -113,6 +126,7 @@ class PreFXDialog(QDialog):
         self.cfg.highpass_cutoff_hz = float(self.hp_freq.value())
         self.cfg.rnnoise_enabled = self.rnn_en.isChecked()
         self.cfg.rnnoise_wet = self.rnn_wet.value() / 100.0
+        self.cfg.noise_engine = str(self.engine_combo.currentData() or "rnnoise")
         self.cfg.noise_gate_enabled = self.gate_en.isChecked()
         self.cfg.noise_gate_threshold_db = float(self.gate_thresh.value())
         self.cfg.noise_gate_open_ms = float(self.gate_att.value())
