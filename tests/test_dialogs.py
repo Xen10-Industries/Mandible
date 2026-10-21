@@ -76,9 +76,9 @@ def test_live_vu_bar_paints_with_look_tokens(qapp, scarlet_look):
 
 
 # ------------------------------------------------------------------ Settings (Task 15)
-SECTION_IDS = ["audio", "ptt", "output_safety", "midi", "overlay", "appearance", "general", "api"]
+SECTION_IDS = ["audio", "ptt", "output_safety", "midi", "overlay", "appearance", "addons", "general", "api"]
 SECTION_TITLES = ["Audio", "Push-to-talk", "Limiter & Normalizer", "MIDI", "Overlay",
-                  "Appearance", "General", "Local API"]
+                  "Appearance", "Add-ons", "General", "Local API"]
 
 
 @pytest.fixture

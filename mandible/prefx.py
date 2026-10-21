@@ -14,6 +14,7 @@ import numpy as np
 import pedalboard
 
 from .gate import Gate
+from .clarity import ClarityStream
 
 
 @dataclass
@@ -28,6 +29,15 @@ class PreFXSettings:
     noise_gate_release_ms: float = 100.0
     rnnoise_enabled: bool = False
     rnnoise_wet: float = 1.0  # 0.0 (bypass) to 1.0 (full suppression)
+    noise_engine: str = "rnnoise"  # "rnnoise" or "clarity"
+    clarity_atten_limit_db: float = 100.0
+    clarity_dereverb: bool = True
+
+    def __post_init__(self) -> None:
+        # Migrate the pre-DFN3 35 dB floor (never exposed in the UI) so silent frames and
+        # keyboard clicks between words can be attenuated all the way down.
+        if self.clarity_atten_limit_db == 35.0:
+            self.clarity_atten_limit_db = 100.0
 
 
 def _resolve_rnnoise_path() -> str:
@@ -176,7 +186,9 @@ class PreFXProcessor:
         self.cfg = cfg
         self.samplerate = samplerate
         self.rnnoise = RNNoiseStream(samplerate)
+        self.clarity = ClarityStream(samplerate)
         self._rnnoise_was_on = False
+        self._clarity_was_on = False
         self._hp_filter = None
         self._gate = None
         self._rebuild_filters()
@@ -186,6 +198,7 @@ class PreFXProcessor:
         if samplerate:
             self.samplerate = samplerate
             self.rnnoise.set_samplerate(samplerate)
+            self.clarity.set_samplerate(samplerate)
         self._rebuild_filters()
 
     def _rebuild_filters(self):
@@ -222,12 +235,23 @@ class PreFXProcessor:
             except Exception:
                 pass
 
-        # 2. AI RNNoise suppression (flush stale buffered audio when it is switched back on)
+        # 2. AI noise suppression (RNNoise or Mandible Clarity)
         if self.cfg.rnnoise_enabled:
-            if not self._rnnoise_was_on:
-                self.rnnoise.reset()
-            out = self.rnnoise.process(out, wet=self.cfg.rnnoise_wet)
-        self._rnnoise_was_on = self.cfg.rnnoise_enabled
+            if self.cfg.noise_engine == "clarity" and self.clarity.is_available():
+                if not self._clarity_was_on:
+                    self.clarity.reset()
+                out = self.clarity.process(
+                    out,
+                    wet=self.cfg.rnnoise_wet,
+                    atten_limit_db=self.cfg.clarity_atten_limit_db,
+                    dereverb=self.cfg.clarity_dereverb,
+                )
+            else:
+                if not self._rnnoise_was_on:
+                    self.rnnoise.reset()
+                out = self.rnnoise.process(out, wet=self.cfg.rnnoise_wet)
+        self._rnnoise_was_on = (self.cfg.rnnoise_enabled and self.cfg.noise_engine != "clarity")
+        self._clarity_was_on = (self.cfg.rnnoise_enabled and self.cfg.noise_engine == "clarity")
 
         # 3. Noise gate
         if self._gate is not None:

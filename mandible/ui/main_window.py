@@ -478,6 +478,7 @@ def _monitor_and_center_plugin_window(plugin_title: str, parent_hwnd: int | None
 # =============================================================== main window
 class MainWindow(QMainWindow):
     _updateFound = Signal(object)   # ReleaseInfo from background update check
+    _addonUpdateFound = Signal(str, str)  # (addon_name, tag_name) from background check
     def __init__(self, core: Core, show_tray: bool = True):
         """``show_tray=False`` builds the tray icon (the rest of the window updates it) but never shows it."""
         super().__init__()
@@ -489,6 +490,7 @@ class MainWindow(QMainWindow):
         self._pre_dock_width: int | None = None
         self._available_update = None
         self._updateFound.connect(self._on_update_found)
+        self._addonUpdateFound.connect(self._on_addon_update_found)
         self.setWindowTitle("Mandible")
         self.setWindowIcon(branding.app_icon())
         self.resize(1280, 820)
@@ -1587,12 +1589,26 @@ class MainWindow(QMainWindow):
 
         def worker():
             from .. import updater as U
-            try:
-                rel, is_newer = U.check_for_updates(include_prereleases=include_pre)
-            except Exception:
-                rel, is_newer = None, False
-            if rel is not None and is_newer:
-                self._updateFound.emit(rel)
+            from .. import addons as A
+            # 1. Mandible Core check
+            if getattr(self.cfg, "auto_check_updates", True):
+                try:
+                    rel, is_newer = U.check_for_updates(include_prereleases=include_pre)
+                except Exception:
+                    rel, is_newer = None, False
+                if rel is not None and is_newer:
+                    self._updateFound.emit(rel)
+
+            # 2. Add-ons check
+            if getattr(self.cfg, "auto_check_addon_updates", True):
+                try:
+                    for aid, info in A.ADDON_REGISTRY.items():
+                        if info.find_exe_fn():
+                            tag, newer = A.check_addon_update(aid)
+                            if newer and tag:
+                                self._addonUpdateFound.emit(info.name, tag)
+                except Exception:
+                    pass
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -1606,6 +1622,31 @@ class MainWindow(QMainWindow):
         if hasattr(self, "header") and hasattr(self.header, "help_btn"):
             set_button_state(self.header.help_btn, "warn")
             self.header.help_btn.setToolTip(f"Mandible {release.tag_name} is available — click to update")
+        if getattr(self.cfg, "notify_updates", True) and hasattr(self, "tray") and self.tray.isVisible():
+            try:
+                self.tray.showMessage(
+                    "Mandible Update Available",
+                    f"Mandible {release.tag_name} is ready to download.",
+                    QSystemTrayIcon.Information,
+                    5000,
+                )
+            except Exception:
+                pass
+
+    def _on_addon_update_found(self, addon_name: str, tag_name: str):
+        if hasattr(self, "header") and hasattr(self.header, "help_btn"):
+            set_button_state(self.header.help_btn, "warn")
+            self.header.help_btn.setToolTip(f"{addon_name} {tag_name} is available — review in Settings")
+        if getattr(self.cfg, "notify_updates", True) and hasattr(self, "tray") and self.tray.isVisible():
+            try:
+                self.tray.showMessage(
+                    "Add-on Update Available",
+                    f"{addon_name} {tag_name} is available. Review in Settings > Add-ons.",
+                    QSystemTrayIcon.Information,
+                    5000,
+                )
+            except Exception:
+                pass
 
     def _open_setup_assistant(self):
         dlg = SetupAssistantDialog(self.core, self)
