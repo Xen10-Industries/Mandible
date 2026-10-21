@@ -18,7 +18,7 @@ from ...core import Core
 from ...midi import list_midi_inputs
 from ..look import Look, current_look, look_bus, look_from_config, set_look, space
 from ..user_looks import all_palettes, all_skins
-from ..widgets.base import SpacedLayouts, _follow_look
+from ..widgets.base import SpacedLayouts, _follow_look, reserve_text_width
 from ..widgets.buttons import make_button, tier_button_box
 from .hotkey import HotkeyDialog
 from .parts import check_row, group_label, hint_label
@@ -195,9 +195,15 @@ class SettingsDialog(QDialog):
 
     def _apply_form_gaps(self) -> None:
         # QFormLayout has separate horizontal / vertical spacing, both on the scale.
+        try:
+            import shiboken6
+            valid_fn = shiboken6.isValid
+        except Exception:
+            valid_fn = lambda obj: True
         for form in self._forms:
-            form.setHorizontalSpacing(space(3))
-            form.setVerticalSpacing(space(2))
+            if valid_fn(form):
+                form.setHorizontalSpacing(space(3))
+                form.setVerticalSpacing(space(2))
 
     @staticmethod
     def _combo(minimum_chars: int = 14) -> QComboBox:
@@ -550,12 +556,14 @@ class SettingsDialog(QDialog):
             clay = self._spaced.add(QVBoxLayout(card), spacing=1, margins=3)
 
             top_row = self._spaced.add(QHBoxLayout(), spacing=2, margins=0)
-            title = QLabel(f"<b>{info.name}</b>  ({info.category})</span>")
+            title = QLabel(f"{info.name} ({info.category})")
             title.setObjectName("wizardCardTitle")
+            title.setWordWrap(True)
             top_row.addWidget(title)
             top_row.addStretch(1)
 
-            btn = make_button("Manage…", "primary")
+            btn = make_button("Manage…", "secondary")
+            reserve_text_width(btn, "Manage…", "Install add-on…")
             top_row.addWidget(btn)
             clay.addLayout(top_row)
 
@@ -576,7 +584,7 @@ class SettingsDialog(QDialog):
                 exe = info.find_exe_fn()
                 if exe:
                     ver = get_addon_installed_version(aid) or "v0.1.0"
-                    status_lbl.setText(f"● Installed</span> ({ver}) — {exe}")
+                    status_lbl.setText(f"● Installed ({ver}) — {exe}")
                     btn.setText("Manage…")
                 else:
                     status_lbl.setText("○ Not installed</span>")
